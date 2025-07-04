@@ -3,6 +3,13 @@
 
 #include <X11/Xlib.h>
 
-int load_do(Display *dpy, Window root, GC gc, const char *name, XImage **out_img);
+typedef struct {
+    Window window;
+    int x, y;
+    int width, height;
+    XImage *image;
+} Icon;
+
+int load_do(Display *dpy, Window root, GC gc, const char *name, Icon *icon);
 
 #endif

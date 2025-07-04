@@ -58,11 +58,11 @@ static int parse_icon_header(const uint8_t *data, long size, uint16_t *width, ui
 }
 
 // Render icon
-static int render_icon(Display *dpy, Window root, GC gc, XImage **out_img, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth) {
+static int render_icon(Display *dpy, Window window, GC gc, Icon *icon, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth) {
     Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
     int xdepth = DefaultDepth(dpy, DefaultScreen(dpy));
-    XImage *img = XCreateImage(dpy, visual, xdepth, ZPixmap, 0, malloc(width * height * 4), width, height, 32, 0);
-    if (!img) {
+    icon->image = XCreateImage(dpy, visual, xdepth, ZPixmap, 0, malloc(width * height * 4), width, height, 32, 0);
+    if (!icon->image) {
         fprintf(stderr, "[load_do] Failed to create XImage\n");
         return 1;
     }
@@ -80,17 +80,16 @@ static int render_icon(Display *dpy, Window root, GC gc, XImage **out_img, const
                 int bit = 7 - (x & 7); // MSB-first
                 if (byte & (1 << bit)) color |= (1 << p);
             }
-            XPutPixel(img, x, y, iconcolor[color & 7]);
+            XPutPixel(icon->image, x, y, iconcolor[color & 7]);
         }
     }
-    XPutImage(dpy, root, gc, img, 0, 0, 10, 10, width, height);
+    XPutImage(dpy, window, gc, icon->image, 0, 0, 0, 0, width, height);
     XFlush(dpy);
-    *out_img = img;
     return 0;
 }
 
 // Main function to load and display icon
-int load_do(Display *dpy, Window root, GC gc, const char *name, XImage **out_img) {
+int load_do(Display *dpy, Window root, GC gc, const char *name, Icon *icon) {
     uint8_t *data;
     long size;
     if (load_icon_file(name, &data, &size)) return 1;
@@ -99,7 +98,17 @@ int load_do(Display *dpy, Window root, GC gc, const char *name, XImage **out_img
         free(data);
         return 1;
     }
-    if (render_icon(dpy, root, gc, out_img, data, width, height, depth)) {
+    icon->x = 10;
+    icon->y = 10;
+    icon->width = width;
+    icon->height = height;
+    icon->window = XCreateSimpleWindow(dpy, root, icon->x, icon->y, width, height, 0,
+                                      BlackPixel(dpy, DefaultScreen(dpy)),
+                                      WhitePixel(dpy, DefaultScreen(dpy)));
+    XSelectInput(dpy, icon->window, ButtonPressMask | ExposureMask);
+    XMapWindow(dpy, icon->window);
+    XLowerWindow(dpy, icon->window); // Ensure icon stays at bottom
+    if (render_icon(dpy, icon->window, gc, icon, data, width, height, depth)) {
         free(data);
         return 1;
     }

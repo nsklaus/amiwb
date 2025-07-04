@@ -1,13 +1,14 @@
 // main.c - entry point for the amiwb window manager
-// Compile with: gcc -O2 -Wall -o amiwb main.c wm.c events.c icon_loader.c -lX11 -lX11-xcb -lXext -lXmu
-
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "wm.h"
 #include "events.h"
 #include "icon_loader.h"
+
+Icon global_icon = {0};
 
 int main() {
     Display *dpy = XOpenDisplay(NULL);
@@ -26,17 +27,15 @@ int main() {
 
     // Load and display xcalc.info icon
     GC gc = DefaultGC(dpy, DefaultScreen(dpy));
-    XImage *img = NULL;
-    if (load_do(dpy, root, gc, "../icons/xcalc", &img) != 0) {
+    if (load_do(dpy, root, gc, "../icons/xcalc", &global_icon) != 0) {
         fprintf(stderr, "Failed to load xcalc.info icon\n");
-    } else {
-        // Keep the image displayed; it will be freed on display close
     }
 
     // Enter the main event loop
     event_loop();
 
-    if (img) XDestroyImage(img);
+    if (global_icon.image) XDestroyImage(global_icon.image);
+    if (global_icon.window) XDestroyWindow(dpy, global_icon.window);
     XCloseDisplay(dpy);
     return 0;
 }

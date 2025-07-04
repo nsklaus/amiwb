@@ -1,11 +1,14 @@
 #include "wm.h"
+#include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xresource.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "icon_loader.h"
 
-//static XContext frame_context;
+extern Icon global_icon;
+
 XContext frame_context;
 static Display *dpy;
 static Window root;
@@ -19,9 +22,9 @@ void wm_init(Display *display, Window root_window) {
     root = root_window;
 
     XSetErrorHandler(wm_error_handler);
-    XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask);
+    XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask | ButtonPressMask);
     XSync(dpy, False);
-    frame_context = XUniqueContext();
+    frame_context = XrmUniqueQuark();
 
     printf("amiwb is running.\n");
 }
@@ -42,6 +45,14 @@ void wm_handle_map_request(XEvent *event) {
     e = &event->xmaprequest;
     XGetWindowAttributes(dpy, e->window, &attr);
 
+    // Skip framing for the icon window
+    if (e->window == global_icon.window) {
+        XSelectInput(dpy, e->window, ButtonPressMask | ExposureMask);
+        XMapWindow(dpy, e->window);
+        XLowerWindow(dpy, e->window);
+        return;
+    }
+
     border = 2;
     frame_x = attr.x;
     frame_y = attr.y;
@@ -55,7 +66,7 @@ void wm_handle_map_request(XEvent *event) {
     XAddToSaveSet(dpy, e->window);
     XReparentWindow(dpy, e->window, frame, border, border);
     XSelectInput(dpy, e->window, StructureNotifyMask);
-    XSaveContext(dpy, e->window, frame_context, (XPointer)(uintptr_t)frame);
+    XSaveContext(dpy, e->window, frame_context, (XPointer)frame);
     XSelectInput(dpy, frame, ButtonPressMask | ButtonReleaseMask | PointerMotionMask);
     XMapWindow(dpy, frame);
     XMapWindow(dpy, e->window);
@@ -89,7 +100,7 @@ void wm_scan_existing_windows(void) {
             XEvent fake;
 
             XGetWindowAttributes(dpy, children[i], &attr);
-            if (!attr.override_redirect && attr.map_state == IsViewable) {
+            if (!attr.override_redirect && attr.map_state == IsViewable && children[i] != global_icon.window) {
                 memset(&fake, 0, sizeof(fake));
                 fake.xmaprequest.type = MapRequest;
                 fake.xmaprequest.display = dpy;
