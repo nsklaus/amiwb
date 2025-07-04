@@ -1,18 +1,15 @@
-# Compiler and flags
 CC = gcc
 CFLAGS = -O2 -Wall
-PKG = `pkg-config --cflags --libs x11`
+# PKG = `pkg-config --cflags --libs x11`
+PKG = `pkg-config --cflags --libs x11 x11-xcb xext xmu`
 
-# Target
 TARGET = amiwb
-SRC = amiwb.c
+SRCS = main.c wm.c events.c icon_loader.c
 
-# Default build
 all: $(TARGET)
 
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(PKG)
+$(TARGET): $(SRCS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRCS) $(PKG)
 
-# Clean build artifacts
 clean:
 	rm -f $(TARGET)
