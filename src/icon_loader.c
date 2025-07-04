@@ -105,9 +105,9 @@ int load_do(Display *dpy, Window root, GC gc, const char *name, Icon *icon) {
     icon->window = XCreateSimpleWindow(dpy, root, icon->x, icon->y, width, height, 0,
                                       BlackPixel(dpy, DefaultScreen(dpy)),
                                       WhitePixel(dpy, DefaultScreen(dpy)));
-    XSelectInput(dpy, icon->window, ButtonPressMask | ExposureMask);
+    XSelectInput(dpy, icon->window, ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask);
     XMapWindow(dpy, icon->window);
-    XLowerWindow(dpy, icon->window); // Ensure icon stays at bottom
+    XLowerWindow(dpy, icon->window);
     if (render_icon(dpy, icon->window, gc, icon, data, width, height, depth)) {
         free(data);
         return 1;

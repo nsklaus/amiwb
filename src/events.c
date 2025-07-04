@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <string.h>
 
 #define DOUBLE_CLICK_TIME 300 // ms
 
@@ -34,12 +35,25 @@ void handle_button_press(Display *dpy, XButtonEvent *e) {
             click_count = 1;
             last_click_time = current_time;
             printf("Single click on icon at (%d, %d)\n", e->x, e->y);
+            // Start dragging icon
+            dragging_window = global_icon.window;
+            drag_start_x = e->x_root;
+            drag_start_y = e->y_root;
+            win_start_x = global_icon.x;
+            win_start_y = global_icon.y;
+            XGrabPointer(dpy, global_icon.window, False, PointerMotionMask | ButtonReleaseMask,
+                         GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
         } else if (click_count == 1 && (current_time - last_click_time) <= DOUBLE_CLICK_TIME) {
             click_count = 0;
-            printf("Double click on icon at (%d, %d), launching xterm\n", e->x, e->y);
-            system("xterm &"); // Launch xterm in background
+            printf("Double click on icon at (%d, %d), \
+                   launching xterm\n", e->x, e->y);
+            system("xterm &");
+            if (dragging_window == global_icon.window) {
+                XUngrabPointer(dpy, CurrentTime);
+                dragging_window = 0;
+            }
         }
-        XLowerWindow(dpy, global_icon.window); // Ensure icon stays at bottom
+        XLowerWindow(dpy, global_icon.window);
     } else if (e->window == root && e->button == Button1) {
         printf("Clicked desktop at (%d, %d)\n", e->x, e->y);
     } else {
@@ -49,6 +63,8 @@ void handle_button_press(Display *dpy, XButtonEvent *e) {
         Window dummy;
         unsigned int w, h, bw, depth;
         XGetGeometry(dpy, dragging_window, &dummy, &win_start_x, &win_start_y, &w, &h, &bw, &depth);
+        XGrabPointer(dpy, dragging_window, False, PointerMotionMask | ButtonReleaseMask,
+                     GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
     }
 }
 
@@ -73,7 +89,15 @@ void event_loop(void) {
             int dx = e->x_root - drag_start_x;
             int dy = e->y_root - drag_start_y;
             XMoveWindow(dpy, dragging_window, win_start_x + dx, win_start_y + dy);
+            if (dragging_window == global_icon.window) {
+                global_icon.x = win_start_x + dx;
+                global_icon.y = win_start_y + dy;
+
+            }
         } else if (ev.type == ButtonRelease && dragging_window != 0) {
+            printf("ButtonRelease on window %lu\n", ev.xbutton.window);
+            //printf("Icon moved to (%d, %d)\n", global_icon.x, global_icon.y);
+            XUngrabPointer(dpy, CurrentTime);
             dragging_window = 0;
         } else if (ev.type == DestroyNotify) {
             XPointer data;
@@ -90,4 +114,3 @@ void event_loop(void) {
         }
     }
 }
-
