@@ -3,6 +3,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+
 extern XContext frame_context;
 
 void wm_init(Display *display, Window root_window);

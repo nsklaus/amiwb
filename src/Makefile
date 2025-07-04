@@ -1,7 +1,7 @@
 CC = gcc
-CFLAGS = -O2 -Wall
-# PKG = `pkg-config --cflags --libs x11`
-PKG = `pkg-config --cflags --libs x11 x11-xcb xext xmu`
+CFLAGS = -O2 -Wall -g
+PKG = `pkg-config --cflags --libs x11`
+# x11-xcb xext xmu`
 
 TARGET = amiwb
 SRCS = main.c wm.c events.c icon_loader.c
@@ -13,3 +13,4 @@ $(TARGET): $(SRCS)
 
 clean:
 	rm -f $(TARGET)
+

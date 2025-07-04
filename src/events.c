@@ -36,7 +36,8 @@ void handle_button_press(Display *dpy, XButtonEvent *e) {
             printf("Single click on icon at (%d, %d)\n", e->x, e->y);
         } else if (click_count == 1 && (current_time - last_click_time) <= DOUBLE_CLICK_TIME) {
             click_count = 0;
-            printf("Double click on icon at (%d, %d)\n", e->x, e->y);
+            printf("Double click on icon at (%d, %d), launching xterm\n", e->x, e->y);
+            system("xterm &"); // Launch xterm in background
         }
         XLowerWindow(dpy, global_icon.window); // Ensure icon stays at bottom
     } else if (e->window == root && e->button == Button1) {
@@ -89,3 +90,4 @@ void event_loop(void) {
         }
     }
 }
+

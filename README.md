@@ -1,8 +1,6 @@
 # amiwb
 window manager for linux using x11 and xlib
 
-this is an experiment, playing with X11 WMs.
-
 ```
 Project Structure 
 src/
@@ -11,4 +9,11 @@ src/
 ├── events.c       // Event loop logic
 ├── icon_loader.c  // load amiga icon
 ├── Makefile       // plain makefile
+```
+
+start the environment:
+```
+$ Xephyr -br -ac -noreset -screen 800x600 :1
+$ DISPLAY=:1 xterm
+$ DISPLAY=:1 ./amiwb
 ```
