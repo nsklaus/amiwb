@@ -37,6 +37,8 @@
 *.hex
 amiwb
 workbench
+testwb
+workbench.c
 
 # Debug files
 *.dSYM/

@@ -14,6 +14,9 @@ src/
 start the environment:
 ```
 $ Xephyr -br -ac -noreset -screen 800x600 :1
+or
+$ Xwayland :1 -ac &
+then:
 $ DISPLAY=:1 xterm
 $ DISPLAY=:1 ./amiwb
 ```
