@@ -1,0 +1,15 @@
+# config file for amiwb
+#
+# DISPLAY=:1 hsetroot -solid "#000000"   (clear wallpaper)
+
+# wallpaper
+wallpaper_path=/home/klaus/Pictures/backgrounds/classicmac1.png
+
+# desktop font color
+desktop_label_color=white
+
+# workbench font color
+workbench_label_color=white
+
+# workbnech bg color
+wb_bgcolor=#9f9f9f

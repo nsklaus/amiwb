@@ -1,13 +1,17 @@
-#ifndef EVENTS_H        // prevent multiple inclusions of this header file to avoid redefinition errors
-#define EVENTS_H        // define the EVENTS_H macro to mark this header as included
+#ifndef EVENTS_H
+#define EVENTS_H
 
-#include <X11/Xlib.h>   // Xlib header for X11 display and window management functions
+#include <X11/Xlib.h>
+#include "icons.h"
 
-// declare the main event loop function that processes X11 events
-void event_loop(void);
+extern FileIcon *desktop_icons;
+extern int num_desktop_icons;
+extern unsigned long desktop_label_color;
+extern XFontStruct *desktop_font;
 
-// declare function to handle mouse button press events, takes display and event as parameters
-void handle_button_press(Display *dpy, XButtonEvent *e);
+void event_loop(Display *dpy);
+void clean_icons(Display *dpy);
+void quit_amiwb(Display *dpy);
+void restack_windows(Display *dpy);
 
-// end the header guard
 #endif
