@@ -1,13 +1,13 @@
-#ifndef EVENTS_H        // prevent multiple inclusions of this header file to avoid redefinition errors
-#define EVENTS_H        // define the EVENTS_H macro to mark this header as included
+/* Events header: Declares the main event loop function and slot finder. Central for processing X events. */
 
-#include <X11/Xlib.h>   // Xlib header for X11 display and window management functions
+#ifndef EVENTS_H
+#define EVENTS_H
 
-// declare the main event loop function that processes X11 events
-void event_loop(void);
+#include "intuition.h"
+#include "menus.h"
 
-// declare function to handle mouse button press events, takes display and event as parameters
-void handle_button_press(Display *dpy, XButtonEvent *e);
+// Central event loop function.
+void handle_events(RenderContext *ctx, Canvas *desktop, Canvas *windows, int *num_windows, Window root, MenuBar *menubar, int randr_event_base); // Central event loop to process all X events
+int find_free_slot(Canvas *windows, int num_windows, int max_windows);
 
-// end the header guard
 #endif
