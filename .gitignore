@@ -39,6 +39,7 @@ amiwb
 
 # Misc Files
 plan.txt
+compile_flags.txt
 
 # Debug files
 *.dSYM/

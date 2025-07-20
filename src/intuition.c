@@ -4,6 +4,7 @@
 #include "render.h"
 #include "workbench.h"
 #include <X11/cursorfont.h>  // Cursors.
+#include <X11/extensions/Xrender.h>
 #include <stdio.h>  // snprintf.
 #include <stdlib.h>  // free.
 #include <string.h>  // strdup.
@@ -230,6 +231,50 @@ void draw_frame(RenderContext *ctx, Canvas *canvas, Picture pic) {
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH_RIGHT, canvas->height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM -1); 
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width - BORDER_WIDTH_RIGHT -1, canvas->height - BORDER_HEIGHT_BOTTOM +1, 1, BORDER_HEIGHT_BOTTOM -1); 
     // resize button
+
+    // bottom
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width - BORDER_WIDTH_RIGHT + 5, canvas->height - 5, 11, 1);
+    // Right
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -5, canvas->height - 15, 1, 10);
+    // Left
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width - BORDER_WIDTH_RIGHT + 5, canvas->height - 7, 1, 3);
+
+    // diag (black outline)
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -7, canvas->height - 15, 2, 1);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -8, canvas->height - 14, 1, 1);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -9, canvas->height - 13, 1, 1);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -10, canvas->height - 12, 1, 1);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -11, canvas->height - 11, 1, 1);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -12, canvas->height - 10, 1, 1);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -13, canvas->height - 9, 1, 1);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -14, canvas->height - 8, 1, 1);
+
+    // diag (white fill)
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -7, canvas->height - 14, 2, 9);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -8, canvas->height - 13, 1, 8);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -9, canvas->height - 12, 1, 7);
+
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -10, canvas->height - 11, 1, 6);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -11, canvas->height - 10, 1, 5);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -12, canvas->height - 9, 1, 4);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -13, canvas->height - 8, 1, 3);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -14, canvas->height - 7, 1, 2);
+
+
+/*    // Bottom       
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, x, y + size - 1, size, 1); 
+
+    // Right
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, x + size - 1, y, 1, size); 
+
+    // Draw white triangular area
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, x + 1, y + 1, size - 2, size - 2);
+
+    // Draw black stair-step (1x1 rectangles)
+    for (int i = 0; i < size / 2; i++) {
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, x + 1 + i, y + 1 + i, 1, 1); // Steps
+    }
+*/
 
     // arrows (right)
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH_RIGHT -21, canvas->height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM -1); 
