@@ -127,17 +127,95 @@ void iconify_canvas(RenderContext *ctx, Canvas *canvas, Canvas *desktop) {
 
 // Draw frame borders and title.
 void draw_frame(RenderContext *ctx, Canvas *canvas, Picture pic) {
-    XRenderColor frame_color = canvas->active ? BLUE_FRAME : GRAY_FRAME;  // Active/inactive color.
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 0, 0, canvas->width, canvas->titlebar_height);  // Top.
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 0, canvas->titlebar_height, BORDER_WIDTH, canvas->height - canvas->titlebar_height - BORDER_WIDTH);  // Left.
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, canvas->width - BORDER_WIDTH, canvas->titlebar_height, BORDER_WIDTH, canvas->height - canvas->titlebar_height - BORDER_WIDTH);  // Right.
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 0, canvas->height - BORDER_WIDTH, canvas->width, BORDER_WIDTH);  // Bottom.
+
+
+    // common colors, r,g,b,a   (alpha 0xFFFF = full opacity)
+/*    XRenderColor black = {0x0000, 0x0000, 0x0000, 0xFFFF};
+    XRenderColor white = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+    XRenderColor blue  = {0x4858, 0x6F6F, 0xB0B0, 0xFFFF};
+    XRenderColor gray  = {0xf9f9, 0xf9f9, 0xf9f9, 0xFFFF};*/
+
+    // Active and inactive colors
+    XRenderColor frame_color = canvas->active ? BLUE : GRAY;
+
+
+    
+    // =================
+    // Top side of frame
+    // =================
+    
+    // base color of frame (active / inactive) 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 0, 0, canvas->width, canvas->titlebar_height); 
+    // white line on top
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 0, 0, canvas->width, 1); 
+    // black line  on bottom
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, 0, 18 , canvas->width, 2); 
+    // close button separator
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, 29, 1 , 1, canvas->titlebar_height-1); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 30, 1 , 1, canvas->titlebar_height-3); 
+    // close button
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, 11, 6 , 8, 8); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 13, 8 , 4, 4); 
+
+    // lower button separator
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -31, 1 , 1, canvas->titlebar_height-1); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -30, 1 , 1, canvas->titlebar_height-3); 
+    // lower button
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -25, 4 , 15, 8); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &GRAY,  canvas->width -24, 5 , 13, 6); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -20, 7 , 15, 8); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -19, 8 , 13, 6); 
+
+
+    // maximize button separator
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -61, 1 , 1, canvas->titlebar_height-1); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -60, 1 , 1, canvas->titlebar_height-3); 
+    // maximize button
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -53, 4 , 16, 11); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, canvas->width -52, 5 , 14, 9);
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -52, 5 , 8, 6); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -51, 5 , 5, 5); 
+
+    // iconify button separator
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -91, 1 , 1, canvas->titlebar_height-1); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -90, 1 , 1, canvas->titlebar_height-3); 
+    // iconify button
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -83, 4 , 16, 11); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic,&frame_color,canvas->width-82, 5 , 14, 9); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -82, 10, 6, 5 );
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -82, 11, 5, 3 );
+
+    // ==================
+    // Left side of frame
+    // ==================
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 0, canvas->titlebar_height, BORDER_WIDTH, canvas->height - canvas->titlebar_height - BORDER_WIDTH);  
+    // white line on exterior side
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 0, 0, 1, canvas->height); 
+    // black line on interior side
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, BORDER_WIDTH_LEFT -1, 20, 1, canvas->height); 
+
+    // ===================
+    // Right side of frame
+    // ===================
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, canvas->width - BORDER_WIDTH, canvas->titlebar_height, BORDER_WIDTH, canvas->height - canvas->titlebar_height - BORDER_WIDTH);  
+    
+    // white line on interior side
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH, 20, 1, canvas->height); 
+    // black line on exterior side
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -1, 0, 1, canvas->height); 
+
+    // ====================
+    // Bottom side of frame
+    // ====================
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 0, canvas->height - BORDER_HEIGHT_BOTTOM, canvas->width, BORDER_HEIGHT_BOTTOM);  
+    
+
     if (canvas->title && canvas->titlebar_height > 0) {
         XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->backing, ctx->visual, ctx->cmap);
         XftColor text_col;
         text_col.color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}; // White
         int text_y = (canvas->titlebar_height + ctx->font->ascent - ctx->font->descent) / 2 + ctx->font->descent;
-        XftDrawStringUtf8(draw, &text_col, ctx->font, 5, text_y, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
+        XftDrawStringUtf8(draw, &text_col, ctx->font, 50, text_y-5, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
         XftDrawDestroy(draw);
     }
 }

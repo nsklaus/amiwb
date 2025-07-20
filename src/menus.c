@@ -20,13 +20,13 @@ static const char *menu_labels[] = {"Workbench", "Window", "Icons", "Tools"};
 static const int num_menus = sizeof(menu_labels) / sizeof(menu_labels[0]);
 
 // Submenus.
-static const char *submenu_workbench[] = {"Execute ..", "Open..", "", "Quit AmiWB"};
+static const char *submenu_workbench[] = {"Execute Command", "Settings", "Reset AmiWB", "", "Quit AmiWB"};
 static const int num_workbench = sizeof(submenu_workbench) / sizeof(submenu_workbench[0]);
 
-static const char *submenu_window[] = {"Open", "Close", "Iconify"};
+static const char *submenu_window[] = {"New Drawer", "Open Parent", "Close", "Select Contents", "Clean Up", "Snapshot", "Show Hidden", "View By ..", "Iconify"};
 static const int num_window = sizeof(submenu_window) / sizeof(submenu_window[0]);
 
-static const char *submenu_icons[] = {"Clean icons", "Rename"};
+static const char *submenu_icons[] = {"Open ..", "Copy", "Rename", "Information", "Leave Out", "Put Away", "Delete" };
 static const int num_icons = sizeof(submenu_icons) / sizeof(submenu_icons[0]);
 
 static const char *submenu_tools[] = {"Reset Amiwb", "Shell"};
@@ -70,7 +70,7 @@ static void activate_item(RenderContext *ctx, MenuBar *menubar, int item_idx, Ca
             execlp("xterm", "xterm", NULL);  // execlp() replaces the program entirely with the new process
             exit(1);
         }
-    } else if (strcmp(item, "Clean icons") == 0) {
+    } else if (strcmp(item, "Clean Up") == 0) {
         Canvas *target = active_canvas;
         if (!active_canvas || active_canvas->titlebar_height == 0) target = desktop;
         if (target && !target->client_win) {
@@ -112,6 +112,11 @@ void create_menubar(RenderContext *ctx, Window root, MenuBar *menubar) {
 // Draw menubar content.
 void draw_menubar(RenderContext *ctx, MenuBar *menubar) {
     XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->back_pic, &menubar->menubar_bg, 0, 0, menubar->width, MENUBAR_HEIGHT);
+
+    // black line at the bottom of menubar
+    XRenderColor black = {0x0000, 0x0000, 0x0000, 0xFFFF}; // Black color
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->back_pic, &black, 0, MENUBAR_HEIGHT - 1, menubar->width, 1); // Draw 1-pixel black line
+
     XftDraw *draw = XftDrawCreate(ctx->dpy, menubar->backing, ctx->visual, ctx->cmap);
     if (!menubar->menus_open) {
         XftColor text_fg;
@@ -158,12 +163,25 @@ void draw_submenu(RenderContext *ctx, MenuBar *menubar) {
         XMapRaised(ctx->dpy, menubar->submenu_win);  // Map and raise.
     }
     XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &menubar->menubar_bg, 0, 0, menubar->submenu_width, menubar->submenu_height);
+
+    // surround submenu with blackline borders (left, bottom, right)
+    // black line at the bottom of submenu
+    XRenderColor black = {0x0000, 0x0000, 0x0000, 0xFFFF}; // Black color
+
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &black, 0, menubar->submenu_height - 1, menubar->submenu_width, 1);
+
+    // black line at the left of submenu
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &black, 0, 0, 1, menubar->submenu_height);
+    
+    // black line at the right of submenu
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &black, menubar->submenu_width - 1, 0, 1, menubar->submenu_height);
+
     XftDraw *draw = XftDrawCreate(ctx->dpy, menubar->submenu_backing, ctx->visual, ctx->cmap);
     for (int i = 0; i < num; i++) {
         const char *item = submenus[menu_idx][i];
         if (strlen(item) == 0) { // Separator
             XRenderColor sep_color = {0x8888, 0x8888, 0x8888, 0xFFFF};
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &sep_color, 0, i * MENU_ITEM_HEIGHT + MENU_ITEM_HEIGHT / 2, menubar->submenu_width, 1);
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &sep_color, 0, i * MENU_ITEM_HEIGHT + MENU_ITEM_HEIGHT - 1, menubar->submenu_width, 1);
             continue;
         }
         bool highlighted = (i == menubar->hovered_item);
