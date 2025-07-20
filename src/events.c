@@ -117,6 +117,13 @@ void handle_events(RenderContext *ctx, Canvas *desktop, Canvas *windows, int *nu
             }
         } else if (ev.type == ButtonPress) {  // Mouse button down.
             if (ev.xbutton.button == 1) {  // Left button.
+
+                // click window close button
+                if (canvas->titlebar_height > 0 && ev.xbutton.x < BUTTON_CLOSE_SIZE+10 && ev.xbutton.y < BUTTON_CLOSE_SIZE) {
+                    close_canvas(ctx, canvas, windows, num_windows);
+                    continue;
+                }
+
                 press_x = ev.xbutton.x;  // Record press pos.
                 press_y = ev.xbutton.y;
                 if (canvas != desktop) activate_canvas(ctx, canvas, windows, *num_windows);  // Activate non-desktop.
