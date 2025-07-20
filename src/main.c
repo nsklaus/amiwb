@@ -189,12 +189,12 @@ return 1;
             new_canvas->num_icons = 0;
             new_canvas->bg_color = BG_COLOR_FOLDER;
             new_canvas->active = true;
-            new_canvas->titlebar_height = TITLEBAR_HEIGHT;
+            new_canvas->titlebar_height = BORDER_HEIGHT_TOP;
             new_canvas->client_win = children[i];  // Set client window.
             new_canvas->x = wa.x;
-            new_canvas->y = wa.y + MENUBAR_HEIGHT;
-            new_canvas->width = wa.width + BORDER_WIDTH * 2;
-            new_canvas->height = wa.height + TITLEBAR_HEIGHT + BORDER_WIDTH;
+            new_canvas->y = wa.y + BORDER_HEIGHT_TOP;
+            new_canvas->width = wa.width + BORDER_WIDTH_RIGHT + BORDER_WIDTH_LEFT ;
+            new_canvas->height = wa.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
             XSetWindowAttributes attrs = {0};
             attrs.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | StructureNotifyMask | KeyPressMask;
             new_canvas->win = create_canvas_window(&render_ctx, root, new_canvas->x, new_canvas->y, new_canvas->width, new_canvas->height, &attrs);  // Create frame window.
@@ -205,7 +205,7 @@ return 1;
             new_canvas->client_visual = wa.visual;
             XSelectInput(dpy, children[i], StructureNotifyMask | PropertyChangeMask);  // Select events on client.
             XAddToSaveSet(dpy, children[i]);  // Add to save set to reparent on WM restart.
-            XReparentWindow(dpy, children[i], new_canvas->win, BORDER_WIDTH, TITLEBAR_HEIGHT);  // Reparent client into frame.
+            XReparentWindow(dpy, children[i], new_canvas->win, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);  // Reparent client into frame.
             
             Atom net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);  // EWMH atom for window title.
 

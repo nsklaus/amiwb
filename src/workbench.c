@@ -114,7 +114,7 @@ void refresh_icons(RenderContext *ctx, Canvas *canvas) {
 
 // Align icons in grid layout.
 void align_icons(Canvas *canvas) {
-    int border = (canvas->titlebar_height > 0) ? BORDER_WIDTH : 0;
+    int border = (canvas->titlebar_height > 0) ? BORDER_HEIGHT_BOTTOM : 0;
     int y_offset = (canvas->titlebar_height > 0) ? 0 : MENUBAR_HEIGHT;
     int avail_h = canvas->height - canvas->titlebar_height - border * 2 - y_offset;
     int max_rows = avail_h / ICON_SPACING;

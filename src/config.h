@@ -24,8 +24,8 @@
 #define MAX_FILES 10000 // Max icons per canvas.
 
 // TODO: remove both BORDER_WIDTH and TITLEBAR_HEIGHT
-#define BORDER_WIDTH 8 // width of border.
-#define TITLEBAR_HEIGHT 20 // height of titlebar.
+//#define BORDER_WIDTH 8 // width of border.
+//#define TITLEBAR_HEIGHT 20 // height of titlebar.
 
 // frame sizes
 #define BORDER_HEIGHT_TOP 20 // height of titlebar.

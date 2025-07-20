@@ -91,7 +91,7 @@ void handle_events(RenderContext *ctx, Canvas *desktop, Canvas *windows, int *nu
             XRenderFreePicture(ctx->dpy, canvas->win_pic);
             canvas->win_pic = XRenderCreatePicture(ctx->dpy, canvas->win, ctx->fmt, 0, NULL);
             if (canvas->client_win) {  // Resize client if present.
-                XResizeWindow(ctx->dpy, canvas->client_win, canvas->width - BORDER_WIDTH * 2, canvas->height - TITLEBAR_HEIGHT - BORDER_WIDTH);
+                XResizeWindow(ctx->dpy, canvas->client_win, canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT, canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);
                 XRenderFreePicture(ctx->dpy, canvas->client_pic);
                 canvas->client_pic = XRenderCreatePicture(ctx->dpy, canvas->client_win, XRenderFindVisualFormat(ctx->dpy, canvas->client_visual), 0, NULL);
             }
@@ -138,9 +138,9 @@ void handle_events(RenderContext *ctx, Canvas *desktop, Canvas *windows, int *nu
                     is_window_dragging = true;
                     window_drag_canvas = canvas;
                 } else if (canvas != desktop) {  // Check borders for resize.
-                    if (press_x > canvas->width - BORDER_WIDTH * 2 && press_y > canvas->height - BORDER_WIDTH * 2) resize_dir = 1;  // Bottom-right.
-                    else if (press_y > canvas->height - BORDER_WIDTH) resize_dir = 2;  // Bottom.
-                    else if (press_x > canvas->width - BORDER_WIDTH) resize_dir = 3;  // Right.
+                    if (press_x > canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT && press_y > canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM ) resize_dir = 1;  // Bottom-right.
+                    else if (press_y > canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM) resize_dir = 2;  // Bottom.
+                    else if (press_x > canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) resize_dir = 3;  // Right.
                     if (resize_dir) {  // Start resize grab.
                         XGrabPointer(ctx->dpy, ev.xbutton.window, False, PointerMotionMask | ButtonReleaseMask, GrabModeAsync, GrabModeAsync, None, cursor, CurrentTime);
                         drag_start_x = ev.xbutton.x_root;
@@ -162,7 +162,7 @@ void handle_events(RenderContext *ctx, Canvas *desktop, Canvas *windows, int *nu
                 int dy = ev.xmotion.y_root - drag_start_y;
                 int new_width = resize_canvas->width + (resize_dir == 2 ? 0 : dx);
                 int new_height = resize_canvas->height + (resize_dir == 3 ? 0 : dy);
-                if (new_width > 100 && new_height > 100 + TITLEBAR_HEIGHT) {  // Min size check.
+                if (new_width > 100 && new_height > 100 + BORDER_HEIGHT_TOP) {  // Min size check.
                     XResizeWindow(ctx->dpy, resize_canvas->win, new_width, new_height);
                     drag_start_x = ev.xmotion.x_root;
                     drag_start_y = ev.xmotion.y_root;
@@ -246,11 +246,11 @@ void handle_events(RenderContext *ctx, Canvas *desktop, Canvas *windows, int *nu
                             if (slot == *num_windows) (*num_windows)++;
                             new_folder->x = 100;
                             new_folder->y = 100 + MENUBAR_HEIGHT;
-                            new_folder->width = 640 + BORDER_WIDTH * 2;
-                            new_folder->height = 480 + TITLEBAR_HEIGHT + BORDER_WIDTH;
+                            new_folder->width = 640 + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+                            new_folder->height = 480 + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
                             new_folder->bg_color = BG_COLOR_FOLDER;
                             new_folder->active = true;
-                            new_folder->titlebar_height = TITLEBAR_HEIGHT;
+                            new_folder->titlebar_height = BORDER_HEIGHT_TOP;
                             new_folder->path = strdup(selected->path);  // Copy path.
                             char *path_copy = strdup(new_folder->path);
                             char *base = strrchr(path_copy, '/');  // Get basename.
@@ -324,14 +324,14 @@ void handle_events(RenderContext *ctx, Canvas *desktop, Canvas *windows, int *nu
             new_canvas->num_icons = 0;
             new_canvas->bg_color = BG_COLOR_FOLDER;
             new_canvas->active = true;
-            new_canvas->titlebar_height = TITLEBAR_HEIGHT;
+            new_canvas->titlebar_height = BORDER_HEIGHT_TOP;
             new_canvas->client_win = child;
             XWindowAttributes child_attrs;
             XGetWindowAttributes(ctx->dpy, child, &child_attrs);
             new_canvas->x = child_attrs.x;
             new_canvas->y = child_attrs.y + MENUBAR_HEIGHT;
-            new_canvas->width = child_attrs.width + BORDER_WIDTH * 2;
-            new_canvas->height = child_attrs.height + TITLEBAR_HEIGHT + BORDER_WIDTH;
+            new_canvas->width = child_attrs.width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+            new_canvas->height = child_attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
             XSetWindowAttributes attrs = {0};
             attrs.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | StructureNotifyMask | KeyPressMask;
             new_canvas->win = create_canvas_window(ctx, root, new_canvas->x, new_canvas->y, new_canvas->width, new_canvas->height, &attrs);
@@ -340,7 +340,7 @@ void handle_events(RenderContext *ctx, Canvas *desktop, Canvas *windows, int *nu
             new_canvas->client_visual = child_attrs.visual;
             XSelectInput(ctx->dpy, child, StructureNotifyMask | PropertyChangeMask);
             XAddToSaveSet(ctx->dpy, child);
-            XReparentWindow(ctx->dpy, child, new_canvas->win, BORDER_WIDTH, TITLEBAR_HEIGHT);
+            XReparentWindow(ctx->dpy, child, new_canvas->win, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
 
             new_canvas->backing = XCreatePixmap(ctx->dpy, new_canvas->win, new_canvas->width, new_canvas->height, 32);
             new_canvas->back_pic = XRenderCreatePicture(ctx->dpy, new_canvas->backing, ctx->fmt, 0, NULL);
@@ -392,12 +392,15 @@ void handle_events(RenderContext *ctx, Canvas *desktop, Canvas *windows, int *nu
             // Handle for frame
             if (cre->value_mask & CWX) canvas->x = cre->x;
             if (cre->value_mask & CWY) canvas->y = cre->y + MENUBAR_HEIGHT;
-            if (cre->value_mask & CWWidth) canvas->width = cre->width + BORDER_WIDTH * 2;
-            if (cre->value_mask & CWHeight) canvas->height = cre->height + TITLEBAR_HEIGHT + BORDER_WIDTH;
+            if (cre->value_mask & CWWidth) canvas->width = cre->width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+            if (cre->value_mask & CWHeight) canvas->height = cre->height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
             if (cre->value_mask & CWBorderWidth) { /* ignore */ }
             if (cre->value_mask & (CWSibling | CWStackMode)) { /* ignore for now */ }
+            
             XConfigureWindow(ctx->dpy, canvas->win, cre->value_mask & (CWX | CWY | CWWidth | CWHeight), &(XWindowChanges){.x = canvas->x, .y = canvas->y, .width = canvas->width, .height = canvas->height});  // Configure frame.
-            XConfigureWindow(ctx->dpy, cre->window, cre->value_mask & (CWWidth | CWHeight), &(XWindowChanges){.width = canvas->width - BORDER_WIDTH * 2, .height = canvas->height - TITLEBAR_HEIGHT - BORDER_WIDTH});  // Configure client.
+            
+            XConfigureWindow(ctx->dpy, cre->window, cre->value_mask & (CWWidth | CWHeight), &(XWindowChanges){.width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT, .height = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM});  // Configure client.
+            
             redraw_canvas(ctx, canvas, NULL);
         } else if (ev.type == DestroyNotify) {  // Window destroyed.
             Canvas *canvas = NULL;

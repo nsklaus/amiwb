@@ -59,6 +59,7 @@ void set_wallpaper(RenderContext *ctx, const char *path) {
 
 // Redraw canvas, handling dirty rect or full.
 void redraw_canvas(RenderContext *ctx, Canvas *canvas, XRectangle *dirty_rect) {
+    //printf(" canvvas:  x=%d, y=%d, width=%d,  height=%d \n", canvas->x, canvas->y, canvas->width, canvas->height);
     XRectangle full = {0, 0, canvas->width, canvas->height};
     XRectangle *dirty = dirty_rect ? dirty_rect : &full;
     XRenderSetPictureClipRectangles(ctx->dpy, canvas->back_pic, 0, 0, dirty, 1);  // Clip to dirty.
@@ -84,7 +85,7 @@ void redraw_canvas(RenderContext *ctx, Canvas *canvas, XRectangle *dirty_rect) {
         }
     } else {
         draw_frame(ctx, canvas, canvas->back_pic);  // Draw borders.
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->back_pic, &canvas->bg_color, BORDER_WIDTH, canvas->titlebar_height, canvas->width - BORDER_WIDTH * 2, canvas->height - canvas->titlebar_height - BORDER_WIDTH); // Fill content.
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->back_pic, &canvas->bg_color, BORDER_WIDTH_LEFT, canvas->titlebar_height, canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT, canvas->height - canvas->titlebar_height - BORDER_HEIGHT_BOTTOM); // Fill content.
     }
 
     if (canvas->client_win && canvas->client_pic) {  // Composite client if present.
@@ -92,7 +93,7 @@ void redraw_canvas(RenderContext *ctx, Canvas *canvas, XRectangle *dirty_rect) {
         if (XGetWindowAttributes(ctx->dpy, canvas->client_win, &wa) == 0 || wa.map_state != IsViewable) {
             // Skip if not viewable.
         } else {
-            XRenderComposite(ctx->dpy, PictOpOver, canvas->client_pic, None, canvas->back_pic, 0, 0, 0, 0, BORDER_WIDTH, canvas->titlebar_height, canvas->width - BORDER_WIDTH * 2, canvas->height - TITLEBAR_HEIGHT - BORDER_WIDTH);
+            XRenderComposite(ctx->dpy, PictOpOver, canvas->client_pic, None, canvas->back_pic, 0, 0, 0, 0, BORDER_WIDTH_LEFT, canvas->titlebar_height, canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT, canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);
         }
     } else if (!canvas->client_win) { // Composite icons.
         for (int i = 0; i < canvas->num_icons; i++) {

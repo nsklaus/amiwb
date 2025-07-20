@@ -149,17 +149,20 @@ void draw_frame(RenderContext *ctx, Canvas *canvas, Picture pic) {
     // white line on top
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 0, 0, canvas->width, 1); 
     // black line  on bottom
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, 0, 18 , canvas->width, 2); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, 0, 19 , canvas->width, 1); 
+    
+
+
     // close button separator
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, 29, 1 , 1, canvas->titlebar_height-1); 
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 30, 1 , 1, canvas->titlebar_height-3); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 30, 1 , 1, canvas->titlebar_height-2); 
     // close button
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, 11, 6 , 8, 8); 
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 13, 8 , 4, 4); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 12, 7 , 6, 6); 
 
     // lower button separator
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -31, 1 , 1, canvas->titlebar_height-1); 
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -30, 1 , 1, canvas->titlebar_height-3); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -30, 1 , 1, canvas->titlebar_height-2); 
     // lower button
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -25, 4 , 15, 8); 
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &GRAY,  canvas->width -24, 5 , 13, 6); 
@@ -169,7 +172,7 @@ void draw_frame(RenderContext *ctx, Canvas *canvas, Picture pic) {
 
     // maximize button separator
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -61, 1 , 1, canvas->titlebar_height-1); 
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -60, 1 , 1, canvas->titlebar_height-3); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -60, 1 , 1, canvas->titlebar_height-2); 
     // maximize button
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -53, 4 , 16, 11); 
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, canvas->width -52, 5 , 14, 9);
@@ -178,7 +181,7 @@ void draw_frame(RenderContext *ctx, Canvas *canvas, Picture pic) {
 
     // iconify button separator
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -91, 1 , 1, canvas->titlebar_height-1); 
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -90, 1 , 1, canvas->titlebar_height-3); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width -90, 1 , 1, canvas->titlebar_height-2); 
     // iconify button
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -83, 4 , 16, 11); 
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic,&frame_color,canvas->width-82, 5 , 14, 9); 
@@ -188,7 +191,7 @@ void draw_frame(RenderContext *ctx, Canvas *canvas, Picture pic) {
     // ==================
     // Left side of frame
     // ==================
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 0, canvas->titlebar_height, BORDER_WIDTH, canvas->height - canvas->titlebar_height - BORDER_WIDTH);  
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 0, canvas->titlebar_height, BORDER_WIDTH_LEFT, canvas->height - canvas->titlebar_height - BORDER_HEIGHT_BOTTOM);  
     // white line on exterior side
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, 0, 0, 1, canvas->height); 
     // black line on interior side
@@ -197,18 +200,43 @@ void draw_frame(RenderContext *ctx, Canvas *canvas, Picture pic) {
     // ===================
     // Right side of frame
     // ===================
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, canvas->width - BORDER_WIDTH, canvas->titlebar_height, BORDER_WIDTH, canvas->height - canvas->titlebar_height - BORDER_WIDTH);  
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, canvas->width - BORDER_WIDTH_RIGHT, canvas->titlebar_height, BORDER_HEIGHT_BOTTOM, canvas->height - canvas->titlebar_height - BORDER_HEIGHT_BOTTOM);  
     
     // white line on interior side
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH, 20, 1, canvas->height); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH_RIGHT, 20, 1, canvas->height); 
     // black line on exterior side
     XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width -1, 0, 1, canvas->height); 
+
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 1, BORDER_WIDTH_RIGHT, 1); 
+
+    // arrow down separator
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 20, BORDER_WIDTH_RIGHT-2, 1); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 21, BORDER_WIDTH_RIGHT-2, 1); 
+
+    // arrow up separator
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 40, BORDER_WIDTH_RIGHT-2, 1); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 41, BORDER_WIDTH_RIGHT-2, 1); 
+
 
     // ====================
     // Bottom side of frame
     // ====================
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 0, canvas->height - BORDER_HEIGHT_BOTTOM, canvas->width, BORDER_HEIGHT_BOTTOM);  
-    
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &frame_color, 1, canvas->height - BORDER_HEIGHT_BOTTOM, canvas->width -2, BORDER_HEIGHT_BOTTOM);
+    //white line on top
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, BORDER_WIDTH_LEFT, canvas->height - BORDER_HEIGHT_BOTTOM, canvas->width -9 , 1);  
+    // black line on bottom
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, 0, canvas->height - 1, canvas->width, 1); 
+    // resize button separator
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH_RIGHT, canvas->height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM -1); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width - BORDER_WIDTH_RIGHT -1, canvas->height - BORDER_HEIGHT_BOTTOM +1, 1, BORDER_HEIGHT_BOTTOM -1); 
+    // resize button
+
+    // arrows (right)
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH_RIGHT -21, canvas->height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM -1); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width - BORDER_WIDTH_RIGHT -22, canvas->height - BORDER_HEIGHT_BOTTOM +1, 1, BORDER_HEIGHT_BOTTOM -1);  
+    // arrows (left)
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &WHITE, canvas->width - BORDER_WIDTH_RIGHT -41, canvas->height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM -1); 
+    XRenderFillRectangle(ctx->dpy, PictOpSrc, pic, &BLACK, canvas->width - BORDER_WIDTH_RIGHT -42, canvas->height - BORDER_HEIGHT_BOTTOM +1, 1, BORDER_HEIGHT_BOTTOM -1);  
 
     if (canvas->title && canvas->titlebar_height > 0) {
         XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->backing, ctx->visual, ctx->cmap);
