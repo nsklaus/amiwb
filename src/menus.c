@@ -1,345 +1,436 @@
-/* Menus implementation: Creates/drawing menubar/submenus, handles menu events, activates items. Manages UI menus. */
-
+// File: menus.c
 #include "menus.h"
-#include "render.h"
+#include "intuition.h"
 #include "workbench.h"
-#include "config.h"
+#include "render.h"
 #include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
-#include <X11/cursorfont.h>
-#include <stdio.h>
+#include <fontconfig/fontconfig.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>  // fork.
-#include <sys/types.h>  // pid_t.
+#include <unistd.h>
 
-// Menu labels.
-static const char *menu_labels[] = {"Workbench", "Window", "Icons", "Tools"};
-static const int num_menus = sizeof(menu_labels) / sizeof(menu_labels[0]);
+#define RESOURCE_DIR_SYSTEM "/usr/local/share/amiwb"  
+#define RESOURCE_DIR_USER ".config/amiwb"  
 
-// Submenus.
-static const char *submenu_workbench[] = {"Execute Command", "Settings", "Reset AmiWB", "", "Quit AmiWB"};
-static const int num_workbench = sizeof(submenu_workbench) / sizeof(submenu_workbench[0]);
+// Static menu resources
+static XftFont *font = NULL;
+static XftColor text_color;
+static Menu *active_menu = NULL;    // Current dropdown menu
+static Menu *menubar = NULL;        // Global menubar
+static bool show_menus = false;     // State: false for logo, true for menus
 
-static const char *submenu_window[] = {"New Drawer", "Open Parent", "Close", "Select Contents", "Clean Up", "Snapshot", "Show Hidden", "View By ..", "Iconify"};
-static const int num_window = sizeof(submenu_window) / sizeof(submenu_window[0]);
+// Mode-specific arrays
+static char **logo_items = NULL;
+static int logo_item_count = 1;
+static char **full_menu_items = NULL;
+static int full_menu_item_count = 0;
+static Menu **full_submenus = NULL;
 
-static const char *submenu_icons[] = {"Open ..", "Copy", "Rename", "Information", "Leave Out", "Put Away", "Delete" };
-static const int num_icons = sizeof(submenu_icons) / sizeof(submenu_icons[0]);
-
-static const char *submenu_tools[] = {"Reset Amiwb", "Shell"};
-static const int num_tools = sizeof(submenu_tools) / sizeof(submenu_tools[0]);
-
-static const char **submenus[] = {submenu_workbench, submenu_window, submenu_icons, submenu_tools};
-static const int *num_items[] = {&num_workbench, &num_window, &num_icons, &num_tools};
-
-// Get text width using Xft.
-static int get_text_width(RenderContext *ctx, const char *text) {
-    XGlyphInfo extents;
-    XftTextExtentsUtf8(ctx->dpy, ctx->font, (FcChar8 *)text, strlen(text), &extents);
-    return extents.xOff;
+static char *get_resource_path(const char *rel_path) {
+    char *home = getenv("HOME");
+    char user_path[1024];
+    snprintf(user_path, sizeof(user_path), "%s/%s/%s", home, RESOURCE_DIR_USER, rel_path);
+    if (access(user_path, F_OK) == 0) return strdup(user_path);
+    char sys_path[1024];
+    snprintf(sys_path, sizeof(sys_path), "%s/%s", RESOURCE_DIR_SYSTEM, rel_path);
+    return strdup(sys_path);
 }
 
-// Menu width with padding.
-static int get_menu_width(RenderContext *ctx, const char *label) {
-    return get_text_width(ctx, label) + 10;
-}
+// Initialize menu resources
+void init_menus(void) {
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return;
 
-// Max submenu item width.
-static int get_submenu_width(RenderContext *ctx, int menu_idx) {
-    int max_w = get_text_width(ctx, "          ");
-    for (int i = 0; i < *num_items[menu_idx]; i++) {
-        if (strlen(submenus[menu_idx][i]) == 0) continue;
-        int w = get_text_width(ctx, submenus[menu_idx][i]) + 10;
-        if (w > max_w) max_w = w;
+    char *font_path = get_resource_path("fonts/SourceCodePro-Regular.otf");
+    FcPattern *pattern = FcPatternCreate();
+    FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)font_path);
+    FcPatternAddDouble(pattern, FC_SIZE, 12.0);
+    FcPatternAddDouble(pattern, FC_DPI, 75);
+    FcConfigSubstitute(NULL, pattern, FcMatchPattern);
+    XftDefaultSubstitute(ctx->dpy, DefaultScreen(ctx->dpy), pattern);
+    font = XftFontOpenPattern(ctx->dpy, pattern);
+    if (!font) {
+        fprintf(stderr, "Failed to load font %s\n", font_path);
+        FcPatternDestroy(pattern);
+        free(font_path);
+        return;
     }
-    return max_w;
-}
+    free(font_path);
 
-// Activate menu item action.
-static void activate_item(RenderContext *ctx, MenuBar *menubar, int item_idx, Canvas *active_canvas, Canvas *desktop, int *running) {
-    int menu_idx = menubar->submenu_menu;
-    const char *item = submenus[menu_idx][item_idx];
-    if (strcmp(item, "Quit AmiWB") == 0) {
-        *running = 0;  // Exit loop.
-    } else if (strcmp(item, "Shell") == 0) {
-        if (fork() == 0) {  // Child process.
-            system("xrdb ~/.Xresources"); // system() blocks until the command completes and resume the program
-            execlp("xterm", "xterm", NULL);  // execlp() replaces the program entirely with the new process
-            exit(1);
-        }
-    } else if (strcmp(item, "Clean Up") == 0) {
-        Canvas *target = active_canvas;
-        if (!active_canvas || active_canvas->titlebar_height == 0) target = desktop;
-        if (target && !target->client_win) {
-            align_icons(target);  // Realign.
-            redraw_canvas(ctx, target, NULL);
-        }
-    } else if (strcmp(item, "Iconify") == 0) {
-        if (active_canvas && active_canvas->titlebar_height > 0) {
-            iconify_canvas(ctx, active_canvas, desktop);
-        }
-    } // Stub others
-    close_menus(ctx, menubar);
-    draw_menubar(ctx, menubar);
-}
+    text_color.color = (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}; // Black
 
-// Create menubar window.
-void create_menubar(RenderContext *ctx, Window root, MenuBar *menubar) {
-    menubar->width = DisplayWidth(ctx->dpy, DefaultScreen(ctx->dpy));
-    menubar->menus_open = false;
-    menubar->hovered_menu = -1;
-    menubar->hovered_item = -1;
-    menubar->submenu_win = None;
-    menubar->menubar_bg = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}; // White
-    menubar->menubar_fg = (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}; // Black
-    menubar->highlight_bg = (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}; // Black
-    menubar->highlight_fg = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}; // White
-    menubar->gray_fg = (XRenderColor){0x8888, 0x8888, 0x8888, 0xFFFF}; // Gray
-    menubar->menu_spacing = get_text_width(ctx, "     "); // 5 spaces
-    XSetWindowAttributes attrs = {0};
-    attrs.event_mask = EnterWindowMask | LeaveWindowMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | StructureNotifyMask;
-    menubar->win = create_canvas_window(ctx, root, 0, 0, menubar->width, MENUBAR_HEIGHT, &attrs);
-    XMapWindow(ctx->dpy, menubar->win);
-    menubar->backing = XCreatePixmap(ctx->dpy, menubar->win, menubar->width, MENUBAR_HEIGHT, 32);
-    menubar->back_pic = XRenderCreatePicture(ctx->dpy, menubar->backing, ctx->fmt, 0, NULL);
-    menubar->win_pic = XRenderCreatePicture(ctx->dpy, menubar->win, ctx->fmt, 0, NULL);
-    draw_menubar(ctx, menubar);
-}
-
-// Draw menubar content.
-void draw_menubar(RenderContext *ctx, MenuBar *menubar) {
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->back_pic, &menubar->menubar_bg, 0, 0, menubar->width, MENUBAR_HEIGHT);
-
-    // black line at the bottom of menubar
-    XRenderColor black = {0x0000, 0x0000, 0x0000, 0xFFFF}; // Black color
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->back_pic, &black, 0, MENUBAR_HEIGHT - 1, menubar->width, 1); // Draw 1-pixel black line
-
-    XftDraw *draw = XftDrawCreate(ctx->dpy, menubar->backing, ctx->visual, ctx->cmap);
-    if (!menubar->menus_open) {
-        XftColor text_fg;
-        text_fg.color = menubar->menubar_fg;
-        XftDrawStringUtf8(draw, &text_fg, ctx->font, 15, 15, (FcChar8 *)"AmiDesktop", strlen("AmiDesktop"));  // Default label.
+    menubar = malloc(sizeof(Menu));
+    if (!menubar) return;
+    menubar->canvas = create_canvas(NULL, 0, 0, XDisplayWidth(ctx->dpy, DefaultScreen(ctx->dpy)), MENU_ITEM_HEIGHT, MENU);
+    if (!menubar->canvas) {
+        free(menubar);
+        menubar = NULL;
+        return;
     }
-    if (menubar->menus_open) {
-        int x = 15;
-        for (int i = 0; i < num_menus; i++) {
-            bool highlighted = (i == menubar->hovered_menu);
-            if (highlighted) {
-                XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->back_pic, &menubar->highlight_bg, x, 0, get_menu_width(ctx, menu_labels[i]), MENUBAR_HEIGHT);
-            }
-            XftColor text_col;
-            text_col.color = highlighted ? menubar->highlight_fg : menubar->menubar_fg;
-            XftDrawStringUtf8(draw, &text_col, ctx->font, x + 5, 15, (FcChar8 *)menu_labels[i], strlen(menu_labels[i]));
-            x += get_menu_width(ctx, menu_labels[i]) + menubar->menu_spacing;
-        }
-    }
-    XftDrawDestroy(draw);
-    XRenderComposite(ctx->dpy, PictOpSrc, menubar->back_pic, None, menubar->win_pic, 0, 0, 0, 0, 0, 0, menubar->width, MENUBAR_HEIGHT);
-    XSync(ctx->dpy, False);
+    menubar->canvas->bg_color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+    menubar->canvas->bg_color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+/*    fprintf(stderr, "Set menubar bg_color: R=0x%04X, G=0x%04X, B=0x%04X, A=0x%04X\n",
+        menubar->canvas->bg_color.red, menubar->canvas->bg_color.green,
+        menubar->canvas->bg_color.blue, menubar->canvas->bg_color.alpha);*/
+    menubar->item_count = 4;
+    menubar->items = malloc(menubar->item_count * sizeof(char*));
+    menubar->items[0] = strdup("Workbench");
+    menubar->items[1] = strdup("Window");
+    menubar->items[2] = strdup("Icons");
+    menubar->items[3] = strdup("Tools");
+    menubar->selected_item = -1;
+    menubar->parent_menu = NULL;
+    menubar->submenus = malloc(menubar->item_count * sizeof(Menu*));
+    memset(menubar->submenus, 0, menubar->item_count * sizeof(Menu*));
+
+    // Workbench submenu (index 0)
+    Menu *wb_submenu = malloc(sizeof(Menu));
+    wb_submenu->item_count = 4;
+    wb_submenu->items = malloc(wb_submenu->item_count * sizeof(char*));
+    wb_submenu->items[0] = strdup("Execute");
+    wb_submenu->items[1] = strdup("Settings");
+    wb_submenu->items[2] = strdup("About");
+    wb_submenu->items[3] = strdup("Quit AmiWB");
+    wb_submenu->selected_item = -1;
+    wb_submenu->parent_menu = menubar;
+    wb_submenu->parent_index = 0;
+    wb_submenu->submenus = NULL;
+    wb_submenu->canvas = NULL;
+    menubar->submenus[0] = wb_submenu;
+
+    // Window submenu (index 1)
+    Menu *win_submenu = malloc(sizeof(Menu));
+    win_submenu->item_count = 7;
+    win_submenu->items = malloc(win_submenu->item_count * sizeof(char*));
+    win_submenu->items[0] = strdup("New Drawer");
+    win_submenu->items[1] = strdup("Open Parent");
+    win_submenu->items[2] = strdup("Close");
+    win_submenu->items[3] = strdup("Select Contents");
+    win_submenu->items[4] = strdup("Clean Up");
+    win_submenu->items[5] = strdup("Show");
+    win_submenu->items[6] = strdup("View By ..");
+    win_submenu->selected_item = -1;
+    win_submenu->parent_menu = menubar;
+    win_submenu->parent_index = 1;
+    win_submenu->submenus = NULL;
+    win_submenu->canvas = NULL;
+    menubar->submenus[1] = win_submenu;
+
+    // Icons submenu (index 2)
+    Menu *icons_submenu = malloc(sizeof(Menu));
+    icons_submenu->item_count = 5;
+    icons_submenu->items = malloc(icons_submenu->item_count * sizeof(char*));
+    icons_submenu->items[0] = strdup("Open");
+    icons_submenu->items[1] = strdup("Copy");
+    icons_submenu->items[2] = strdup("Rename");
+    icons_submenu->items[3] = strdup("Information");
+    icons_submenu->items[4] = strdup("delete");
+    icons_submenu->selected_item = -1;
+    icons_submenu->parent_menu = menubar;
+    icons_submenu->parent_index = 2;
+    icons_submenu->submenus = NULL;
+    icons_submenu->canvas = NULL;
+    menubar->submenus[2] = icons_submenu;
+
+    // Tools submenu (index 3)
+    Menu *tools_submenu = malloc(sizeof(Menu));
+    tools_submenu->item_count = 3;
+    tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
+    tools_submenu->items[0] = strdup("XCalc");
+    tools_submenu->items[1] = strdup("Sublime Text");
+    tools_submenu->items[2] = strdup("Shell");
+    tools_submenu->selected_item = -1;
+    tools_submenu->parent_menu = menubar;
+    tools_submenu->parent_index = 3;
+    tools_submenu->submenus = NULL;
+    tools_submenu->canvas = NULL;
+    menubar->submenus[3] = tools_submenu;
+
+    // Setup mode-specific arrays
+    logo_items = malloc(logo_item_count * sizeof(char*));
+    logo_items[0] = strdup("AmiWB");
+
+    full_menu_item_count = menubar->item_count;
+    full_menu_items = menubar->items;
+    full_submenus = menubar->submenus;
+
+    // Initial default mode: logo
+    menubar->items = logo_items;
+    menubar->item_count = logo_item_count;
+    menubar->submenus = NULL;
+
+    redraw_canvas(menubar->canvas);
 }
 
-// Draw open submenu.
-void draw_submenu(RenderContext *ctx, MenuBar *menubar) {
-    int menu_idx = menubar->submenu_menu;
-    int num = *num_items[menu_idx];
-    menubar->submenu_width = get_submenu_width(ctx, menu_idx);
-    menubar->submenu_height = num * MENU_ITEM_HEIGHT;
-    if (menubar->submenu_win == None) {
-        XSetWindowAttributes attrs = {0};
-        attrs.colormap = ctx->cmap;
-        attrs.border_pixel = 0;
-        attrs.background_pixel = 0;
-        attrs.override_redirect = True;
-        attrs.event_mask = PointerMotionMask | ButtonPressMask | ButtonReleaseMask | LeaveWindowMask | EnterWindowMask;
-        menubar->submenu_win = XCreateWindow(ctx->dpy, DefaultRootWindow(ctx->dpy), menubar->submenu_x, MENUBAR_HEIGHT, menubar->submenu_width, menubar->submenu_height, 0, 32, InputOutput, ctx->visual, CWColormap | CWBorderPixel | CWBackPixel | CWOverrideRedirect | CWEventMask, &attrs);
-        Cursor cursor = XCreateFontCursor(ctx->dpy, XC_left_ptr);
-        XDefineCursor(ctx->dpy, menubar->submenu_win, cursor);
-        menubar->submenu_backing = XCreatePixmap(ctx->dpy, menubar->submenu_win, menubar->submenu_width, menubar->submenu_height, 32);
-        menubar->submenu_back_pic = XRenderCreatePicture(ctx->dpy, menubar->submenu_backing, ctx->fmt, 0, NULL);
-        menubar->submenu_win_pic = XRenderCreatePicture(ctx->dpy, menubar->submenu_win, ctx->fmt, 0, NULL);
-        XMapRaised(ctx->dpy, menubar->submenu_win);  // Map and raise.
+// Cleanup menus
+void cleanup_menus(void) {
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return;
+
+    if (font) XftFontClose(ctx->dpy, font);
+    if (text_color.pixel) XftColorFree(ctx->dpy, DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)), DefaultColormap(ctx->dpy, DefaultScreen(ctx->dpy)), &text_color);
+    if (active_menu) {
+        if (active_menu->canvas) destroy_canvas(active_menu->canvas);
+        free(active_menu);
     }
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &menubar->menubar_bg, 0, 0, menubar->submenu_width, menubar->submenu_height);
-
-    // surround submenu with blackline borders (left, bottom, right)
-    // black line at the bottom of submenu
-    XRenderColor black = {0x0000, 0x0000, 0x0000, 0xFFFF}; // Black color
-
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &black, 0, menubar->submenu_height - 1, menubar->submenu_width, 1);
-
-    // black line at the left of submenu
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &black, 0, 0, 1, menubar->submenu_height);
-    
-    // black line at the right of submenu
-    XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &black, menubar->submenu_width - 1, 0, 1, menubar->submenu_height);
-
-    XftDraw *draw = XftDrawCreate(ctx->dpy, menubar->submenu_backing, ctx->visual, ctx->cmap);
-    for (int i = 0; i < num; i++) {
-        const char *item = submenus[menu_idx][i];
-        if (strlen(item) == 0) { // Separator
-            XRenderColor sep_color = {0x8888, 0x8888, 0x8888, 0xFFFF};
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &sep_color, 0, i * MENU_ITEM_HEIGHT + MENU_ITEM_HEIGHT - 1, menubar->submenu_width, 1);
-            continue;
-        }
-        bool highlighted = (i == menubar->hovered_item);
-        bool is_enabled = true;
-        if (menu_idx == 1 && strcmp(item, "Iconify") == 0) {
-            is_enabled = (ctx->active_canvas && ctx->active_canvas->titlebar_height > 0);
-        }
-        if (!is_enabled) highlighted = false;
-        if (highlighted) {
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, &menubar->highlight_bg, 0, i * MENU_ITEM_HEIGHT, menubar->submenu_width, MENU_ITEM_HEIGHT);
-        }
-        XftColor text_col;
-        text_col.color = is_enabled ? (highlighted ? menubar->highlight_fg : menubar->menubar_fg) : menubar->gray_fg;
-        XftDrawStringUtf8(draw, &text_col, ctx->font, 5, i * MENU_ITEM_HEIGHT + 15, (FcChar8 *)item, strlen(item));
-    }
-    XftDrawDestroy(draw);
-    XRenderComposite(ctx->dpy, PictOpSrc, menubar->submenu_back_pic, None, menubar->submenu_win_pic, 0, 0, 0, 0, 0, 0, menubar->submenu_width, menubar->submenu_height);
-    XSync(ctx->dpy, False);
-}
-
-// Close open menus.
-void close_menus(RenderContext *ctx, MenuBar *menubar) {
-    menubar->menus_open = false;
-    menubar->hovered_menu = -1;
-    menubar->hovered_item = -1;
-    if (menubar->submenu_win != None) {
-        XUnmapWindow(ctx->dpy, menubar->submenu_win);
-        XSync(ctx->dpy, False);
-        XRenderFreePicture(ctx->dpy, menubar->submenu_win_pic);
-        XRenderFreePicture(ctx->dpy, menubar->submenu_back_pic);
-        XDestroyWindow(ctx->dpy, menubar->submenu_win);
-        XFreePixmap(ctx->dpy, menubar->submenu_backing);
-        XSync(ctx->dpy, False);
-        menubar->submenu_win = None;
-    }
-}
-
-// Handle events for menubar/submenu.
-void handle_menubar_event(RenderContext *ctx, XEvent *ev, MenuBar *menubar, Canvas *desktop, int *running) {
-    if (ev->type == ConfigureNotify) {  // Resize.
-        menubar->width = ev->xconfigure.width;
-        XFreePixmap(ctx->dpy, menubar->backing);
-        menubar->backing = XCreatePixmap(ctx->dpy, menubar->win, menubar->width, MENUBAR_HEIGHT, 32);
-        XRenderFreePicture(ctx->dpy, menubar->back_pic);
-        menubar->back_pic = XRenderCreatePicture(ctx->dpy, menubar->backing, ctx->fmt, 0, NULL);
-        XRenderFreePicture(ctx->dpy, menubar->win_pic);
-        menubar->win_pic = XRenderCreatePicture(ctx->dpy, menubar->win, ctx->fmt, 0, NULL);
-        draw_menubar(ctx, menubar);
-    } else if (ev->type == ButtonPress) {
-        if (ev->xbutton.button == 3) { // RMB toggle menus.
-            if (!menubar->menus_open) {
-                menubar->menus_open = true;
-                draw_menubar(ctx, menubar);
-            } else {
-                close_menus(ctx, menubar);
-                draw_menubar(ctx, menubar);
-            }
-        } else if (ev->xbutton.button == 1) { // LMB activate or close.
-            if (menubar->menus_open) {
-                if (ev->xany.window == menubar->submenu_win && menubar->hovered_item != -1) {
-                    activate_item(ctx, menubar, menubar->hovered_item, ctx->active_canvas, desktop, running);
-                    return;
-                }
-                close_menus(ctx, menubar);
-                draw_menubar(ctx, menubar);
+    if (menubar) {
+        if (menubar->canvas) destroy_canvas(menubar->canvas);
+        // Free full menu items and submenus
+        for (int i = 0; i < full_menu_item_count; i++) {
+            free(full_menu_items[i]);
+            if (full_submenus[i]) {
+                for (int j = 0; j < full_submenus[i]->item_count; j++) free(full_submenus[i]->items[j]);
+                free(full_submenus[i]->items);
+                free(full_submenus[i]);
             }
         }
-    } else if (ev->type == MotionNotify) {
-        int x = ev->xmotion.x;
-        int y = ev->xmotion.y;
-        if (ev->xany.window == menubar->win) {
-            if (menubar->menus_open) {
-                int menu_x = 15;
-                menubar->hovered_menu = -1;
-                for (int i = 0; i < num_menus; i++) {
-                    int w = get_menu_width(ctx, menu_labels[i]);
-                    if (x >= menu_x && x < menu_x + w && y >= 0 && y < MENUBAR_HEIGHT) {
-                        menubar->hovered_menu = i;
-                        break;
-                    }
-                    menu_x += get_menu_width(ctx, menu_labels[i]) + menubar->menu_spacing;
-                }
-                draw_menubar(ctx, menubar);
-                if (menubar->hovered_menu != -1) {
-                    if (menubar->submenu_menu != menubar->hovered_menu || menubar->submenu_win == None) {
-                        if (menubar->submenu_win != None) {  // Close old submenu.
-                            XUnmapWindow(ctx->dpy, menubar->submenu_win);
-                            XSync(ctx->dpy, False);
-                            XRenderFreePicture(ctx->dpy, menubar->submenu_win_pic);
-                            XRenderFreePicture(ctx->dpy, menubar->submenu_back_pic);
-                            XDestroyWindow(ctx->dpy, menubar->submenu_win);
-                            XFreePixmap(ctx->dpy, menubar->submenu_backing);
-                            XSync(ctx->dpy, False);
-                            menubar->submenu_win = None;
-                        }
-                        menubar->submenu_menu = menubar->hovered_menu;
-                        menubar->submenu_x = 15;
-                        for (int j = 0; j < menubar->hovered_menu; j++) {
-                            menubar->submenu_x += get_menu_width(ctx, menu_labels[j]) + menubar->menu_spacing;
-                        }
-                        menubar->hovered_item = -1;
-                        draw_submenu(ctx, menubar);  // Draw new.
-                    }
-                } else {
-                    menubar->hovered_item = -1;
-                    // Do not close submenu if mouse leaves menubar but enters submenu
-                    int root_x, root_y;
-                    Window root_child, child;
-                    unsigned int mask;
-                    XQueryPointer(ctx->dpy, menubar->win, &root_child, &child, &root_x, &root_y, &x, &y, &mask);
-                    if (child == menubar->submenu_win) return;
-                    if (menubar->submenu_win != None) {  // Close.
-                        XUnmapWindow(ctx->dpy, menubar->submenu_win);
-                        XSync(ctx->dpy, False);
-                        XRenderFreePicture(ctx->dpy, menubar->submenu_win_pic);
-                        XRenderFreePicture(ctx->dpy, menubar->submenu_back_pic);
-                        XDestroyWindow(ctx->dpy, menubar->submenu_win);
-                        XFreePixmap(ctx->dpy, menubar->submenu_backing);
-                        XSync(ctx->dpy, False);
-                        menubar->submenu_win = None;
-                    }
-                }
-            }
-        } else if (ev->xany.window == menubar->submenu_win) {
-            menubar->hovered_item = y / MENU_ITEM_HEIGHT;
-            if (strlen(submenus[menubar->submenu_menu][menubar->hovered_item]) == 0) menubar->hovered_item = -1; // Separator
-            draw_submenu(ctx, menubar);
-        }
-    } else if (ev->type == LeaveNotify) {
-        if (ev->xany.window == menubar->win) {
-            int root_x, root_y, win_x, win_y;
-            Window root_child, child;
-            unsigned int mask;
-            XQueryPointer(ctx->dpy, DefaultRootWindow(ctx->dpy), &root_child, &child, &root_x, &root_y, &win_x, &win_y, &mask);
-            if (child == menubar->submenu_win) return;
-            menubar->hovered_menu = -1;
-            draw_menubar(ctx, menubar);
-            close_menus(ctx, menubar);
-        } else if (ev->xany.window == menubar->submenu_win) {
-            int root_x, root_y, win_x, win_y;
-            Window root_child, child;
-            unsigned int mask;
-            XQueryPointer(ctx->dpy, DefaultRootWindow(ctx->dpy), &root_child, &child, &root_x, &root_y, &win_x, &win_y, &mask);
-            if (child == menubar->win) {
-                menubar->hovered_item = -1;
-                draw_submenu(ctx, menubar);
-                return;
-            }
-            menubar->hovered_item = -1;
-            close_menus(ctx, menubar);
-            draw_menubar(ctx, menubar);
-        }
-    } else if (ev->type == EnterNotify) {
-        if (ev->xany.window == menubar->submenu_win) {
-            // Keep open
-        }
-    } else if (ev->type == Expose) {
-        draw_menubar(ctx, menubar);
-        if (menubar->submenu_win != None) draw_submenu(ctx, menubar);
+        free(full_menu_items);
+        free(full_submenus);
+        // Free logo items
+        for (int i = 0; i < logo_item_count; i++) free(logo_items[i]);
+        free(logo_items);
+        free(menubar);
     }
+}
+
+// Get show_menus state
+bool get_show_menus_state(void) {
+    return show_menus;
+}
+
+// Toggle menubar state
+void toggle_menubar_state(void) {
+    show_menus = !show_menus;
+    if (show_menus) {
+        menubar->items = full_menu_items;
+        menubar->item_count = full_menu_item_count;
+        menubar->submenus = full_submenus;
+    } else {
+        menubar->items = logo_items;
+        menubar->item_count = logo_item_count;
+        menubar->submenus = NULL;
+        menubar->selected_item = -1;
+        if (active_menu) {  // Close any open submenu
+            RenderContext *ctx = get_render_context();
+            if (ctx) XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+            destroy_canvas(active_menu->canvas);
+            active_menu = NULL;
+        }
+    }
+    if (menubar) redraw_canvas(menubar->canvas);
+}
+
+// Get global menubar canvas
+Canvas *get_menubar(void) {
+    return menubar ? menubar->canvas : NULL;
+}
+
+// Get the menubar Menu struct
+Menu *get_menubar_menu(void) {
+    return menubar;
+}
+
+// Get Menu for a canvas
+Menu *get_menu_by_canvas(Canvas *canvas) {
+    if (canvas == get_menubar()) return get_menubar_menu();
+    if (active_menu && active_menu->canvas == canvas) return active_menu;
+    return NULL;
+}
+
+// Handle motion for menubar
+void menu_handle_menubar_motion(XMotionEvent *event) {
+    if (!show_menus) return;
+
+    RenderContext *ctx = get_render_context();
+    if (!ctx || !menubar) return;
+    int prev_selected = menubar->selected_item;
+    menubar->selected_item = -1;
+    int x_pos = 10;
+    int padding = 20;
+    for (int i = 0; i < menubar->item_count; i++) {
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)menubar->items[i], strlen(menubar->items[i]), &extents);
+        int item_width = extents.xOff + padding;
+        if (event->x >= x_pos && event->x < x_pos + item_width) {
+            menubar->selected_item = i;
+            break;
+        }
+        x_pos += item_width;
+    }
+    if (menubar->selected_item != prev_selected) {
+        if (active_menu) {
+            XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+            destroy_canvas(active_menu->canvas);
+            active_menu = NULL;
+        }
+        if (menubar->selected_item != -1 && menubar->submenus[menubar->selected_item]) {
+            int submenu_x = 10;
+            for (int j = 0; j < menubar->selected_item; j++) {
+                XGlyphInfo extents;
+                XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)menubar->items[j], strlen(menubar->items[j]), &extents);
+                submenu_x += extents.xOff + padding;
+            }
+            show_dropdown_menu(menubar, menubar->selected_item, submenu_x, MENU_ITEM_HEIGHT);
+        }
+        redraw_canvas(menubar->canvas);
+    }
+}
+
+// Handle button press on dropdown
+void menu_handle_button_press(XButtonEvent *event) {
+    RenderContext *ctx = get_render_context();
+    if (!ctx || !active_menu || event->window != active_menu->canvas->win) return;
+
+    int item = event->y / MENU_ITEM_HEIGHT;
+    if (item >= 0 && item < active_menu->item_count) {
+        handle_menu_selection(active_menu, item);
+    }
+    // Close submenu
+    XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+    destroy_canvas(active_menu->canvas);
+    active_menu = NULL;
+    redraw_canvas(menubar->canvas);
+}
+
+// Handle button press on menubar
+void menu_handle_menubar_press(XButtonEvent *event) {
+    if (event->button == Button3) {
+        toggle_menubar_state();
+    }
+}
+
+// Handle motion on dropdown
+void menu_handle_motion_notify(XMotionEvent *event) {
+    RenderContext *ctx = get_render_context();
+    if (!ctx || !active_menu || event->window != active_menu->canvas->win) return;
+
+    int prev_selected = active_menu->selected_item;
+    active_menu->selected_item = event->y / MENU_ITEM_HEIGHT;
+    if (active_menu->selected_item < 0 || active_menu->selected_item >= active_menu->item_count) {
+        active_menu->selected_item = -1;
+    }
+    if (active_menu->selected_item != prev_selected) {
+        redraw_canvas(active_menu->canvas);
+    }
+}
+
+// Handle key press for menu navigation
+void menu_handle_key_press(XKeyEvent *event) {
+    printf("menu bar registered key press event\n");
+}
+
+// Show dropdown menu 
+void show_dropdown_menu(Menu *menu, int index, int x, int y) {
+    if (!menu || index < 0 || index >= menu->item_count || !menu->submenus[index]) return;
+    active_menu = menu->submenus[index];
+    int submenu_width = get_submenu_width(active_menu);
+    active_menu->canvas = create_canvas(NULL, x, y, submenu_width, active_menu->item_count * MENU_ITEM_HEIGHT, MENU);
+    if (!active_menu->canvas) return;
+    active_menu->canvas->bg_color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+/*    fprintf(stderr, "Set menubar bg_color: R=0x%04X, G=0x%04X, B=0x%04X, A=0x%04X\n",
+        menubar->canvas->bg_color.red, menubar->canvas->bg_color.green,
+        menubar->canvas->bg_color.blue, menubar->canvas->bg_color.alpha);*/
+    active_menu->selected_item = -1;
+    XMapRaised(get_render_context()->dpy, active_menu->canvas->win);
+    redraw_canvas(active_menu->canvas);
+}
+
+// Process menu item selection
+void handle_menu_selection(Menu *menu, int item_index) {
+    const char *item = menu->items[item_index];
+    if (menu->parent_menu != menubar) return;  // Safeguard for non-top-level (future-proof)
+
+    switch (menu->parent_index) {
+        case 0:  // Workbench
+            printf("reached 'Workbench' menu\n");
+            if (strcmp(item, "Execute") == 0) {
+                // TODO: Implement execute command logic
+            } else if (strcmp(item, "Settings") == 0) {
+                // TODO: Open settings dialog or file
+            } else if (strcmp(item, "About") == 0) {
+                // TODO: Display about information
+            } else if (strcmp(item, "Quit AmiWB") == 0) {
+                cleanup_menus();
+                cleanup_workbench();
+                cleanup_intuition();
+                cleanup_render();
+                exit(0);
+            }
+            break;
+
+        case 1:  // Window
+            printf("reached 'Window' menu\n");
+            if (strcmp(item, "New Drawer") == 0) {
+                // TODO: Create new directory/drawer
+            } else if (strcmp(item, "Open Parent") == 0) {
+                // TODO: Navigate to parent directory
+            } else if (strcmp(item, "Close") == 0) {
+                // TODO: Close current window
+            } else if (strcmp(item, "Select Contents") == 0) {
+                // TODO: Select all icons in window
+            } else if (strcmp(item, "Clean Up") == 0) {
+                // TODO: Organize icons
+            } else if (strcmp(item, "Show") == 0) {
+                // TODO: Show hidden items or similar
+            } else if (strcmp(item, "View By ..") == 0) {
+                // TODO: Change view mode (e.g., list/icon)
+            }
+            break;
+
+        case 2:  // Icons
+            printf("reached 'Icons' menu\n");
+            if (strcmp(item, "Open") == 0) {
+                // TODO: Open selected icon
+            } else if (strcmp(item, "Copy") == 0) {
+                // TODO: Copy selected icon
+            } else if (strcmp(item, "Rename") == 0) {
+                // TODO: Rename selected icon
+            } else if (strcmp(item, "Information") == 0) {
+                // TODO: Show icon properties
+            } else if (strcmp(item, "delete") == 0) {
+                // TODO: Delete selected icon
+            }
+            break;
+
+        case 3:  // Tools
+            printf("reached 'Tools' menu\n");
+            if (strcmp(item, "XCalc") == 0) {
+                system("xcalc &");  // TODO: Handle errors and paths
+            } else if (strcmp(item, "Sublime Text") == 0) {
+                system("subl &");  // Assuming 'subl' command; adjust as needed
+            } else if (strcmp(item, "Shell") == 0) {
+                printf("launching xterm\n");
+                system("xterm &");  // Or preferred terminal
+            }
+            break;
+
+        default:
+            // Handle unexpected index (log error)
+            break;
+    }
+}
+
+// Get active menu
+Menu *get_active_menu(void) {
+    return active_menu;
+}
+
+// Get submenu width
+int get_submenu_width(Menu *menu) {
+    if (!menu || !font) return 80;
+    int max_width = 80;
+    int padding = 20;
+    for (int i = 0; i < menu->item_count; i++) {
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(get_render_context()->dpy, font, (FcChar8 *)menu->items[i], strlen(menu->items[i]), &extents);
+        int width = extents.xOff + padding;
+        if (width > max_width) max_width = width;
+    }
+    return max_width;
+}
+
+// Set app menu
+void set_app_menu(Menu *app_menu) {
+    // TODO
 }

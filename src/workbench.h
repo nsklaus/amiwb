@@ -1,16 +1,30 @@
-/* Workbench header: Declares functions for icon handling, scanning, adding, refreshing, aligning. For desktop/folder operations. */
-
+// File: workbench.h
 #ifndef WORKBENCH_H
 #define WORKBENCH_H
 
 #include "intuition.h"
+#include "icons.h"
 
-// Function prototypes for workbench ops.
-FileIcon *find_hit_icon(int mx, int my, Canvas *canvas); // Find icon at position
-void scan_icons(RenderContext *ctx, const char *path, FileIcon **icons, int *num_icons, Canvas *canvas); // Scan directory for icons
-void add_icon(RenderContext *ctx, const char *dir_path, const char *name, int type, FileIcon **icons, int *num_icons, const char *custom_icon_path, Canvas *canvas); // Add single icon
-bool rect_intersect(XRectangle *a, XRectangle *b); // Check rect intersection
-void refresh_icons(RenderContext *ctx, Canvas *canvas); // Refresh canvas icons
-void align_icons(Canvas *canvas); // Align icons in grid
+#define INITIAL_ICON_CAPACITY 16
+
+
+
+// Function prototypes
+void init_workbench(void);                                  // Initialize icon array
+void cleanup_workbench(void);                               // Clean up icon array
+void clear_canvas_icons(Canvas *canvas);                    // Remove icons for a given canvas
+void create_icon(const char *path, Canvas *canvas, int x, int y); // Create new icon
+void destroy_icon(FileIcon *icon);                          // Destroy an icon
+FileIcon *find_icon(Window win, int x, int y);              // Find icon by position
+void move_icon(FileIcon *icon, int x, int y);               // Move icon to new position
+int get_icon_count(void);                                   // Get current icon count
+FileIcon **get_icon_array(void);                             // Get icon array
+
+void workbench_handle_button_press(XButtonEvent *event);    // Handle button press for icons
+void workbench_handle_button_release(XButtonEvent *event);  // Handle button release for icons
+void workbench_handle_motion_notify(XMotionEvent *event);   // Handle motion for icon dragging
+
+// Add after existing prototypes
+void compute_content_bounds(Canvas *canvas);  // Compute content bounds from icons on canvas
 
 #endif

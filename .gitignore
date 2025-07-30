@@ -40,6 +40,7 @@ amiwb
 # Misc Files
 plan.txt
 compile_flags.txt
+valgrind_new.log
 
 # Debug files
 *.dSYM/

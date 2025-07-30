@@ -1,41 +1,47 @@
-/* Menus header: Defines menubar structure and functions for creation, drawing, handling events. For top menu system. */
-
+// File: menus.h
 #ifndef MENUS_H
 #define MENUS_H
 
+#include <X11/Xlib.h>
 #include "intuition.h"
+#include "workbench.h"
 
-// Menubar struct.
-typedef struct {
-    Window win; // Menubar window.
-    Pixmap backing; // Backing pixmap.
-    Picture back_pic; // Backing picture.
-    Picture win_pic; // Window picture.
-    int width; // Width.
-    bool menus_open; // Menus open flag.
-    int hovered_menu; // Hovered menu index (-1 none).
-    int hovered_item; // Hovered submenu item (-1 none).
-    Window submenu_win; // Submenu window.
-    Pixmap submenu_backing; // Submenu backing.
-    Picture submenu_back_pic; // Submenu backing picture.
-    Picture submenu_win_pic; // Submenu window picture.
-    int submenu_x; // Submenu x.
-    int submenu_width; // Submenu width.
-    int submenu_height; // Submenu height.
-    int submenu_menu; // Current submenu menu index.
-    int menu_spacing; // Dynamic spacing.
-    XRenderColor menubar_bg; // Menubar bg.
-    XRenderColor menubar_fg; // Menubar fg.
-    XRenderColor highlight_bg; // Highlight bg.
-    XRenderColor highlight_fg; // Highlight fg.
-    XRenderColor gray_fg; // Gray fg for disabled items.
-} MenuBar;
+#define MENU_ITEM_HEIGHT 20     // Menubar and menu item height
 
-// Function prototypes.
-void create_menubar(RenderContext *ctx, Window root, MenuBar *menubar); 
-void draw_menubar(RenderContext *ctx, MenuBar *menubar); 
-void draw_submenu(RenderContext *ctx, MenuBar *menubar); 
-void handle_menubar_event(RenderContext *ctx, XEvent *ev, MenuBar *menubar, Canvas *desktop, int *running); 
-void close_menus(RenderContext *ctx, MenuBar *menubar); 
+typedef struct Menu {
+    Canvas *canvas;             // Menubar or dropdown canvas
+    char **items;               // Array of menu item labels
+    int item_count;             // Number of items
+    int selected_item;          // Index of selected item (-1 for none)
+    int parent_index;           // Index in parent menu (-1 for top level)
+    struct Menu *parent_menu;   // Parent menu (NULL for menubar)
+    struct Menu **submenus;     // Array of submenus (NULL if none)
+} Menu;
+
+// Function prototypes
+void init_menus(void);          // Initialize menubar and resources
+void cleanup_menus(void);       // Clean up menubar and resources
+Canvas *get_menubar(void);      // Get global menubar canvas
+
+Menu *get_menubar_menu(void);   // Get the menubar Menu struct
+Menu *get_menu_by_canvas(Canvas *canvas); // Get Menu for a canvas (menubar or active)
+
+void show_dropdown_menu(Menu *menu, int index, int x, int y);   // Show dropdown menu
+void handle_menu_selection(Menu *menu, int item_index);         // Process menu item or submenu selection
+Menu *get_active_menu(void);                                    // Get current active dropdown
+int get_submenu_width(Menu *menu);                              // Calculate submenu width based on longest label
+void set_app_menu(Menu *app_menu);                              // Set menubar to app’s menu
+void menu_handle_button_press(XButtonEvent *event);             // Handle button press for dropdown menus
+void menu_handle_menubar_press(XButtonEvent *event);            // Handle button press for menubar
+void menu_handle_motion_notify(XMotionEvent *event);            // Handle motion for dropdown menus
+void menu_handle_menubar_motion(XMotionEvent *event);           // Handle motion for menubar
+void menu_handle_key_press(XKeyEvent *event);                   // Handle key press for menu navigation
+
+// New prototypes for state and rendering support
+bool get_show_menus_state(void);                // Get current show_menus state
+void toggle_menubar_state(void);                // Toggle between logo and menus state
+int get_menu_item_count(void);                  // Get number of top-level menu items
+const char *get_menu_item_label(int index);     // Get label for item at index
+int get_selected_item(void);                    // Get currently selected (highlighted) item
 
 #endif

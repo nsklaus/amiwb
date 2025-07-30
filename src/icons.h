@@ -1,43 +1,27 @@
-/* Icons header: Defines icon structures and functions for loading, freeing, and recreating icons. Used for file/folder representations. */
-
+// File: icons.h
 #ifndef ICONS_H
 #define ICONS_H
 
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/extensions/Xrender.h>
-#include <X11/Xft/Xft.h>
+#include "intuition.h"
 
-// Forward declares.
-typedef struct RenderContext RenderContext;
-typedef struct Canvas_struct Canvas;
+typedef enum IconType { TYPE_FILE, TYPE_DRAWER, TYPE_ICONIFIED } IconType;
 
-// Base icon struct.
 typedef struct {
-    XImage *image; 
-    int width; 
-    int height; 
-} Icon;
-
-// File icon struct.
-typedef struct {
-    char *filename; 
-    char *path; // Full path.
-    char *label; // Full label.
-    char *display_label; // Truncated display label.
-    Icon icon; // Base icon.
-    int x, y; 
-    int width, height; 
-    int type; 
-    Pixmap pixmap; 
-    Picture picture; 
-    Canvas *iconified_canvas; 
-    char *icon_path;
+    char *label;                // Icon label (filename or custom)
+    char *path;                 // File/directory path
+    IconType type;              // Icon type: TOOL, DRAWER, ICONIFIED
+    int x, y;                   // Position on canvas
+    int width, height;          // Icon dimensions
+    bool selected;              // Selection state
+    Picture normal_picture;     // Normal state picture
+    Picture selected_picture;   // Selected state picture
+    Picture current_picture;    // Current displayed picture
+    Window display_window;      // Window ID of display canvas (desktop or window)
+    Time last_click_time;       // Timestamp of last click for double-click detection
 } FileIcon;
 
-// Function prototypes.
-int load_icon(Display *dpy, const char *name, Icon *icon); // Load base icon
-void free_icon(Display *dpy, FileIcon *icon); // Free icon
-void recreate_icon_pixmap(RenderContext *ctx, FileIcon *icon, Canvas *canvas); // Recreate icon pixmap and picture
+// Function prototypes
+void create_icon_images( FileIcon *icon, RenderContext *ctx); // Load normal and selected pictures for icon
+void free_icon(  FileIcon *icon); // Free icon pictures
 
 #endif

@@ -1,10 +1,9 @@
 CC = gcc
 CFLAGS = -g -Iinclude -I/usr/include/X11/Xft -I/usr/include/freetype2
-LIBS = -lSM -lICE -lXext -lXmu -lX11 -lXrender -lXft -lXrandr -lm -ljpeg
+LIBS = -lSM -lICE -lXext -lXmu -lX11 -lXrender -lXft -lXrandr -lm -ljpeg -lfontconfig
 
 SRC_DIR = src
 SRC = $(wildcard $(SRC_DIR)/*.c)
-# SRC = src/main.c src/events.c src/intuition.c src/icons.c src/workbench.c src/render.c src/menus.c
 
 OBJ = $(SRC:.c=.o)
 EXEC = amiwb
