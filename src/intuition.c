@@ -5,7 +5,7 @@
 #include "config.h"
 #include <X11/X.h>
 #include <X11/Xlib.h>
-#include <X11/extensions/Xrandr.h>
+// #include <X11/extensions/Xrandr.h>
 #include <X11/cursorfont.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
@@ -33,6 +33,7 @@ static Visual *visual = NULL;
 static Canvas *dragging_canvas = NULL;
 static int drag_start_x = 0, drag_start_y = 0;
 static int window_start_x = 0, window_start_y = 0;
+int randr_event_base = 0;
 
 // resizing
 static Canvas *resizing_canvas = NULL;
@@ -117,6 +118,14 @@ static bool init_display_and_root(void) {
 
     root_cursor = XCreateFontCursor(display, XC_left_ptr);
     XDefineCursor(display, root, root_cursor);
+
+    // enable XRANDR events
+    int randr_error_base;
+    if (XRRQueryExtension(display, &randr_event_base, &randr_error_base)) {
+        XRRSelectInput(display, root, RRScreenChangeNotifyMask);
+    } else {
+        fprintf(stderr, "XRANDR extension not available; resolution changes may not be handled.\n");
+    }
 
     XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask | PropertyChangeMask |
                                 StructureNotifyMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | KeyPressMask);
@@ -723,9 +732,57 @@ void intuition_handle_configure_notify(XConfigureEvent *event) {
     }
 
     if (canvas->type == WINDOW && canvas->client_win == None) compute_max_scroll(canvas);
+
     redraw_canvas(canvas);
     XSync(dpy, False);
 }
+
+// resize desktop and menubar upon xrandr size changes
+void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
+    // Update global dimensions
+    width = event->width;
+    height = event->height;
+
+    // Resize and redraw desktop
+    Canvas *desktop = get_desktop_canvas();
+    if (desktop) {
+        if (desktop->canvas_buffer != None) XFreePixmap(display, desktop->canvas_buffer);
+        if (desktop->canvas_render != None) XRenderFreePicture(display, desktop->canvas_render);
+        if (desktop->window_render != None) XRenderFreePicture(display, desktop->window_render);
+
+        desktop->width = width;
+        desktop->height = height;  // Keep full height; menubar overlays top
+
+        desktop->canvas_buffer = XCreatePixmap(display, desktop->win, width, height, desktop->depth);
+        XRenderPictFormat *fmt = XRenderFindVisualFormat(display, desktop->visual);
+        desktop->canvas_render = XRenderCreatePicture(display, desktop->canvas_buffer, fmt, 0, NULL);
+        desktop->window_render = XRenderCreatePicture(display, desktop->win, fmt, 0, NULL);
+
+        redraw_canvas(desktop);
+    }
+
+    // Resize and redraw menubar
+    Canvas *menubar_canvas = get_menubar();
+    if (menubar_canvas) {
+        if (menubar_canvas->canvas_buffer != None) XFreePixmap(display, menubar_canvas->canvas_buffer);
+        if (menubar_canvas->canvas_render != None) XRenderFreePicture(display, menubar_canvas->canvas_render);
+        if (menubar_canvas->window_render != None) XRenderFreePicture(display, menubar_canvas->window_render);
+
+        menubar_canvas->width = width;  // Height remains MENUBAR_HEIGHT
+
+        XResizeWindow(display, menubar_canvas->win, width, MENUBAR_HEIGHT);
+
+        menubar_canvas->canvas_buffer = XCreatePixmap(display, menubar_canvas->win, width, MENUBAR_HEIGHT, menubar_canvas->depth);
+        XRenderPictFormat *fmt = XRenderFindVisualFormat(display, menubar_canvas->visual);
+        menubar_canvas->canvas_render = XRenderCreatePicture(display, menubar_canvas->canvas_buffer, fmt, 0, NULL);
+        menubar_canvas->window_render = XRenderCreatePicture(display, menubar_canvas->win, fmt, 0, NULL);
+
+        redraw_canvas(menubar_canvas);
+    }
+
+    XSync(display, False);
+}
+
 
 void destroy_canvas(Canvas *canvas) {
     if (!canvas || canvas->type == DESKTOP) return;

@@ -2,6 +2,8 @@
 #include "events.h"
 #include "intuition.h"
 #include "workbench.h"
+#include <X11/extensions/Xrandr.h>
+
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <stdio.h> // For fprintf
@@ -30,6 +32,12 @@ void handle_events(void) {
         // fprintf(stderr, "Waiting for event\n");
         XNextEvent(dpy, &event);
         // fprintf(stderr, "Received event type %d\n", event.type);
+
+        if (event.type == randr_event_base + RRScreenChangeNotify) {
+            intuition_handle_rr_screen_change((XRRScreenChangeNotifyEvent *)&event);
+            continue;
+        }
+
         switch (event.type) {
             case ButtonPress:
                 handle_button_press(&event.xbutton);

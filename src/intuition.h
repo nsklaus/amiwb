@@ -4,6 +4,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
+#include <X11/extensions/Xrandr.h>
 #include <stdbool.h>
 
 #define MENUBAR_HEIGHT 20
@@ -47,6 +48,8 @@ typedef struct {
     Colormap colormap;                  // Colormap for the canvas
 } Canvas;
 
+extern int randr_event_base;
+
 // Function prototypes
 RenderContext *get_render_context(void);    // getter for render_context
 
@@ -81,6 +84,7 @@ void intuition_handle_property_notify(XPropertyEvent *event);
 void intuition_handle_motion_notify(XMotionEvent *event);
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event); 
 void intuition_handle_configure_notify(XConfigureEvent *event);   // for resizing
+void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event);
 
 // Use indices for pointers
 /*extern int active_window_index;     // -1 for none
