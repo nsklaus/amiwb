@@ -88,6 +88,7 @@ void cleanup_render(void) {
                      DefaultColormap(ctx->dpy, DefaultScreen(ctx->dpy)), &text_color_white);
     }
     FcFini();
+    printf("Called cleanup_render() \n");
 }
 
 // Render a single icon
@@ -104,9 +105,7 @@ void render_icon(FileIcon *icon) {
         return;
     }
     // In render_icon, add offset calculation before composite
-    if (!canvas) {
-        // ... (existing error handling)
-    }
+    if (!canvas) { printf("in render.c, render_icon(), canvas failled  \n"); }
     int base_x = (canvas->type == WINDOW) ? BORDER_WIDTH_LEFT : 0;
     int base_y = (canvas->type == WINDOW) ? BORDER_HEIGHT_TOP : 0;
     int render_x = base_x + icon->x - canvas->scroll_x;

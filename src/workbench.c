@@ -62,7 +62,8 @@ void init_workbench(void) {
     create_icon("/usr/local/share/amiwb/icons/harddisk.info", get_desktop_canvas(), 10, 40);
     FileIcon *system_icon = icon_array[icon_count - 1];
     system_icon->type = TYPE_DRAWER;
-    system_icon->label = "System";
+    free(system_icon->label);
+    system_icon->label = strdup("System");
     free(system_icon->path);
     system_icon->path = strdup("/");
 
@@ -70,13 +71,13 @@ void init_workbench(void) {
     create_icon("/usr/local/share/amiwb/icons/harddisk.info", get_desktop_canvas(), 10, 120);
     FileIcon *home_icon = icon_array[icon_count - 1];
     home_icon->type = TYPE_DRAWER;
-    home_icon->label = "Home";
+    free(home_icon->label);
+    home_icon->label = strdup("Home");
     free(home_icon->path);
     home_icon->path = strdup(getenv("HOME"));
 
     redraw_canvas(get_desktop_canvas());
 }
-
 
 // Get current icon count
 int get_icon_count(void) {
@@ -142,34 +143,13 @@ void destroy_icon(FileIcon *icon) {
     free(icon);
 }
 
-/*// Find icon by window and position
-FileIcon *find_icon(Window win, int x, int y) {
-    Canvas *canvas = find_canvas(win);
-    if (!canvas) return NULL;
-
-    // Adjust coordinates for workbench windows: transform window-relative (x,y) to content-relative, accounting for borders and scroll
-    int base_x = (canvas->type == WINDOW && canvas->client_win == None) ? BORDER_WIDTH_LEFT : 0;
-    int base_y = (canvas->type == WINDOW && canvas->client_win == None) ? BORDER_HEIGHT_TOP : 0;
-    int adjusted_x = x - base_x + canvas->scroll_x;
-    int adjusted_y = y - base_y + canvas->scroll_y;
-
-    for (int i = 0; i < icon_count; i++) {
-        if (icon_array[i]->display_window == win &&
-            adjusted_x >= icon_array[i]->x && adjusted_x < icon_array[i]->x + icon_array[i]->width &&
-            adjusted_y >= icon_array[i]->y && adjusted_y < icon_array[i]->y + icon_array[i]->height) {  // add ->height +20 to include label hitbox 
-            return icon_array[i];
-        }
-    }
-    return NULL;
-}*/
-
 // Find icon by window and position
 FileIcon *find_icon(Window win, int x, int y) {
     Canvas *canvas = find_canvas(win);
     if (!canvas) return NULL;
 
     // for workbench windows (WINDOW with no client_win), ensure click is within content bounds.
-    //      Skip if on borders/scrollbars to prevent event clicks leakage to icons.
+    // skip if mouse is on borders/scrollbars to prevent event clicks leakage to icons.
     // do not drag icon along slider 
     if (canvas->type == WINDOW && canvas->client_win == None) {
         int content_left = BORDER_WIDTH_LEFT;
@@ -200,13 +180,14 @@ FileIcon *find_icon(Window win, int x, int y) {
 
 // Clean up icon array
 void cleanup_workbench(void) {
-    for (int i = 0; i < icon_count; i++) {
+    for (int i = icon_count - 1; i >= 0; i--) {
         destroy_icon(icon_array[i]);
     }
     free(icon_array);
     icon_array = NULL;
     icon_count = 0;
     icon_array_size = 0;
+    printf("Called cleanup_workbench() \n");
 }
 
 // Move icon to new position (from workbench.h)

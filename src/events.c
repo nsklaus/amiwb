@@ -6,7 +6,7 @@
 #include <X11/keysym.h>
 #include <stdio.h> // For fprintf
 
-static bool running = true;
+bool running = true;
 
 // Initialize event handling
 void init_events(void) {
@@ -66,6 +66,10 @@ void handle_events(void) {
                 break;
         }
     }
+}
+
+void quit_event_loop(void) {
+    running = false;
 }
 
 // Dispatch mouse button press

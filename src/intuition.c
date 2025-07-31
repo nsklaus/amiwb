@@ -174,7 +174,10 @@ Canvas *init_intuition(void) {
             }
             if (skip_framing) continue;
 
-            int frame_x = attrs.x, frame_y = attrs.y;
+            int frame_x = attrs.x;
+            //, frame_y = attrs.y;
+            // Clamp y to ensure titlebar is below menubar
+            int frame_y = max(attrs.y, MENUBAR_HEIGHT);  
             int frame_width = attrs.width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
             int frame_height = attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
             Canvas *frame = create_canvas(NULL, frame_x, frame_y, frame_width, frame_height, WINDOW);
@@ -261,7 +264,8 @@ Canvas *create_canvas(const char *path, int x, int y, int width, int height, Can
     canvas->path = path ? strdup(path) : NULL;
     canvas->title = path ? strdup(strrchr(path, '/') ? strrchr(path, '/') + 1 : path) : NULL;
     canvas->x = x;
-    canvas->y = y;
+    // Clamp y to ensure titlebar is below menubar
+    canvas->y = (type == WINDOW) ? max(y, MENUBAR_HEIGHT) : y; 
     canvas->width = width;
     canvas->height = height;
     canvas->bg_color = GRAY;
@@ -373,6 +377,14 @@ void intuition_handle_button_press(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) return;
 
+    if (canvas->type != MENU && (event->button == Button1 || event->button == Button3)) {
+        if (get_show_menus_state()) {
+            toggle_menubar_state();  // Revert to default state on outside click
+            redraw_canvas(get_desktop_canvas());  // Redraw desktop if needed
+            return;
+        }
+    }
+
     if (canvas->type == DESKTOP) {
         if (event->button == Button3) toggle_menubar_state();
         redraw_canvas(canvas);
@@ -462,7 +474,10 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
     if (dragging_canvas) {
         int delta_x = event->x_root - drag_start_x;
         int delta_y = event->y_root - drag_start_y;
-        window_start_x += delta_x; window_start_y += delta_y;
+        window_start_x += delta_x; 
+        //window_start_y += delta_y;
+        // Clamp y to ensure titlebar is below menubar
+        window_start_y = max(window_start_y + delta_y, MENUBAR_HEIGHT);  
         XMoveWindow(display, dragging_canvas->win, window_start_x, window_start_y);
         dragging_canvas->x = window_start_x; dragging_canvas->y = window_start_y;
         redraw_canvas(dragging_canvas);
@@ -571,7 +586,9 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
         return;
     }
 
-    int frame_x = attrs.x, frame_y = attrs.y;
+    int frame_x = attrs.x;
+    // Clamp y to ensure titlebar is below menubar
+    int frame_y = max(attrs.y, MENUBAR_HEIGHT);  
     int frame_width = attrs.width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
     int frame_height = attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
     Canvas *frame = create_canvas(NULL, frame_x, frame_y, frame_width, frame_height, WINDOW);
@@ -610,7 +627,9 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
 
         XWindowChanges changes = {0};
         if (safe_mask & CWX) changes.x = event->x;
-        if (safe_mask & CWY) changes.y = event->y;
+        //if (safe_mask & CWY) changes.y = event->y;
+        // Clamp y to ensure titlebar is below menubar
+        if (safe_mask & CWY) changes.y = max(event->y, MENUBAR_HEIGHT);  
         if (safe_mask & CWWidth) changes.width = max(1, event->width);
         if (safe_mask & CWHeight) changes.height = max(1, event->height);
 
@@ -632,16 +651,30 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
     XWindowChanges frame_changes = {0};
     unsigned long frame_mask = 0;
     int new_frame_width = canvas->width, new_frame_height = canvas->height;
+
     if (event->value_mask & CWWidth) {
         frame_changes.width = max(1, event->width) + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
         new_frame_width = frame_changes.width;
         frame_mask |= CWWidth;
     }
+
     if (event->value_mask & CWHeight) {
         frame_changes.height = max(1, event->height) + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
         new_frame_height = frame_changes.height;
         frame_mask |= CWHeight;
     }
+
+    if (event->value_mask & CWX) {
+        frame_changes.x = event->x;
+        frame_mask |= CWX;
+    }
+
+    if (event->value_mask & CWY) {
+        // Clamp y to ensure titlebar is below menubar
+        frame_changes.y = max(event->y, MENUBAR_HEIGHT);  
+        frame_mask |= CWY;
+    }
+
     if ((event->value_mask & (CWStackMode | CWSibling)) == (CWStackMode | CWSibling) && event->detail >= 0 && event->detail <= 4) {
         XWindowAttributes sibling_attrs;
         if (XGetWindowAttributes(display, event->above, &sibling_attrs) && sibling_attrs.map_state == IsViewable) {
@@ -650,6 +683,7 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
             frame_mask |= CWStackMode | CWSibling;
         }
     }
+
     if (frame_mask) XConfigureWindow(display, canvas->win, frame_mask, &frame_changes);
 
     XWindowChanges client_changes = {0};
@@ -740,4 +774,5 @@ void cleanup_intuition(void) {
     if (render_context->bg_pixmap != None) XFreePixmap(render_context->dpy, render_context->bg_pixmap);
     XCloseDisplay(render_context->dpy);
     free(render_context); render_context = NULL; display = NULL;
+    printf("Called cleanup_intuition() \n");
 }

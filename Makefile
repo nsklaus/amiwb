@@ -1,6 +1,37 @@
 CC = gcc
-CFLAGS = -g -Iinclude -I/usr/include/X11/Xft -I/usr/include/freetype2
-LIBS = -lSM -lICE -lXext -lXmu -lX11 -lXrender -lXft -lXrandr -lm -ljpeg -lfontconfig
+
+CFLAGS = -g \
+  -Iinclude \
+  -I/usr/include/X11/Xft \
+  -I/usr/include/freetype2 
+  
+  # attempt at getting menus from clients
+  #-I/usr/include/libdbusmenu-glib-0.4 \
+  #-I/usr/include/libdbusmenu-gtk3-0.4 \
+  #-I/usr/include/gtk-3.0 \
+  #-I/usr/include/glib-2.0 \
+  #-I/usr/lib64/glib-2.0/include \
+  #-I/usr/include/dbus-1.0 \
+  #-I/usr/lib64/dbus-1.0/include
+
+LIBS = \
+  -lSM \
+  -lICE \
+  -lXext \
+  -lXmu \
+  -lX11 \
+  -lXrender \
+  -lXft \
+  -lXrandr \
+  -lm \
+  -ljpeg \
+  -lfontconfig 
+
+  # attempt at getting menus from clients
+  # -ldbusmenu-gtk3 \
+  # -ldbus-1 \
+  # -ldbusmenu-glib \
+  # -lgobject-2.0 -lglib-2.0
 
 SRC_DIR = src
 SRC = $(wildcard $(SRC_DIR)/*.c)

@@ -3,6 +3,7 @@
 #include "intuition.h"
 #include "workbench.h"
 #include "render.h"
+#include "events.h"
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
 #include <fontconfig/fontconfig.h>
@@ -164,7 +165,6 @@ void init_menus(void) {
     redraw_canvas(menubar->canvas);
 }
 
-// Cleanup menus
 void cleanup_menus(void) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
@@ -173,7 +173,8 @@ void cleanup_menus(void) {
     if (text_color.pixel) XftColorFree(ctx->dpy, DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)), DefaultColormap(ctx->dpy, DefaultScreen(ctx->dpy)), &text_color);
     if (active_menu) {
         if (active_menu->canvas) destroy_canvas(active_menu->canvas);
-        free(active_menu);
+        // Removed: free(active_menu);  // Avoid double free; submenu structs are freed in the loop below
+        active_menu = NULL;
     }
     if (menubar) {
         if (menubar->canvas) destroy_canvas(menubar->canvas);
@@ -193,6 +194,7 @@ void cleanup_menus(void) {
         free(logo_items);
         free(menubar);
     }
+    printf("Called cleanup_menus()\n");
 }
 
 // Get show_menus state
@@ -278,7 +280,6 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
     }
 }
 
-// Handle button press on dropdown
 void menu_handle_button_press(XButtonEvent *event) {
     RenderContext *ctx = get_render_context();
     if (!ctx || !active_menu || event->window != active_menu->canvas->win) return;
@@ -288,11 +289,17 @@ void menu_handle_button_press(XButtonEvent *event) {
         handle_menu_selection(active_menu, item);
     }
     // Close submenu
-    XUnmapWindow(ctx->dpy, active_menu->canvas->win);
-    destroy_canvas(active_menu->canvas);
-    active_menu = NULL;
-    redraw_canvas(menubar->canvas);
+    if (active_menu) {  // Check if active_menu is still set (may have been closed in handle_menu_selection via toggle)
+        XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+        destroy_canvas(active_menu->canvas);
+        active_menu = NULL;
+    }
+    // Conditional redraw: only if not quitting (running is true)
+    if (running && menubar && menubar->canvas) {
+        redraw_canvas(menubar->canvas);
+    }
 }
+
 
 // Handle button press on menubar
 void menu_handle_menubar_press(XButtonEvent *event) {
@@ -340,7 +347,7 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
 // Process menu item selection
 void handle_menu_selection(Menu *menu, int item_index) {
     const char *item = menu->items[item_index];
-    if (menu->parent_menu != menubar) return;  // Safeguard for non-top-level (future-proof)
+    if (menu->parent_menu != menubar) return;  // Safeguard for non-top-level 
 
     switch (menu->parent_index) {
         case 0:  // Workbench
@@ -356,7 +363,9 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 cleanup_workbench();
                 cleanup_intuition();
                 cleanup_render();
-                exit(0);
+                //exit(0);
+                quit_event_loop();
+                return;
             }
             break;
 
@@ -416,6 +425,9 @@ void handle_menu_selection(Menu *menu, int item_index) {
         default:
             // Handle unexpected index (log error)
             break;
+    }
+    if (get_show_menus_state()) {
+        toggle_menubar_state();
     }
 }
 
