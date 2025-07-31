@@ -142,10 +142,45 @@ void destroy_icon(FileIcon *icon) {
     free(icon);
 }
 
+/*// Find icon by window and position
+FileIcon *find_icon(Window win, int x, int y) {
+    Canvas *canvas = find_canvas(win);
+    if (!canvas) return NULL;
+
+    // Adjust coordinates for workbench windows: transform window-relative (x,y) to content-relative, accounting for borders and scroll
+    int base_x = (canvas->type == WINDOW && canvas->client_win == None) ? BORDER_WIDTH_LEFT : 0;
+    int base_y = (canvas->type == WINDOW && canvas->client_win == None) ? BORDER_HEIGHT_TOP : 0;
+    int adjusted_x = x - base_x + canvas->scroll_x;
+    int adjusted_y = y - base_y + canvas->scroll_y;
+
+    for (int i = 0; i < icon_count; i++) {
+        if (icon_array[i]->display_window == win &&
+            adjusted_x >= icon_array[i]->x && adjusted_x < icon_array[i]->x + icon_array[i]->width &&
+            adjusted_y >= icon_array[i]->y && adjusted_y < icon_array[i]->y + icon_array[i]->height) {  // add ->height +20 to include label hitbox 
+            return icon_array[i];
+        }
+    }
+    return NULL;
+}*/
+
 // Find icon by window and position
 FileIcon *find_icon(Window win, int x, int y) {
     Canvas *canvas = find_canvas(win);
     if (!canvas) return NULL;
+
+    // for workbench windows (WINDOW with no client_win), ensure click is within content bounds.
+    //      Skip if on borders/scrollbars to prevent event clicks leakage to icons.
+    // do not drag icon along slider 
+    if (canvas->type == WINDOW && canvas->client_win == None) {
+        int content_left = BORDER_WIDTH_LEFT;
+        int content_top = BORDER_HEIGHT_TOP;
+        int content_right = canvas->width - BORDER_WIDTH_RIGHT;
+        int content_bottom = canvas->height - BORDER_HEIGHT_BOTTOM;
+        if (x < content_left || x >= content_right ||
+            y < content_top || y >= content_bottom) {
+            return NULL;  // Click is on frame/scrollbar; no icon hit.
+        }
+    }
 
     // Adjust coordinates for workbench windows: transform window-relative (x,y) to content-relative, accounting for borders and scroll
     int base_x = (canvas->type == WINDOW && canvas->client_win == None) ? BORDER_WIDTH_LEFT : 0;

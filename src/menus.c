@@ -135,11 +135,12 @@ void init_menus(void) {
 
     // Tools submenu (index 3)
     Menu *tools_submenu = malloc(sizeof(Menu));
-    tools_submenu->item_count = 3;
+    tools_submenu->item_count = 4;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("XCalc");
-    tools_submenu->items[1] = strdup("Sublime Text");
-    tools_submenu->items[2] = strdup("Shell");
+    tools_submenu->items[1] = strdup("xfceterm");
+    tools_submenu->items[2] = strdup("Sublime Text");
+    tools_submenu->items[3] = strdup("Shell");
     tools_submenu->selected_item = -1;
     tools_submenu->parent_menu = menubar;
     tools_submenu->parent_index = 3;
@@ -397,12 +398,19 @@ void handle_menu_selection(Menu *menu, int item_index) {
             printf("reached 'Tools' menu\n");
             if (strcmp(item, "XCalc") == 0) {
                 system("xcalc &");  // TODO: Handle errors and paths
+
             } else if (strcmp(item, "Sublime Text") == 0) {
-                system("subl &");  // Assuming 'subl' command; adjust as needed
+                system("subl &");   
+
             } else if (strcmp(item, "Shell") == 0) {
-                printf("launching xterm\n");
-                system("xterm &");  // Or preferred terminal
+                printf("launching kitty\n");
+                system("kitty &"); 
+
+            } else if (strcmp(item, "xfceterm") == 0) {
+                printf("launching xfce4-terminal\n");
+                system("xfce4-terminal &");  // Or preferred terminal
             }
+
             break;
 
         default:
