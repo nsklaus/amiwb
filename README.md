@@ -19,7 +19,7 @@ $ DISPLAY=:1 ./amiwb
 ```
 
 status:
-```
+
 - menubar:
 	works but very few entries are implemented, "Tools" menu have some entries to launch a few apps 
 	(kitty,	xcalc, sublime-text), "Workbench" menu have "Quit AmiWB" and that's about it for now.
@@ -44,4 +44,3 @@ status:
 	no rename, no delete, no copy, no nothing yet.
 	file execution works through xdg-open for now.
 
-```
