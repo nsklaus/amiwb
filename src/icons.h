@@ -18,6 +18,7 @@ typedef struct {
     Picture current_picture;    // Current displayed picture
     Window display_window;      // Window ID of display canvas (desktop or window)
     Time last_click_time;       // Timestamp of last click for double-click detection
+    Canvas *iconified_canvas;    // Pointer to the iconified canvas (for TYPE_ICONIFIED)
 } FileIcon;
 
 // Function prototypes

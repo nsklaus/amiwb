@@ -3,6 +3,7 @@
 #include "render.h"
 #include "menus.h"
 #include "config.h"
+#include "workbench.h"  // Added for remove_icon_for_canvas
 #include <X11/X.h>
 #include <X11/Xlib.h>
 // #include <X11/extensions/Xrandr.h>
@@ -12,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/stat.h>  // Added for stat in iconify_canvas
 
 #define INITIAL_CANVAS_CAPACITY 8
 
@@ -272,10 +274,24 @@ Canvas *create_canvas(const char *path, int x, int y, int width, int height, Can
     canvas->type = type;
     canvas->path = path ? strdup(path) : NULL;
     canvas->title = path ? strdup(strrchr(path, '/') ? strrchr(path, '/') + 1 : path) : NULL;
+    
+    // default string
+    if (canvas->title && strlen(canvas->title) == 0) {
+        canvas->title = strdup("System"); 
+    }
+
     canvas->x = x;
     // Clamp y to ensure titlebar is below menubar
     canvas->y = (type == WINDOW) ? max(y, MENUBAR_HEIGHT) : y; 
-    canvas->width = width;
+
+    // TODO: fix windows max size clamping 
+    // int maxwidth = DisplayHeight(display, screen);
+    // int maxheight = DisplayHeight(display, screen);
+    // width and heigh cannot be bigger than the screen
+    // canvas->width =  min(maxwidth, width); //width;
+    // canvas->height = min(maxheight - 40, height ); //height;
+
+    canvas->width =width;
     canvas->height = height;
     canvas->bg_color = GRAY;
     canvas->active = false;
@@ -403,13 +419,39 @@ void intuition_handle_button_press(XButtonEvent *event) {
     if (canvas->type != WINDOW) return;
     set_active_window(canvas);
 
-    if (event->y < BORDER_HEIGHT_TOP && event->x < BUTTON_CLOSE_SIZE) { destroy_canvas(canvas); return; }
-    if (event->y < BORDER_HEIGHT_TOP && event->x >= BUTTON_CLOSE_SIZE) {
-        dragging_canvas = canvas;
-        drag_start_x = event->x_root; drag_start_y = event->y_root;
-        window_start_x = canvas->x; window_start_y = canvas->y;
-        return;
+    // Handle titlebar buttons and drag
+    if (event->y < BORDER_HEIGHT_TOP) {
+
+        int lower_x = canvas->width - BUTTON_LOWER_SIZE;          // Rightmost: lower button
+        int max_x = canvas->width - 2 * BUTTON_MAXIMIZE_SIZE;     // Middle: maximize button
+        int iconify_x = canvas->width - 3 * BUTTON_ICONIFY_SIZE;  // Leftmost on right: iconify button
+
+        if (event->x >= lower_x) {
+            // lower window 
+            XLowerWindow(display, canvas->win); redraw_canvas(canvas);
+            return;
+        } else if (event->x >= max_x) {
+            // maximize window
+            //XResizeWindow(display, canvas->win, get_desktop_canvas()->width, get_desktop_canvas()->height - 20);
+            XMoveResizeWindow(display,canvas->win, 0, 20, get_desktop_canvas()->width, get_desktop_canvas()->height - 20);
+            return;
+        } else if (event->x >= iconify_x) {
+            // Iconify the window (hide and create desktop icon)
+            iconify_canvas(canvas);
+            return;
+        } else if (event->x < BUTTON_CLOSE_SIZE) {
+            // Close button 
+            destroy_canvas(canvas);
+            return;
+        } else {
+            // Drag the titlebar
+            dragging_canvas = canvas;
+            drag_start_x = event->x_root; drag_start_y = event->y_root;
+            window_start_x = canvas->x; window_start_y = canvas->y;
+            return;
+        }
     }
+
     if (event->x >= canvas->width - BORDER_WIDTH_RIGHT && event->y >= canvas->height - BORDER_HEIGHT_BOTTOM) {
         resizing_canvas = canvas;
         resize_start_x = event->x_root; resize_start_y = event->y_root;
@@ -549,6 +591,7 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
     free(canvas->path); free(canvas->title);
     if (active_window == canvas) active_window = NULL;
     manage_canvases(false, canvas);
+    remove_icon_for_canvas(canvas);  // Remove any associated iconified icon from desktop
     free(canvas);
 
     Canvas *desktop = get_desktop_canvas();
@@ -614,6 +657,20 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
     }
     XMapWindow(display, event->window);
     frame->client_win = event->window;
+
+    // ===========================
+    // set client name on titlebar
+    // ===========================
+    if (frame->client_win != None) {
+        XClassHint class_hint;
+        XGetClassHint(display, frame->client_win, &class_hint); 
+        if (class_hint.res_name)
+            frame->title = class_hint.res_name;  // Instance name (e.g., "xterm")
+        else
+            frame->title = "NoNameApp";
+    }
+    //printf(" ---intuition:   frame->title=%s \n", frame->title);
+
     XAddToSaveSet(display, event->window);
     XRaiseWindow(display, frame->win);
     redraw_canvas(frame);
@@ -783,6 +840,78 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     XSync(display, False);
 }
 
+// Iconify a canvas window (hide it and create a desktop icon)
+void iconify_canvas(Canvas *canvas) {
+    if (!canvas || canvas->type != WINDOW) return;  // Only for WINDOW types (both workbench and clients)
+
+    Canvas *desktop = get_desktop_canvas();
+    if (!desktop) return;
+
+    // Compute next icon position on desktop (vertical stack starting at y=40, x=10, 80px spacing)
+    int desktop_icon_count = 0;
+    FileIcon **icons = get_icon_array();
+    int count = get_icon_count();
+    for (int i = 0; i < count; i++) {
+        if (icons[i]->display_window == desktop->win) desktop_icon_count++;
+    }
+
+    int next_x = 10;
+    int next_y = 40 + (desktop_icon_count * 80);
+
+    char *label = NULL;
+    const char *icon_path = NULL;
+
+    if (canvas->client_win == None) {
+        // Workbench window: use fixed filer icon and canvas title
+        label = canvas->title ? strdup(canvas->title) : strdup("Untitled");
+        icon_path = "/usr/local/share/amiwb/icons/filer.info";
+        printf("Iconifying workbench window: label=%s, icon=%s\n", label, icon_path);
+    } else {
+        // Client window: use WM_CLASS instance as short name for label and icon matching
+        XClassHint class_hint;
+        if (XGetClassHint(display, canvas->client_win, &class_hint) && class_hint.res_name) {
+            char *app_name = class_hint.res_name;  // Instance name (e.g., "xterm")
+            char icon_full[256];
+            snprintf(icon_full, sizeof(icon_full), "/usr/local/share/amiwb/icons/%s.info", app_name);
+
+            struct stat st;
+            if (stat(icon_full, &st) == 0) {
+                icon_path = icon_full;
+                printf("Found matching icon for app_name=%s: %s\n", app_name, icon_full);
+            } else {
+                icon_path = "/usr/local/share/amiwb/icons/def_tool.info";
+                printf("No matching icon for app_name=%s, using default: %s\n", app_name, icon_path);
+            }
+
+            label = strdup(app_name);
+            XFree(class_hint.res_name);
+            XFree(class_hint.res_class);
+        } else {
+            // Fallback if no class hint
+            label = strdup("Untitled");
+            icon_path = "/usr/local/share/amiwb/icons/def_tool.info";
+            printf("Could not get class hint for client, using default icon: %s\n", icon_path);
+        }
+    }
+
+    // Create the iconified icon
+    create_icon(icon_path, desktop, next_x, next_y);
+    FileIcon *new_icon = icons[get_icon_count() - 1];
+    new_icon->type = TYPE_ICONIFIED;
+    free(new_icon->label);
+    new_icon->label = label;
+    free(new_icon->path);
+    new_icon->path = NULL;
+    new_icon->iconified_canvas = canvas;
+
+    // Hide the window
+    XUnmapWindow(display, canvas->win);
+    if (active_window == canvas) active_window = NULL;
+
+    // Redraw desktop to show new icon
+    redraw_canvas(desktop);
+    XSync(display, False);
+}
 
 void destroy_canvas(Canvas *canvas) {
     if (!canvas || canvas->type == DESKTOP) return;
@@ -817,6 +946,7 @@ void destroy_canvas(Canvas *canvas) {
         free(canvas->path); free(canvas->title);
         if (active_window == canvas) active_window = NULL;
         manage_canvases(false, canvas);
+        remove_icon_for_canvas(canvas);  // Remove any associated iconified icon from desktop
         free(canvas);
         Canvas *desktop = get_desktop_canvas();
         if (desktop) redraw_canvas(desktop);

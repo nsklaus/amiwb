@@ -1,5 +1,6 @@
 // File: menus.c
 #include "menus.h"
+#include "config.h"
 #include "intuition.h"
 #include "workbench.h"
 #include "render.h"
@@ -43,10 +44,11 @@ void init_menus(void) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
 
-    char *font_path = get_resource_path("fonts/SourceCodePro-Regular.otf");
+    char *font_path = get_resource_path(SYSFONT);
     FcPattern *pattern = FcPatternCreate();
     FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)font_path);
     FcPatternAddDouble(pattern, FC_SIZE, 12.0);
+    FcPatternAddInteger(pattern, FC_WEIGHT, 200); // bold please
     FcPatternAddDouble(pattern, FC_DPI, 75);
     FcConfigSubstitute(NULL, pattern, FcMatchPattern);
     XftDefaultSubstitute(ctx->dpy, DefaultScreen(ctx->dpy), pattern);

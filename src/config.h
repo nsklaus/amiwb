@@ -21,6 +21,10 @@ a dot file .amiwbrc or many dedicated setting files like on amiga env:archives/ 
 #define BLUE (XRenderColor){0x4858, 0x6F6F, 0xB0B0, 0xFFFF}
 #define GRAY (XRenderColor){0xa0a0, 0xa2a2, 0xa0a0, 0xffff}
 
+// font colors for desktop and windows icons
+#define DESKFONTCOL (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}
+#define WINFONTCOL (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}
+
 #define DOUBLE_CLICK_TIME 1000 	// Time threshold for double-click in ms.
 #define CLICK_TOLERANCE 10 		// Pixel tolerance for double-click.
 #define DRAG_THRESHOLD 10 		// Pixel threshold to start drag.
@@ -35,9 +39,9 @@ a dot file .amiwbrc or many dedicated setting files like on amiga env:archives/ 
 
 // frame buttons sizes
 #define BUTTON_CLOSE_SIZE 30 
-#define BUTTON_ICONIFY_SIZE 20
-#define BUTTON_MAXIMIZE_SIZE 20
-#define BUTTON_LOWER_SIZE 20
+#define BUTTON_ICONIFY_SIZE 30
+#define BUTTON_MAXIMIZE_SIZE 30
+#define BUTTON_LOWER_SIZE 30
 #define BUTTON_RESIZE_SIZE 20
 
 #define GLOBAL_DEPTH 32 		// Set to 8, 16, 24, or 32; fallback to default if not available
@@ -52,6 +56,10 @@ a dot file .amiwbrc or many dedicated setting files like on amiga env:archives/ 
 //extern char *def_tool_path;  // Default icons path
 //extern char *def_drawer_path;
 extern char *iconify_path;
+
+//#define SYSFONT "fonts/SourceCodePro-Semibold.otf"
+//#define SYSFONT "fonts/SourceCodePro-Regular.otf"
+#define SYSFONT "fonts/SourceCodePro-Bold.otf"
 
 #define max(a,b) ((a) > (b) ? (a) : (b))
 #define min(a,b) ((a) < (b) ? (a) : (b))

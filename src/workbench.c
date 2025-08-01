@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define INITIAL_ICON_CAPACITY 16
 
@@ -119,6 +120,7 @@ void create_icon(const char *path, Canvas *canvas, int x, int y) {
     icon->display_window = canvas->win;
     icon->selected = false;
     icon->last_click_time = 0; // Initialize last click time
+    icon->iconified_canvas = NULL;  // Initialize to NULL
 
     // Load icon images (from icons.c)
     // Assumes render_context access
@@ -328,9 +330,42 @@ static void open_directory(FileIcon *icon, Canvas *canvas) {
     }
 }
 
-// Open/execute file (stub for future implementation)
+
+// =======================
+// open / execute file 
+// =======================
+// launching xdg-open in a forked child process. allows for non blocking exec
 static void open_file(FileIcon *icon) {
-    // TODO: Launch tool or execute file
+    if (!icon || !icon->path) return;  // Safety check for valid icon and path
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        // Fork failed; log error but continue
+        perror("fork failed in open_file");
+        return;
+    } else if (pid == 0) {
+        // Child process: execute xdg-open with the file path
+        // execlp searches PATH for "xdg-open"; 
+        // args are program name, then path, then NULL terminator
+        execlp("xdg-open", "xdg-open", icon->path, (char *)NULL);
+        // If execlp fails (e.g., xdg-open not found), log and exit child
+        perror("execlp failed for xdg-open");
+        _exit(EXIT_FAILURE);  // Use _exit to avoid flushing parent's stdio
+    }
+}
+
+// Restore an iconified window (show the original canvas and destroy the icon)
+static void restore_iconified(FileIcon *icon) {
+    if (!icon || icon->type != TYPE_ICONIFIED || !icon->iconified_canvas) return;
+
+    Canvas *orig_canvas = icon->iconified_canvas;
+    XMapRaised(get_display(), orig_canvas->win);
+    set_active_window(orig_canvas);
+
+    Canvas *desktop = get_desktop_canvas();
+    destroy_icon(icon);
+    if (desktop) redraw_canvas(desktop);
+    XSync(get_display(), False);
 }
 
 // Add new function to compute content bounds from icons
@@ -348,11 +383,22 @@ void compute_content_bounds(Canvas *canvas) {
     canvas->content_height = max_y + 10;  // +10 padding
 }
 
+// Remove any icon associated with an iconified canvas (e.g., on destroy)
+void remove_icon_for_canvas(Canvas *canvas) {
+    for (int i = 0; i < icon_count; i++) {
+        if (icon_array[i]->iconified_canvas == canvas) {
+            destroy_icon(icon_array[i]);
+            break;  // Assume only one icon per canvas
+        }
+    }
+    Canvas *desktop = get_desktop_canvas();
+    if (desktop) redraw_canvas(desktop);
+}
+
 // ========================
 // workbench event handling
 // ========================
 
-// Dispatcher: workbench_handle_button_press
 void workbench_handle_button_press(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) return;
@@ -364,13 +410,14 @@ void workbench_handle_button_press(XButtonEvent *event) {
             start_drag_icon(icon, event->x, event->y);
         }
         if (is_double_click(event->time, icon->last_click_time)) {
-            if (icon->type == TYPE_DRAWER || icon->type == TYPE_ICONIFIED) {
+            if (icon->type == TYPE_DRAWER) {
                 open_directory(icon, canvas);
-                icon->last_click_time = event->time;
             } else if (icon->type == TYPE_FILE) {
                 open_file(icon);
-                icon->last_click_time = event->time;
+            } else if (icon->type == TYPE_ICONIFIED) {
+                restore_iconified(icon);
             }
+            icon->last_click_time = event->time;
         }
         icon->last_click_time = event->time;
     } else {

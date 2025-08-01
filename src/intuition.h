@@ -68,6 +68,9 @@ void set_active_window(Canvas *canvas);     // activate one, deactivate the othe
 // Add prototype for compute_max_scroll
 void compute_max_scroll(Canvas *canvas);    // Compute max scroll limits and clamp current scroll
 
+// Iconify a workbench canvas window (hide window and create desktop icon)
+void iconify_canvas(Canvas *canvas);
+
 
 
 // ========

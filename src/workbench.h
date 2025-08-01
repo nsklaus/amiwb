@@ -7,8 +7,6 @@
 
 #define INITIAL_ICON_CAPACITY 16
 
-
-
 // Function prototypes
 void init_workbench(void);                                  // Initialize icon array
 void cleanup_workbench(void);                               // Clean up icon array
@@ -26,5 +24,8 @@ void workbench_handle_motion_notify(XMotionEvent *event);   // Handle motion for
 
 // Add after existing prototypes
 void compute_content_bounds(Canvas *canvas);  // Compute content bounds from icons on canvas
+
+// Remove any icon associated with an iconified canvas (e.g., on destroy)
+void remove_icon_for_canvas(Canvas *canvas);
 
 #endif

@@ -48,11 +48,12 @@ void init_render(void) {
 
     // Load font with DPI
 
-    char *font_path = get_resource_path("fonts/SourceCodePro-Regular.otf");
+    char *font_path = get_resource_path(SYSFONT);
 
     FcPattern *pattern = FcPatternCreate();
     FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)font_path);
     FcPatternAddDouble(pattern, FC_SIZE, 12.0);
+    FcPatternAddInteger(pattern, FC_WEIGHT, 200); // bold please
     FcPatternAddDouble(pattern, FC_DPI, 75);
     FcConfigSubstitute(NULL, pattern, FcMatchPattern);
     XftDefaultSubstitute(ctx->dpy, DefaultScreen(ctx->dpy), pattern);
@@ -148,15 +149,16 @@ void render_icon(FileIcon *icon) {
     }
 
     // Set color based on canvas type
-    XftColor *label_color = (canvas->type == DESKTOP) ? &text_color_white : &text_color_black;
 
+    XftColor label_color; //.color = (canvas->type == DESKTOP) ? &DESKFONTCOL : &WINFONTCOL;
+    label_color.color = *((canvas->type == DESKTOP) ? &DESKFONTCOL : &WINFONTCOL);
     XGlyphInfo extents;
     XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)display_label, strlen(display_label), &extents);
     // For label, adjust text_x and text_y similarly
     int text_x = render_x + (icon->width - extents.xOff) / 2;
     int text_y = render_y + icon->height + font->ascent + 2;
     //fprintf(stderr, "Rendering label '%s' at (%d, %d) on canvas type %d\n",display_label, text_x, text_y, canvas->type);
-    XftDrawStringUtf8(draw, label_color, font, text_x, text_y,
+    XftDrawStringUtf8(draw, &label_color, font, text_x, text_y,
                       (FcChar8 *)display_label, strlen(display_label));
     XftDrawDestroy(draw);
 }
@@ -417,22 +419,60 @@ void redraw_canvas(Canvas *canvas) {
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - 40-12, canvas->height - BORDER_HEIGHT_BOTTOM+14, 4,2);
 
         }
-    
-        // draw path on titlebar
-        if (canvas->title ) {
+
+        // set font color for window title (active/inactive)
+ 
+
+/*        if (canvas->type == WINDOW && canvas->client_win != None) {
+
             XftColor text_col;
             if (canvas->active) {
                 text_col.color = WHITE; 
             } else {
                 text_col.color = BLACK; 
             }
-            XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer, canvas->visual, canvas->colormap);
-            //XftColor text_col;
-            //XRenderColor frame_color2 = canvas->active ? WHITE : BLACK;
-            //text_col.color = canvas->active ? WHITE : BLACK; // inactive win get black text
-            int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
-            XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
-            XftDrawDestroy(draw);
+            XClassHint class_hint;
+            if (XGetClassHint(ctx->dpy, canvas->client_win, &class_hint) && class_hint.res_name) {
+                char *app_name = class_hint.res_name;  // Instance name (e.g., "xterm")
+                
+                XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer, canvas->visual, canvas->colormap);
+                int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
+                XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)app_name, strlen(app_name));  // Draw title text.
+                XftDrawDestroy(draw);
+                //printf("app_name=%s \n",app_name);
+
+                XFree(class_hint.res_name);
+                XFree(class_hint.res_class);
+            }
+        }     
+        // draw path on titlebar for workbench windows
+        else */
+
+        // ==================
+        // draw windows title
+        // ==================
+        if (canvas->title ) {
+
+            XftColor text_col;
+            if (canvas->active) {
+                text_col.color = WHITE; 
+            } else {
+                text_col.color = BLACK; 
+            }
+            // case for workbench windows
+            if (canvas->client_win == None) {
+                XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer, canvas->visual, canvas->colormap);
+                int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
+                XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
+                XftDrawDestroy(draw);
+            }
+            // case for client windows
+            if (canvas->client_win != None){
+                XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->win, canvas->visual, canvas->colormap);
+                int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
+                XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
+                XftDrawDestroy(draw);
+            }
         }
         // =============
         // slider knob 
