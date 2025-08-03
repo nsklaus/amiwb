@@ -118,12 +118,16 @@ void handle_button_release(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     //fprintf(stderr, "ButtonRelease event\n");
     if (!canvas) return;
-    if (canvas->type == WINDOW) {
+
+    intuition_handle_button_release(event);
+    workbench_handle_button_release(event);
+    menu_handle_button_release(event);
+/*    if (canvas->type == WINDOW) {
         intuition_handle_button_release(event);
         workbench_handle_button_release(event);
     } else {
         workbench_handle_button_release(event);
-    }
+    }*/
 }
 
 // Dispatch key press
@@ -213,9 +217,15 @@ void handle_configure_notify(XConfigureEvent *event) {
 }
 
 void handle_destroy_notify(XDestroyWindowEvent *event) {
-    Canvas *canvas = find_canvas_by_client(event->window);
+/*    Canvas *canvas = find_canvas(event->window);
+    canvas ? find_canvas_by_client(event->window);*/
+    
+    Canvas *canvas = find_canvas(event->window);
+    if (!canvas) {
+        canvas = find_canvas_by_client(event->window);
+    }
+
     if (canvas) {
-        //fprintf(stderr, "DestroyNotify on canvas client %lu\n", event->window);
         intuition_handle_destroy_notify(event);
     }
 }

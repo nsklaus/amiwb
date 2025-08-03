@@ -11,6 +11,6 @@ void init_render(void); 			// initialize rendering resources
 void cleanup_render(void);			// clean up rendering resources
 void redraw_canvas(Canvas *canvas); // redraw entire canvas and its icons
 void redraw_menu(Canvas *canvas);	// redraw a menu
-void render_icon(FileIcon *icon); 	// render a single icon
+void render_icon(FileIcon *icon, Canvas *canvas); 	// render a single icon
 
 #endif

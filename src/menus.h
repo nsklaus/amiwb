@@ -35,6 +35,7 @@ void menu_handle_button_press(XButtonEvent *event);             // Handle button
 void menu_handle_menubar_press(XButtonEvent *event);            // Handle button press for menubar
 void menu_handle_motion_notify(XMotionEvent *event);            // Handle motion for dropdown menus
 void menu_handle_menubar_motion(XMotionEvent *event);           // Handle motion for menubar
+void menu_handle_button_release(XButtonEvent *event);
 void menu_handle_key_press(XKeyEvent *event);                   // Handle key press for menu navigation
 
 // New prototypes for state and rendering support

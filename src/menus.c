@@ -208,9 +208,11 @@ bool get_show_menus_state(void) {
 void toggle_menubar_state(void) {
     show_menus = !show_menus;
     if (show_menus) {
+
         menubar->items = full_menu_items;
         menubar->item_count = full_menu_item_count;
         menubar->submenus = full_submenus;
+
     } else {
         menubar->items = logo_items;
         menubar->item_count = logo_item_count;
@@ -222,6 +224,7 @@ void toggle_menubar_state(void) {
             destroy_canvas(active_menu->canvas);
             active_menu = NULL;
         }
+
     }
     if (menubar) redraw_canvas(menubar->canvas);
 }
@@ -248,6 +251,7 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
     if (!show_menus) return;
 
     RenderContext *ctx = get_render_context();
+
     if (!ctx || !menubar) return;
     int prev_selected = menubar->selected_item;
     menubar->selected_item = -1;
@@ -255,7 +259,8 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
     int padding = 20;
     for (int i = 0; i < menubar->item_count; i++) {
         XGlyphInfo extents;
-        XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)menubar->items[i], strlen(menubar->items[i]), &extents);
+        XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)menubar->items[i], 
+            strlen(menubar->items[i]), &extents);
         int item_width = extents.xOff + padding;
         if (event->x >= x_pos && event->x < x_pos + item_width) {
             menubar->selected_item = i;
@@ -269,29 +274,36 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
             destroy_canvas(active_menu->canvas);
             active_menu = NULL;
         }
-        if (menubar->selected_item != -1 && menubar->submenus[menubar->selected_item]) {
+        if (menubar->selected_item != -1 && 
+                menubar->submenus[menubar->selected_item]) {
             int submenu_x = 10;
             for (int j = 0; j < menubar->selected_item; j++) {
                 XGlyphInfo extents;
-                XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)menubar->items[j], strlen(menubar->items[j]), &extents);
+                XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)menubar->items[j], 
+                    strlen(menubar->items[j]), &extents);
                 submenu_x += extents.xOff + padding;
             }
-            show_dropdown_menu(menubar, menubar->selected_item, submenu_x, MENU_ITEM_HEIGHT);
+            show_dropdown_menu(menubar, menubar->selected_item, submenu_x, 
+                MENU_ITEM_HEIGHT);
         }
         redraw_canvas(menubar->canvas);
-    }
+    }        
 }
 
 void menu_handle_button_press(XButtonEvent *event) {
     RenderContext *ctx = get_render_context();
-    if (!ctx || !active_menu || event->window != active_menu->canvas->win) return;
+    if (!ctx || !active_menu || event->window != active_menu->canvas->win) {
+        return;
+    }
 
     int item = event->y / MENU_ITEM_HEIGHT;
     if (item >= 0 && item < active_menu->item_count) {
         handle_menu_selection(active_menu, item);
     }
     // Close submenu
-    if (active_menu) {  // Check if active_menu is still set (may have been closed in handle_menu_selection via toggle)
+    // Check if active_menu is still set 
+    // (may have been closed in handle_menu_selection via toggle)
+    if (active_menu) {  
         XUnmapWindow(ctx->dpy, active_menu->canvas->win);
         destroy_canvas(active_menu->canvas);
         active_menu = NULL;
@@ -302,6 +314,10 @@ void menu_handle_button_press(XButtonEvent *event) {
     }
 }
 
+void menu_handle_button_release(XButtonEvent *event) {
+
+    //XUngrabPointer(get_display(), CurrentTime);
+}
 
 // Handle button press on menubar
 void menu_handle_menubar_press(XButtonEvent *event) {
@@ -312,14 +328,20 @@ void menu_handle_menubar_press(XButtonEvent *event) {
 
 // Handle motion on dropdown
 void menu_handle_motion_notify(XMotionEvent *event) {
+    
     RenderContext *ctx = get_render_context();
-    if (!ctx || !active_menu || event->window != active_menu->canvas->win) return;
+    if (!ctx || !active_menu || event->window != active_menu->canvas->win) {
+        return;
+    }
 
     int prev_selected = active_menu->selected_item;
     active_menu->selected_item = event->y / MENU_ITEM_HEIGHT;
-    if (active_menu->selected_item < 0 || active_menu->selected_item >= active_menu->item_count) {
+    if (active_menu->selected_item < 0 || 
+            active_menu->selected_item >= active_menu->item_count) {
+
         active_menu->selected_item = -1;
     }
+
     if (active_menu->selected_item != prev_selected) {
         redraw_canvas(active_menu->canvas);
     }
@@ -332,17 +354,25 @@ void menu_handle_key_press(XKeyEvent *event) {
 
 // Show dropdown menu 
 void show_dropdown_menu(Menu *menu, int index, int x, int y) {
-    if (!menu || index < 0 || index >= menu->item_count || !menu->submenus[index]) return;
+    
+    if (!menu || index < 0 || index >= menu->item_count || 
+            !menu->submenus[index]) {
+        return;
+    }
+
     active_menu = menu->submenus[index];
     int submenu_width = get_submenu_width(active_menu);
-    active_menu->canvas = create_canvas(NULL, x, y, submenu_width, active_menu->item_count * MENU_ITEM_HEIGHT, MENU);
-    if (!active_menu->canvas) return;
-    active_menu->canvas->bg_color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
-/*    fprintf(stderr, "Set menubar bg_color: R=0x%04X, G=0x%04X, B=0x%04X, A=0x%04X\n",
-        menubar->canvas->bg_color.red, menubar->canvas->bg_color.green,
-        menubar->canvas->bg_color.blue, menubar->canvas->bg_color.alpha);*/
+    active_menu->canvas = create_canvas(NULL, x, y, submenu_width, 
+        active_menu->item_count * MENU_ITEM_HEIGHT, MENU);
+    if (!active_menu->canvas) { return; }
+    active_menu->canvas->bg_color = 
+        (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+
     active_menu->selected_item = -1;
     XMapRaised(get_render_context()->dpy, active_menu->canvas->win);
+/*    XGrabPointer(get_display(), menubar->canvas->win, False, 
+        PointerMotionMask | ButtonReleaseMask, GrabModeAsync, 
+        GrabModeAsync, None, None, CurrentTime);*/
     redraw_canvas(active_menu->canvas);
 }
 
@@ -445,7 +475,8 @@ int get_submenu_width(Menu *menu) {
     int padding = 20;
     for (int i = 0; i < menu->item_count; i++) {
         XGlyphInfo extents;
-        XftTextExtentsUtf8(get_render_context()->dpy, font, (FcChar8 *)menu->items[i], strlen(menu->items[i]), &extents);
+        XftTextExtentsUtf8(get_render_context()->dpy, font, 
+            (FcChar8 *)menu->items[i], strlen(menu->items[i]), &extents);
         int width = extents.xOff + padding;
         if (width > max_width) max_width = width;
     }

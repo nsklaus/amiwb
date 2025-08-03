@@ -275,8 +275,8 @@ static void open_directory(FileIcon *icon, Canvas *canvas) {
     if (new_canvas) {
         DIR *dir = opendir(icon->path);
         if (dir) {
-            int x = 10, y = 10;  // Start relative to content area top-left
-            int x_offset = 80;
+            int x = 20, y = 20;  // Start relative to content area top-left
+            int x_offset = 100;
             struct dirent *entry;
             while ((entry = readdir(dir))) {
                 if (entry->d_name[0] == '.') continue;
@@ -407,6 +407,10 @@ void workbench_handle_button_press(XButtonEvent *event) {
     if (icon) {
         select_icon(icon, canvas, event->state); // Pass event->state
         if (event->button == Button1) {
+/*            Display *display = get_display();
+            XGrabPointer(display, canvas->win, False, PointerMotionMask | ButtonReleaseMask,
+                                 GrabModeAsync, GrabModeAsync, None, None, CurrentTime);*/
+
             start_drag_icon(icon, event->x, event->y);
         }
         if (is_double_click(event->time, icon->last_click_time)) {
@@ -438,4 +442,6 @@ void workbench_handle_motion_notify(XMotionEvent *event) {
 void workbench_handle_button_release(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (canvas) end_drag_icon(canvas);
+/*    Display *display = get_display();
+    XUngrabPointer(display, CurrentTime);*/
 }

@@ -93,13 +93,13 @@ void cleanup_render(void) {
 }
 
 // Render a single icon
-void render_icon(FileIcon *icon) {
+void render_icon(FileIcon *icon, Canvas *canvas) {
     if (!icon || icon->display_window == None || !icon->current_picture) {
         fprintf(stderr, "render_icon: Invalid icon (icon=%p, canvas=%p, picture=%p)\n", (void*)icon, (void*)icon->display_window, (void*)icon->current_picture);
         return;
     }
 
-    Canvas *canvas = find_canvas(icon->display_window);
+    //Canvas *canvas = find_canvas(icon->display_window);
     RenderContext *ctx = get_render_context();
     if (!ctx) {
         fprintf(stderr, "render_icon: No render context\n");
@@ -210,7 +210,7 @@ void redraw_canvas(Canvas *canvas) {
             int icon_count = get_icon_count();
             for (int i = 0; i < icon_count; i++) {
                 if (icon_array[i]->display_window == canvas->win) {
-                    render_icon(icon_array[i]);
+                    render_icon(icon_array[i], canvas);
                 }
             }
         }
