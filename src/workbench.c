@@ -18,6 +18,10 @@ static int icon_array_size = 0;             // Allocated size of icon array
 static FileIcon *dragged_icon = NULL;       // Moved from events.c
 static int drag_start_x, drag_start_y;      // Moved from events.c
 
+// Comparison function for qsort: sort icons alphabetically by label
+static int icon_cmp(const void *a, const void *b) {
+    return strcmp((*(FileIcon **)a)->label, (*(FileIcon **)b)->label);
+}
 
 // =========================
 // Manage dynamic icon array 
@@ -79,6 +83,10 @@ void init_workbench(void) {
 
     redraw_canvas(get_desktop_canvas());
 }
+
+// ================
+// helper functions
+// ================
 
 // Get current icon count
 int get_icon_count(void) {
@@ -330,6 +338,53 @@ static void open_directory(FileIcon *icon, Canvas *canvas) {
     }
 }
 
+void icon_cleanup(Canvas *canvas) {
+    if (!canvas) return;
+
+    // Step 1: Count icons on this canvas
+    int count = 0;
+    for (int i = 0; i < icon_count; i++) {
+        if (icon_array[i]->display_window == canvas->win) {
+            count++;
+        }
+    }
+    if (count == 0) return;
+
+    // Step 2: Allocate and collect icons
+    FileIcon **list = malloc(count * sizeof(FileIcon *));
+    if (!list) return;  // Memory fail, silent return
+    int idx = 0;
+    for (int i = 0; i < icon_count; i++) {
+        if (icon_array[i]->display_window == canvas->win) {
+            list[idx++] = icon_array[i];
+        }
+    }
+
+    // Step 3: Sort icons alphabetically
+    qsort(list, count, sizeof(FileIcon *), icon_cmp);
+
+    // Step 4: Calculate grid parameters
+    int visible_w = (canvas->type == WINDOW) ? 
+                    (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) : 
+                    canvas->width;
+    int icons_per_row = max(1, (visible_w - 20) / ICON_SPACING);  // Padding 10 each side
+    int start_x = 10;
+    int start_y = (canvas->type == DESKTOP) ? 40 : 10;  // Higher y for desktop to avoid menubar
+
+    // Step 5: Reposition icons in grid
+    for (int i = 0; i < count; i++) {
+        int row = i / icons_per_row;
+        int col = i % icons_per_row;
+        list[i]->x = start_x + col * ICON_SPACING;
+        list[i]->y = start_y + row * ICON_SPACING;
+    }
+
+    // Step 6: Clean up and update canvas
+    free(list);
+    compute_content_bounds(canvas);
+    compute_max_scroll(canvas);
+    redraw_canvas(canvas);
+}
 
 // =======================
 // open / execute file 

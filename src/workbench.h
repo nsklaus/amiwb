@@ -22,6 +22,9 @@ void workbench_handle_button_press(XButtonEvent *event);    // Handle button pre
 void workbench_handle_button_release(XButtonEvent *event);  // Handle button release for icons
 void workbench_handle_motion_notify(XMotionEvent *event);   // Handle motion for icon dragging
 
+// Rearrange icons on the given canvas in a sorted grid layout
+void icon_cleanup(Canvas *canvas);
+
 // Add after existing prototypes
 void compute_content_bounds(Canvas *canvas);  // Compute content bounds from icons on canvas
 

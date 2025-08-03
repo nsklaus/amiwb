@@ -3,7 +3,7 @@
 #include "render.h"
 #include "menus.h"
 #include "config.h"
-#include "workbench.h"  // Added for remove_icon_for_canvas
+#include "workbench.h"
 #include <X11/X.h>
 #include <X11/Xlib.h>
 // #include <X11/extensions/Xrandr.h>
@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <sys/stat.h>  // Added for stat in iconify_canvas
+#include <sys/stat.h>
 
 #define INITIAL_CANVAS_CAPACITY 8
 
@@ -42,18 +42,28 @@ static Canvas *resizing_canvas = NULL;
 static int resize_start_x = 0, resize_start_y = 0;
 static int window_start_width = 0, window_start_height = 0;
 
-// scroling
-static Canvas *scrolling_canvas = NULL;  // Canvas being scrolled
-static bool scrolling_vertical = true;   // True for vertical scrollbar, false for horizontal
-static int initial_scroll = 0;           // Initial scroll position at drag start
-static int scroll_start_pos = 0;         // Initial mouse position (x or y root) at drag start
+// Canvas being scrolled
+static Canvas *scrolling_canvas = NULL;
 
-// Custom X error handler to log details about errors (e.g., BadValue) and make them non-fatal
+// True for vertical scrollbar, false for horizontal
+static bool scrolling_vertical = true;
+
+// Initial scroll position at drag start
+static int initial_scroll = 0;
+
+// Initial mouse position (x or y root) at drag start
+static int scroll_start_pos = 0;
+
+// X error handler, log details and make them non-fatal
 static int x_error_handler(Display *dpy, XErrorEvent *error) {
     char error_text[1024];
     XGetErrorText(dpy, error->error_code, error_text, sizeof(error_text));
-    fprintf(stderr, "X Error intercepted: error_code=%d (%s), request_code=%d, minor_code=%d, resource_id=0x%lx\n",
-            error->error_code, error_text, error->request_code, error->minor_code, error->resourceid);
+    
+    fprintf(stderr, "X Error intercepted: error_code=%d (%s), \
+        request_code=%d, minor_code=%d, resource_id=0x%lx\n",
+        error->error_code, error_text, error->request_code, 
+        error->minor_code, error->resourceid);
+
     fflush(stderr);
     return 0;  // continue execution (non-fatal handling)
 }
@@ -68,13 +78,20 @@ RenderContext *get_render_context(void) { return render_context; }
 // =======================
 static Canvas *add_canvas(void) {
     if (canvas_count >= canvas_array_size) {
-        canvas_array_size = canvas_array_size ? canvas_array_size * 2 : INITIAL_CANVAS_CAPACITY;
-        Canvas **new_canvases = realloc(canvas_array, canvas_array_size * sizeof(Canvas *));
-        if (!new_canvases) return NULL;
+        canvas_array_size = canvas_array_size ? 
+            canvas_array_size * 2 : INITIAL_CANVAS_CAPACITY;
+
+        Canvas **new_canvases = realloc(canvas_array, 
+            canvas_array_size * sizeof(Canvas *));
+
+        if (!new_canvases) 
+            return NULL;
         canvas_array = new_canvases;
     }
     Canvas *new_canvas = malloc(sizeof(Canvas));
-    if (!new_canvas) return NULL;
+    if (!new_canvas) 
+        return NULL;
+
     canvas_array[canvas_count++] = new_canvas;
     return new_canvas;
 }
@@ -82,7 +99,8 @@ static Canvas *add_canvas(void) {
 static void remove_canvas(Canvas *canvas_to_remove) {
     for (int i = 0; i < canvas_count; i++) {
         if (canvas_array[i] == canvas_to_remove) {
-            memmove(&canvas_array[i], &canvas_array[i + 1], (canvas_count - i - 1) * sizeof(Canvas *));
+            memmove(&canvas_array[i], &canvas_array[i + 1], 
+                (canvas_count - i - 1) * sizeof(Canvas *));
             canvas_count--;
             break;
         }
@@ -104,7 +122,10 @@ static XVisualInfo select_visual(CanvasType type) {
         vinfo.visual = DefaultVisual(display, screen);
         vinfo.depth = DefaultDepth(display, screen);
     } else {
-        if (!XMatchVisualInfo(display, screen, GLOBAL_DEPTH, TrueColor, &vinfo)) {
+
+        if (!XMatchVisualInfo(display, screen, GLOBAL_DEPTH, 
+                TrueColor, &vinfo)) {
+
             vinfo.visual = DefaultVisual(display, screen);
             vinfo.depth = DefaultDepth(display, screen);
         }
@@ -145,11 +166,15 @@ static bool init_display_and_root(void) {
     if (XRRQueryExtension(display, &randr_event_base, &randr_error_base)) {
         XRRSelectInput(display, root, RRScreenChangeNotifyMask);
     } else {
-        fprintf(stderr, "XRANDR extension not available; resolution changes may not be handled.\n");
+        fprintf(stderr, "XRANDR extension not available; \
+            resolution changes may not be handled.\n");
     }
 
-    XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask | PropertyChangeMask |
-                                StructureNotifyMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | KeyPressMask);
+    XSelectInput(display, root, SubstructureRedirectMask | 
+        SubstructureNotifyMask | PropertyChangeMask |
+        StructureNotifyMask | ButtonPressMask | 
+        ButtonReleaseMask | PointerMotionMask | KeyPressMask);
+
     XSync(display, False);
     return true;
 }
@@ -160,13 +185,16 @@ static bool init_display_and_root(void) {
 Canvas *init_intuition(void) {
     if (!init_display_and_root() || !init_render_context()) return NULL;
 
-    Canvas *desktop = create_canvas(getenv("HOME"), 0, 20, width, height, DESKTOP);
+    Canvas *desktop = create_canvas(getenv("HOME"), 
+        0, 20, width, height, DESKTOP);
     if (!desktop) return NULL;
 
     Window root_return, parent_return;
     Window *children;
     unsigned int nchildren;
-    if (XQueryTree(display, root, &root_return, &parent_return, &children, &nchildren)) {
+    if (XQueryTree(display, root, &root_return, &parent_return, 
+            &children, &nchildren)) {
+
         for (unsigned int i = 0; i < nchildren; i++) {
             Window child = children[i];
             bool is_own = false;
@@ -189,10 +217,12 @@ Canvas *init_intuition(void) {
             unsigned long nitems, bytes_after;
             unsigned char *prop = NULL;
             bool skip_framing = false;
+
             if (motif_wm_hints != None && XGetWindowProperty(display, child, 
                     motif_wm_hints, 0, 5, False, AnyPropertyType, &actual_type, 
                     &actual_format, &nitems, &bytes_after, &prop) == Success && 
                     nitems >= 3) {
+
                 long *hints = (long *)prop;
                 if (hints[0] & (1L << 2) && hints[2] == 0) skip_framing = true;
                 XFree(prop);
@@ -244,7 +274,9 @@ Canvas *find_canvas(Window win) {
 }
 
 Canvas *find_canvas_by_client(Window client_win) {
-    for (int i = 0; i < canvas_count; i++) if (canvas_array[i]->client_win == client_win) return canvas_array[i];
+    for (int i = 0; i < canvas_count; i++) 
+        if (canvas_array[i]->client_win == client_win) 
+            return canvas_array[i];
     return NULL;
 }
 
@@ -256,6 +288,8 @@ static void deactivate_all_windows(void){
             redraw_canvas(c);
         }
     }
+    // Clear active window pointer after deactivation
+    active_window = NULL;
 }
 
 static void deactivate_other_windows(Canvas *except) {
@@ -286,7 +320,8 @@ void set_active_window(Canvas *canvas) {
     canvas->active = true;
     XRaiseWindow(display, canvas->win);
     if (canvas->client_win != None) {
-        XSetInputFocus(display, canvas->client_win, RevertToParent, CurrentTime);
+        XSetInputFocus(display, canvas->client_win, 
+            RevertToParent, CurrentTime);
     }
     redraw_canvas(canvas);
     XSync(display, False);
@@ -322,12 +357,15 @@ static bool is_fullscreen_active(Window win) {
 
 // Iconify a canvas window (hide it and create a desktop icon)
 void iconify_canvas(Canvas *canvas) {
-    if (!canvas || canvas->type != WINDOW) return;  // Only for WINDOW types (both workbench and clients)
+
+    // Only for WINDOW types (both workbench and clients)
+    if (!canvas || canvas->type != WINDOW) return;
 
     Canvas *desktop = get_desktop_canvas();
     if (!desktop) return;
 
-    // Compute next icon position on desktop (vertical stack starting at y=40, x=10, 80px spacing)
+    // Compute next icon position on desktop 
+    // (vertical stack starting at y=40, x=10, 80px spacing)
     int desktop_icon_count = 0;
     FileIcon **icons = get_icon_array();
     int count = get_icon_count();
@@ -347,20 +385,26 @@ void iconify_canvas(Canvas *canvas) {
         icon_path = "/usr/local/share/amiwb/icons/filer.info";
         printf("Iconifying workbench window: label=%s, icon=%s\n", label, icon_path);
     } else {
-        // Client window: use WM_CLASS instance as short name for label and icon matching
+        // Client window: use WM_CLASS instance as 
+        // short name for label and icon matching
         XClassHint class_hint;
         if (XGetClassHint(display, canvas->client_win, &class_hint) && class_hint.res_name) {
-            char *app_name = class_hint.res_name;  // Instance name (e.g., "xterm")
+
+            // Instance name (e.g., "xterm")
+            char *app_name = class_hint.res_name;  
             char icon_full[256];
-            snprintf(icon_full, sizeof(icon_full), "/usr/local/share/amiwb/icons/%s.info", app_name);
+            snprintf(icon_full, sizeof(icon_full), 
+                "/usr/local/share/amiwb/icons/%s.info", app_name);
 
             struct stat st;
             if (stat(icon_full, &st) == 0) {
                 icon_path = icon_full;
-                printf("Found matching icon for app_name=%s: %s\n", app_name, icon_full);
+                printf("Found matching icon for app_name=%s: %s\n", 
+                    app_name, icon_full);
             } else {
                 icon_path = "/usr/local/share/amiwb/icons/def_tool.info";
-                printf("No matching icon for app_name=%s, using default: %s\n", app_name, icon_path);
+                printf("No matching icon for app_name=%s, \
+                    using default: %s\n", app_name, icon_path);
             }
 
             label = strdup(app_name);
@@ -370,7 +414,8 @@ void iconify_canvas(Canvas *canvas) {
             // Fallback if no class hint
             label = strdup("Untitled");
             icon_path = "/usr/local/share/amiwb/icons/def_tool.info";
-            printf("Could not get class hint for client, using default icon: %s\n", icon_path);
+            printf("Could not get class hint for client, \
+                using default icon: %s\n", icon_path);
         }
     }
 
@@ -537,13 +582,46 @@ static bool should_skip_framing(Window win, XWindowAttributes *attrs) {
     unsigned long nitems, bytes_after;
     unsigned char *prop = NULL;
     bool skip = false;
-    if (motif_wm_hints != None && XGetWindowProperty(display, win, motif_wm_hints, 0, 5, False, AnyPropertyType,
-                                                     &actual_type, &actual_format, &nitems, &bytes_after, &prop) == Success && nitems >= 3) {
+    
+    if (motif_wm_hints != None && XGetWindowProperty(display, win, 
+        motif_wm_hints, 0, 5, False, AnyPropertyType, 
+        &actual_type, &actual_format, &nitems, &bytes_after, 
+        &prop) == Success && nitems >= 3) {
+
         long *hints = (long *)prop;
         if (hints[0] & (1L << 2) && hints[2] == 0) skip = true;
         XFree(prop);
     }
     return skip;
+}
+
+static void select_next_window(Canvas *closing_canvas) {
+    if (active_window == closing_canvas) active_window = NULL;
+
+    Window root_return, parent_return;
+    Window *children;
+    unsigned int nchildren;
+    if (XQueryTree(display, root, &root_return, &parent_return, 
+            &children, &nchildren)) {
+
+        for (int i = nchildren - 1; i >= 0; i--) {  // Top to bottom
+            if (children[i] == closing_canvas->win) 
+                continue;  // Skip closing
+
+            Canvas *next_canvas = find_canvas(children[i]);
+            if (next_canvas && next_canvas->type == WINDOW) {
+                set_active_window(next_canvas);
+                //printf("Activated new top: %s\n", next_canvas->title);
+                break;
+            }
+        }
+        XFree(children);
+    }
+
+    // Fallback if none
+    if (!active_window) {
+        active_window = get_desktop_canvas();
+    }
 }
 
 // =================
@@ -605,9 +683,13 @@ void intuition_handle_button_press(XButtonEvent *event) {
             FileIcon **icon_array = get_icon_array();
             int icon_count = get_icon_count();
             for (int i = 0; i < icon_count; i++) {
+
                 if (icon_array[i]->display_window == canvas->win &&
-                    event->x >= icon_array[i]->x && event->x < icon_array[i]->x + icon_array[i]->width &&
-                    event->y >= icon_array[i]->y && event->y < icon_array[i]->y + icon_array[i]->height) {
+                    event->x >= icon_array[i]->x && 
+                    event->x < icon_array[i]->x + icon_array[i]->width &&
+                    event->y >= icon_array[i]->y && 
+                    event->y < icon_array[i]->y + icon_array[i]->height) {
+
                     on_icon = true;
                     break;
                 }
@@ -704,19 +786,27 @@ void intuition_handle_button_press(XButtonEvent *event) {
     int sb_x = canvas->width - BORDER_WIDTH_RIGHT;
     int sb_y = BORDER_HEIGHT_TOP + 10;
     int sb_w = BORDER_WIDTH_RIGHT;
-    int sb_h = (canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM) - 54 - 10;
-    if (event->x >= sb_x && event->x < sb_x + sb_w && event->y >= sb_y && event->y < sb_y + sb_h) {
+    int sb_h = (canvas->height - BORDER_HEIGHT_TOP - 
+        BORDER_HEIGHT_BOTTOM) - 54 - 10;
+
+    if (event->x >= sb_x && event->x < sb_x + sb_w && 
+        event->y >= sb_y && event->y < sb_y + sb_h) {
+
         float ratio = (float)sb_h / canvas->content_height;
         int knob_h = max(MIN_KNOB_SIZE, (int)(ratio * sb_h));
         float pos_ratio = (float)canvas->scroll_y / canvas->max_scroll_y;
         int knob_y = sb_y + (int)(pos_ratio * (sb_h - knob_h));
         if (event->y >= knob_y && event->y < knob_y + knob_h) {
             scrolling_canvas = canvas; scrolling_vertical = true;
-            initial_scroll = canvas->scroll_y; scroll_start_pos = event->y_root;
+            initial_scroll = canvas->scroll_y; 
+            scroll_start_pos = event->y_root;
             return;
         } else {
+
             float click_ratio = (float)(event->y - sb_y) / sb_h;
-            canvas->scroll_y = max(0, min((int)(click_ratio * canvas->max_scroll_y), canvas->max_scroll_y));
+            canvas->scroll_y = max(0, min((int)(click_ratio * 
+                canvas->max_scroll_y), canvas->max_scroll_y));
+            
             redraw_canvas(canvas);
             return;
         }
@@ -725,30 +815,47 @@ void intuition_handle_button_press(XButtonEvent *event) {
     // vertical arrows clicks
     int arrow_size = 20;
     if (event->x >= sb_x && event->x < sb_x + sb_w) {
-        if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM - (2 * arrow_size)) && event->y < (canvas->height - BORDER_HEIGHT_BOTTOM - arrow_size)) {
-            canvas->scroll_y = max(0, canvas->scroll_y - 20); redraw_canvas(canvas); return;
-        } else if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM - arrow_size) && event->y < (canvas->height - BORDER_HEIGHT_BOTTOM)) {
-            canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + 20); redraw_canvas(canvas); return;
+
+        if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM - 
+            (2 * arrow_size)) && event->y < (canvas->height -
+             BORDER_HEIGHT_BOTTOM - arrow_size)) {
+
+            canvas->scroll_y = max(0, canvas->scroll_y - 20); 
+            redraw_canvas(canvas); return;
+        } 
+
+        else if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM -
+            arrow_size) && event->y < (canvas->height - 
+            BORDER_HEIGHT_BOTTOM)) {
+            
+            canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + 20); redraw_canvas(canvas); 
+            return;
         }
     }
 
     // handle horizontal scrollbar
     int hb_x = BORDER_WIDTH_LEFT + 10;
     int hb_y = canvas->height - BORDER_HEIGHT_BOTTOM;
-    int hb_w = (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) - 54 - 10;
+    int hb_w = (canvas->width - BORDER_WIDTH_LEFT -
+        BORDER_WIDTH_RIGHT) - 54 - 10;
     int hb_h = BORDER_HEIGHT_BOTTOM;
-    if (event->x >= hb_x && event->x < hb_x + hb_w && event->y >= hb_y && event->y < hb_y + hb_h) {
+
+    if (event->x >= hb_x && event->x < hb_x + hb_w && 
+        event->y >= hb_y && event->y < hb_y + hb_h) {
+
         float ratio = (float)hb_w / canvas->content_width;
         int knob_w = max(MIN_KNOB_SIZE, (int)(ratio * hb_w));
         float pos_ratio = (float)canvas->scroll_x / canvas->max_scroll_x;
         int knob_x = hb_x + (int)(pos_ratio * (hb_w - knob_w));
+
         if (event->x >= knob_x && event->x < knob_x + knob_w) {
             scrolling_canvas = canvas; scrolling_vertical = false;
             initial_scroll = canvas->scroll_x; scroll_start_pos = event->x_root;
             return;
         } else {
             float click_ratio = (float)(event->x - hb_x) / hb_w;
-            canvas->scroll_x = max(0, min((int)(click_ratio * canvas->max_scroll_x), canvas->max_scroll_x));
+            canvas->scroll_x = max(0, min((int)(click_ratio * 
+                canvas->max_scroll_x), canvas->max_scroll_x));
             redraw_canvas(canvas);
             return;
         }
@@ -756,10 +863,22 @@ void intuition_handle_button_press(XButtonEvent *event) {
 
     // horizontal arrows clicks
     if (event->y >= hb_y && event->y < hb_y + hb_h) {
-        if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT - (2 * arrow_size)) && event->x < (canvas->width - BORDER_WIDTH_RIGHT - arrow_size)) {
-            canvas->scroll_x = max(0, canvas->scroll_x - 20); redraw_canvas(canvas); return;
-        } else if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT - arrow_size) && event->x < (canvas->width - BORDER_WIDTH_RIGHT)) {
-            canvas->scroll_x = min(canvas->max_scroll_x, canvas->scroll_x + 20); redraw_canvas(canvas); return;
+        
+        if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT -
+            (2 * arrow_size)) && event->x < (canvas->width - 
+            BORDER_WIDTH_RIGHT - arrow_size)) {
+
+            canvas->scroll_x = max(0, canvas->scroll_x - 20); 
+            redraw_canvas(canvas); 
+            return;
+        } 
+
+        else if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT - arrow_size)
+            && event->x < (canvas->width - BORDER_WIDTH_RIGHT)) {
+
+            canvas->scroll_x = min(canvas->max_scroll_x, canvas->scroll_x + 20);
+            redraw_canvas(canvas); 
+            return;
         }
     }
 }
@@ -773,7 +892,8 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
         // Clamp y to ensure titlebar is below menubar
         window_start_y = max(window_start_y + delta_y, MENUBAR_HEIGHT);  
         XMoveWindow(display, dragging_canvas->win, window_start_x, window_start_y);
-        dragging_canvas->x = window_start_x; dragging_canvas->y = window_start_y;
+        dragging_canvas->x = window_start_x; 
+        dragging_canvas->y = window_start_y;
         redraw_canvas(dragging_canvas);
         XSync(display, False);
         drag_start_x = event->x_root; drag_start_y = event->y_root;
@@ -792,19 +912,32 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
         int delta, scale, new_scroll;
         if (scrolling_vertical) {
             delta = event->y_root - scroll_start_pos;
-            int sb_h = scrolling_canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+            int sb_h = scrolling_canvas->height - BORDER_HEIGHT_TOP -
+                BORDER_HEIGHT_BOTTOM;
+
             float ratio = (float)sb_h / scrolling_canvas->content_height;
             int knob_h = max(MIN_KNOB_SIZE, (int)(ratio * sb_h));
-            scale = (sb_h - knob_h > 0) ? (scrolling_canvas->max_scroll_y / (sb_h - knob_h)) : 0;
-            new_scroll = max(0, min(initial_scroll + delta * scale, scrolling_canvas->max_scroll_y));
+            
+            scale = (sb_h - knob_h > 0) ? 
+                (scrolling_canvas->max_scroll_y / (sb_h - knob_h)) : 0;
+
+            new_scroll = max(0, min(initial_scroll + delta * scale,
+                scrolling_canvas->max_scroll_y));
             scrolling_canvas->scroll_y = new_scroll;
+
         } else {
             delta = event->x_root - scroll_start_pos;
             int sb_w = scrolling_canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+
             float ratio = (float)sb_w / scrolling_canvas->content_width;
             int knob_w = max(MIN_KNOB_SIZE, (int)(ratio * sb_w));
-            scale = (sb_w - knob_w > 0) ? (scrolling_canvas->max_scroll_x / (sb_w - knob_w)) : 0;
-            new_scroll = max(0, min(initial_scroll + delta * scale, scrolling_canvas->max_scroll_x));
+            
+            scale = (sb_w - knob_w > 0) ? 
+                (scrolling_canvas->max_scroll_x / (sb_w - knob_w)) : 0;
+            
+            new_scroll = max(0, min(initial_scroll + delta * scale,
+                scrolling_canvas->max_scroll_x));
+
             scrolling_canvas->scroll_x = new_scroll;
         }
         redraw_canvas(scrolling_canvas);
@@ -813,35 +946,11 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
     }
 }
 
-static void select_next_window(Canvas *closing_canvas) {
-    if (active_window == closing_canvas) active_window = NULL;
-
-    Window root_return, parent_return;
-    Window *children;
-    unsigned int nchildren;
-    if (XQueryTree(display, root, &root_return, &parent_return, &children, &nchildren)) {
-        for (int i = nchildren - 1; i >= 0; i--) {  // Top to bottom
-            if (children[i] == closing_canvas->win) continue;  // Skip closing
-            Canvas *next_canvas = find_canvas(children[i]);
-            if (next_canvas && next_canvas->type == WINDOW) {
-                set_active_window(next_canvas);
-                printf("Activated new top: %s\n", next_canvas->title);
-                break;
-            }
-        }
-        XFree(children);
-    }
-
-    // Fallback if none
-    if (!active_window) {
-        active_window = get_desktop_canvas();
-    }
-}
-
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
-    printf("getting destroy notify event ?\n");
-    //Canvas *canvas = find_canvas_by_client(event->window);
-    Canvas *canvas = find_canvas_by_client(event->window) ?: find_canvas(event->window);
+    // printf("getting destroy notify event ?\n");
+    // Canvas *canvas = find_canvas_by_client(event->window);
+    Canvas *canvas = find_canvas_by_client(event->window) ?: 
+        find_canvas(event->window);
 
     if (!canvas) return;
     if (active_window == canvas) active_window = NULL;
@@ -870,7 +979,9 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
     free(canvas->path); free(canvas->title);
     
     manage_canvases(false, canvas);
-    remove_icon_for_canvas(canvas);  // Remove any associated iconified icon from desktop
+
+    // Remove any associated iconified icon from desktop
+    remove_icon_for_canvas(canvas);  
     free(canvas);
 
     Canvas *desktop = get_desktop_canvas();
@@ -890,8 +1001,13 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
     XWindowAttributes attrs;
     bool attrs_valid = XGetWindowAttributes(display, event->window, &attrs);
     if (!attrs_valid) {
-        attrs.x = 100; attrs.y = 100; attrs.width = 400; attrs.height = 300;
-        attrs.override_redirect = False; attrs.class = InputOutput; attrs.border_width = 0;
+        attrs.x = 100; 
+        attrs.y = 100; 
+        attrs.width = 400; 
+        attrs.height = 300;
+        attrs.override_redirect = False; 
+        attrs.class = InputOutput; 
+        attrs.border_width = 0;
     }
 
     if (!attrs_valid || should_skip_framing(event->window, &attrs)) {
@@ -905,14 +1021,21 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
     int frame_y = max(attrs.y, 150);  
     int frame_width = attrs.width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
     int frame_height = attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
-    Canvas *frame = create_canvas(NULL, frame_x, frame_y, frame_width, frame_height, WINDOW);
+    
+    Canvas *frame = create_canvas(NULL, frame_x, frame_y, 
+        frame_width, frame_height, WINDOW);
+    
     if (!frame) {
         XMapWindow(display, event->window);
         return;
     }
 
-    XReparentWindow(display, event->window, frame->win, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
-    XSelectInput(display, event->window, StructureNotifyMask | PropertyChangeMask);
+    XReparentWindow(display, event->window, frame->win, 
+        BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
+
+    XSelectInput(display, event->window, 
+        StructureNotifyMask | PropertyChangeMask);
+
     if (attrs.border_width != 0) {
         XWindowChanges bw_changes = {.border_width = 0};
         XConfigureWindow(display, event->window, CWBorderWidth, &bw_changes);
@@ -927,7 +1050,9 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
         XClassHint class_hint;
         XGetClassHint(display, frame->client_win, &class_hint); 
         if (class_hint.res_name)
-            frame->title = class_hint.res_name;  // Instance name (e.g., "xterm")
+
+            // Instance name (e.g., "xterm")
+            frame->title = class_hint.res_name;  
         else
             frame->title = "NoNameApp";
     }
@@ -948,10 +1073,13 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
             attrs.class = InputOutput;
         }
 
-        unsigned long safe_mask = event->value_mask & ~(CWStackMode | CWSibling);
-        if (attrs.class == InputOnly) safe_mask &= ~CWBorderWidth;
+        unsigned long safe_mask = event->value_mask &
+            ~(CWStackMode | CWSibling);
+        if (attrs.class == InputOnly) 
+            safe_mask &= ~CWBorderWidth;
 
-        if (!attrs_valid) safe_mask &= ~CWBorderWidth;
+        if (!attrs_valid) 
+            safe_mask &= ~CWBorderWidth;
 
         XWindowChanges changes = {0};
         if (safe_mask & CWX) changes.x = event->x;
@@ -963,15 +1091,23 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
 
         if (attrs.class == InputOutput && (safe_mask & CWBorderWidth)) {
             bool need_set_border = false;
-            if (event->value_mask & CWBorderWidth && event->border_width != 0) need_set_border = true;
-            if (attrs_valid && attrs.border_width != 0) need_set_border = true;
+            
+            if (event->value_mask & CWBorderWidth &&
+                    event->border_width != 0) 
+                need_set_border = true;
+            
+            if (attrs_valid && attrs.border_width != 0) 
+                need_set_border = true;
+            
             if (need_set_border) {
                 changes.border_width = 0;
                 safe_mask |= CWBorderWidth;
             }
         }
 
-        if (safe_mask) XConfigureWindow(display, event->window, safe_mask, &changes);
+        if (safe_mask) XConfigureWindow(display, event->window, 
+            safe_mask, &changes);
+
         XSync(display, False);
         return;
     }
@@ -981,13 +1117,18 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
     int new_frame_width = canvas->width, new_frame_height = canvas->height;
 
     if (event->value_mask & CWWidth) {
-        frame_changes.width = max(1, event->width) + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+
+        frame_changes.width = max(1, event->width) + 
+            BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+
         new_frame_width = frame_changes.width;
         frame_mask |= CWWidth;
     }
 
     if (event->value_mask & CWHeight) {
-        frame_changes.height = max(1, event->height) + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+        frame_changes.height = max(1, event->height) + 
+            BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+
         new_frame_height = frame_changes.height;
         frame_mask |= CWHeight;
     }
@@ -1003,25 +1144,43 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
         frame_mask |= CWY;
     }
 
-    if ((event->value_mask & (CWStackMode | CWSibling)) == (CWStackMode | CWSibling) && event->detail >= 0 && event->detail <= 4) {
+    if ((event->value_mask & (CWStackMode | CWSibling)) == (CWStackMode |
+            CWSibling) && event->detail >= 0 && event->detail <= 4) {
+
         XWindowAttributes sibling_attrs;
-        if (XGetWindowAttributes(display, event->above, &sibling_attrs) && sibling_attrs.map_state == IsViewable) {
+        if (XGetWindowAttributes(display, event->above, &sibling_attrs) &&
+                sibling_attrs.map_state == IsViewable) {
+
             frame_changes.stack_mode = event->detail;
             frame_changes.sibling = event->above;
             frame_mask |= CWStackMode | CWSibling;
         }
     }
 
-    if (frame_mask) XConfigureWindow(display, canvas->win, frame_mask, &frame_changes);
+    if (frame_mask) 
+        XConfigureWindow(display, canvas->win, frame_mask, &frame_changes);
 
     XWindowChanges client_changes = {0};
     unsigned long client_mask = 0;
-    if (event->value_mask & CWWidth) { client_changes.width = max(1, event->width); client_mask |= CWWidth; }
-    if (event->value_mask & CWHeight) { client_changes.height = max(1, event->height); client_mask |= CWHeight; }
-    if (event->value_mask & CWBorderWidth) { client_changes.border_width = 0; client_mask |= CWBorderWidth; }
-    client_changes.x = BORDER_WIDTH_LEFT; client_changes.y = BORDER_HEIGHT_TOP;
+
+    if (event->value_mask & CWWidth) { client_changes.width = 
+            max(1, event->width); client_mask |= CWWidth; }
+
+    if (event->value_mask & CWHeight) { client_changes.height = 
+            max(1, event->height); client_mask |= CWHeight; }
+
+    if (event->value_mask & CWBorderWidth) { 
+        client_changes.border_width = 0; 
+        client_mask |= CWBorderWidth; 
+    }
+
+    client_changes.x = BORDER_WIDTH_LEFT; 
+    client_changes.y = BORDER_HEIGHT_TOP;
     client_mask |= CWX | CWY;
-    if (client_mask) XConfigureWindow(display, event->window, client_mask, &client_changes);
+
+    if (client_mask) {
+        XConfigureWindow(display, event->window, client_mask, &client_changes);
+    }
 
     canvas->width = new_frame_width; canvas->height = new_frame_height;
     redraw_canvas(canvas);
@@ -1030,27 +1189,42 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
 
 void intuition_handle_configure_notify(XConfigureEvent *event) {
     Canvas *canvas = find_canvas(event->window);
-    if (!canvas || (canvas->width == event->width && canvas->height == event->height)) return;
+    if (!canvas || (canvas->width == event->width && 
+            canvas->height == event->height)) {
+        return;
+    }
 
     Display *dpy = get_display();
     if (canvas->canvas_buffer != None) XFreePixmap(dpy, canvas->canvas_buffer);
-    if (canvas->canvas_render != None) XRenderFreePicture(dpy, canvas->canvas_render);
-    if (canvas->window_render != None) XRenderFreePicture(dpy, canvas->window_render);
+    
+    if (canvas->canvas_render != None) XRenderFreePicture(dpy, 
+            canvas->canvas_render);
+    
+    if (canvas->window_render != None) XRenderFreePicture(dpy, 
+            canvas->window_render);
 
     canvas->width = event->width; canvas->height = event->height;
 
-    canvas->canvas_buffer = XCreatePixmap(dpy, canvas->win, canvas->width, canvas->height, canvas->depth);
+    canvas->canvas_buffer = XCreatePixmap(dpy, canvas->win, 
+        canvas->width, canvas->height, canvas->depth);
+    
     XRenderPictFormat *fmt = XRenderFindVisualFormat(dpy, canvas->visual);
-    canvas->canvas_render = XRenderCreatePicture(dpy, canvas->canvas_buffer, fmt, 0, NULL);
-    canvas->window_render = XRenderCreatePicture(dpy, canvas->win, fmt, 0, NULL);
+    canvas->canvas_render = XRenderCreatePicture(dpy, 
+        canvas->canvas_buffer, fmt, 0, NULL);
+
+    canvas->window_render = XRenderCreatePicture(dpy, 
+        canvas->win, fmt, 0, NULL);
 
     if (canvas->client_win != None) {
-        XWindowChanges changes = {.width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT,
-                                  .height = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM};
+        XWindowChanges changes = {.width = canvas->width - BORDER_WIDTH_LEFT -
+            BORDER_WIDTH_RIGHT, .height = canvas->height - BORDER_HEIGHT_TOP -
+            BORDER_HEIGHT_BOTTOM};
         XConfigureWindow(dpy, canvas->client_win, CWWidth | CWHeight, &changes);
     }
 
-    if (canvas->type == WINDOW && canvas->client_win == None) compute_max_scroll(canvas);
+    if (canvas->type == WINDOW && canvas->client_win == None) {
+        compute_max_scroll(canvas);
+    }
 
     redraw_canvas(canvas);
     XSync(dpy, False);
@@ -1065,17 +1239,31 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     // Resize and redraw desktop
     Canvas *desktop = get_desktop_canvas();
     if (desktop) {
-        if (desktop->canvas_buffer != None) XFreePixmap(display, desktop->canvas_buffer);
-        if (desktop->canvas_render != None) XRenderFreePicture(display, desktop->canvas_render);
-        if (desktop->window_render != None) XRenderFreePicture(display, desktop->window_render);
+        if (desktop->canvas_buffer != None) 
+            XFreePixmap(display, desktop->canvas_buffer);
+
+        if (desktop->canvas_render != None) 
+            XRenderFreePicture(display, desktop->canvas_render);
+        
+        if (desktop->window_render != None) 
+            XRenderFreePicture(display, desktop->window_render);
 
         desktop->width = width;
-        desktop->height = height;  // Keep full height; menubar overlays top
 
-        desktop->canvas_buffer = XCreatePixmap(display, desktop->win, width, height, desktop->depth);
-        XRenderPictFormat *fmt = XRenderFindVisualFormat(display, desktop->visual);
-        desktop->canvas_render = XRenderCreatePicture(display, desktop->canvas_buffer, fmt, 0, NULL);
-        desktop->window_render = XRenderCreatePicture(display, desktop->win, fmt, 0, NULL);
+        // Keep full height; menubar overlays top
+        desktop->height = height;  
+
+        desktop->canvas_buffer = XCreatePixmap(display, 
+            desktop->win, width, height, desktop->depth);
+
+        XRenderPictFormat *fmt = XRenderFindVisualFormat(display, 
+            desktop->visual);
+        
+        desktop->canvas_render = XRenderCreatePicture(display, 
+            desktop->canvas_buffer, fmt, 0, NULL);
+        
+        desktop->window_render = XRenderCreatePicture(display, 
+            desktop->win, fmt, 0, NULL);
 
         redraw_canvas(desktop);
     }
@@ -1083,17 +1271,29 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     // Resize and redraw menubar
     Canvas *menubar_canvas = get_menubar();
     if (menubar_canvas) {
-        if (menubar_canvas->canvas_buffer != None) XFreePixmap(display, menubar_canvas->canvas_buffer);
-        if (menubar_canvas->canvas_render != None) XRenderFreePicture(display, menubar_canvas->canvas_render);
-        if (menubar_canvas->window_render != None) XRenderFreePicture(display, menubar_canvas->window_render);
 
-        menubar_canvas->width = width;  // Height remains MENUBAR_HEIGHT
+        if (menubar_canvas->canvas_buffer != None) 
+            XFreePixmap(display, menubar_canvas->canvas_buffer);
+
+        if (menubar_canvas->canvas_render != None) 
+            XRenderFreePicture(display, menubar_canvas->canvas_render);
+        
+        if (menubar_canvas->window_render != None) 
+            XRenderFreePicture(display, menubar_canvas->window_render);
+
+        // Height remains MENUBAR_HEIGHT
+        menubar_canvas->width = width;
 
         XResizeWindow(display, menubar_canvas->win, width, MENUBAR_HEIGHT);
 
-        menubar_canvas->canvas_buffer = XCreatePixmap(display, menubar_canvas->win, width, MENUBAR_HEIGHT, menubar_canvas->depth);
-        XRenderPictFormat *fmt = XRenderFindVisualFormat(display, menubar_canvas->visual);
+        menubar_canvas->canvas_buffer = XCreatePixmap(display, 
+            menubar_canvas->win, width, MENUBAR_HEIGHT, menubar_canvas->depth);
+        
+        XRenderPictFormat *fmt = XRenderFindVisualFormat(display, 
+            menubar_canvas->visual);
+        
         menubar_canvas->canvas_render = XRenderCreatePicture(display, menubar_canvas->canvas_buffer, fmt, 0, NULL);
+        
         menubar_canvas->window_render = XRenderCreatePicture(display, menubar_canvas->win, fmt, 0, NULL);
 
         redraw_canvas(menubar_canvas);
@@ -1121,8 +1321,10 @@ void destroy_canvas(Canvas *canvas) {
         }
         if (supports_delete) {
             XEvent ev = {.type = ClientMessage};
-            ev.xclient.window = canvas->client_win; ev.xclient.message_type = wm_protocols;
-            ev.xclient.format = 32; ev.xclient.data.l[0] = wm_delete; ev.xclient.data.l[1] = CurrentTime;
+            ev.xclient.window = canvas->client_win; 
+            ev.xclient.message_type = wm_protocols;
+            ev.xclient.format = 32; ev.xclient.data.l[0] = wm_delete; 
+            ev.xclient.data.l[1] = CurrentTime;
             XSendEvent(dpy, canvas->client_win, False, NoEventMask, &ev);
         } else XKillClient(dpy, canvas->client_win);
         XUnmapWindow(dpy, canvas->win);
@@ -1130,17 +1332,40 @@ void destroy_canvas(Canvas *canvas) {
         XSync(dpy, False);
         return;
     } else {
-        XUnmapWindow(dpy, canvas->win);  // Unmap first to reflect in stacking
-        select_next_window(canvas);  // Select next before freeing
-        if (canvas->window_render != None) XRenderFreePicture(dpy, canvas->window_render);
-        if (canvas->canvas_render != None) XRenderFreePicture(dpy, canvas->canvas_render);
-        if (canvas->canvas_buffer != None) XFreePixmap(dpy, canvas->canvas_buffer);
-        if (canvas->colormap != None) XFreeColormap(dpy, canvas->colormap);
-        if (canvas->win != None) XDestroyWindow(dpy, canvas->win);
-        free(canvas->path); free(canvas->title);
-        if (active_window == canvas) active_window = NULL;
+
+        // Unmap first to reflect in stacking
+        XUnmapWindow(dpy, canvas->win);  
+    
+        // Restrict to WINDOW types to avoid activating on MENU destruction
+        if (canvas->type == WINDOW) {  
+            select_next_window(canvas);
+        }
+
+        if (canvas->window_render != None) 
+            XRenderFreePicture(dpy, canvas->window_render);
+        
+        if (canvas->canvas_render != None) 
+            XRenderFreePicture(dpy, canvas->canvas_render);
+        
+        if (canvas->canvas_buffer != None) 
+            XFreePixmap(dpy, canvas->canvas_buffer);
+        
+        if (canvas->colormap != None) 
+            XFreeColormap(dpy, canvas->colormap);
+        
+        if (canvas->win != None) 
+            XDestroyWindow(dpy, canvas->win);
+
+        free(canvas->path); 
+        free(canvas->title);
+        
+        if (active_window == canvas) 
+            active_window = NULL;
+
         manage_canvases(false, canvas);
-        remove_icon_for_canvas(canvas);  // Remove any associated iconified icon from desktop
+
+        // Remove any associated iconified icon from desktop
+        remove_icon_for_canvas(canvas);  
         free(canvas);
         Canvas *desktop = get_desktop_canvas();
         if (desktop) redraw_canvas(desktop);
@@ -1150,9 +1375,17 @@ void destroy_canvas(Canvas *canvas) {
 void cleanup_intuition(void) {
     if (!render_context) return;
     for (int i = 0; i < canvas_count; i++) destroy_canvas(canvas_array[i]);
-    free(canvas_array); canvas_array = NULL; canvas_count = 0; canvas_array_size = 0;
-    if (root_cursor) XFreeCursor(render_context->dpy, root_cursor);
-    if (render_context->bg_pixmap != None) XFreePixmap(render_context->dpy, render_context->bg_pixmap);
+    free(canvas_array); 
+    canvas_array = NULL; 
+    canvas_count = 0; 
+    canvas_array_size = 0;
+
+    if (root_cursor) 
+        XFreeCursor(render_context->dpy, root_cursor);
+    
+    if (render_context->bg_pixmap != None) 
+        XFreePixmap(render_context->dpy, render_context->bg_pixmap);
+
     XCloseDisplay(render_context->dpy);
     free(render_context); render_context = NULL; display = NULL;
     printf("Called cleanup_intuition() \n");

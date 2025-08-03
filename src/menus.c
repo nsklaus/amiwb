@@ -141,7 +141,7 @@ void init_menus(void) {
     tools_submenu->item_count = 4;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("XCalc");
-    tools_submenu->items[1] = strdup("xfceterm");
+    tools_submenu->items[1] = strdup("Brave");
     tools_submenu->items[2] = strdup("Sublime Text");
     tools_submenu->items[3] = strdup("Shell");
     tools_submenu->selected_item = -1;
@@ -383,7 +383,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
 
     switch (menu->parent_index) {
         case 0:  // Workbench
-            printf("reached 'Workbench' menu\n");
+            //printf("reached 'Workbench' menu\n");
             if (strcmp(item, "Execute") == 0) {
                 // TODO: Implement execute command logic
             } else if (strcmp(item, "Settings") == 0) {
@@ -395,14 +395,13 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 cleanup_workbench();
                 cleanup_intuition();
                 cleanup_render();
-                //exit(0);
                 quit_event_loop();
                 return;
             }
             break;
 
         case 1:  // Window
-            printf("reached 'Window' menu\n");
+            //printf("reached 'Window' menu\n");
             if (strcmp(item, "New Drawer") == 0) {
                 // TODO: Create new directory/drawer
             } else if (strcmp(item, "Open Parent") == 0) {
@@ -412,7 +411,12 @@ void handle_menu_selection(Menu *menu, int item_index) {
             } else if (strcmp(item, "Select Contents") == 0) {
                 // TODO: Select all icons in window
             } else if (strcmp(item, "Clean Up") == 0) {
-                // TODO: Organize icons
+                Canvas *target = get_active_window();
+                if (target && target->type == WINDOW && target->client_win == None) {
+                    icon_cleanup(target);
+                } else {
+                    icon_cleanup(get_desktop_canvas());
+                }
             } else if (strcmp(item, "Show") == 0) {
                 // TODO: Show hidden items or similar
             } else if (strcmp(item, "View By ..") == 0) {
@@ -421,7 +425,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
             break;
 
         case 2:  // Icons
-            printf("reached 'Icons' menu\n");
+            //printf("reached 'Icons' menu\n");
             if (strcmp(item, "Open") == 0) {
                 // TODO: Open selected icon
             } else if (strcmp(item, "Copy") == 0) {
@@ -436,7 +440,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
             break;
 
         case 3:  // Tools
-            printf("reached 'Tools' menu\n");
+            //printf("reached 'Tools' menu\n");
             if (strcmp(item, "XCalc") == 0) {
                 system("xcalc &");  // TODO: Handle errors and paths
 
@@ -444,12 +448,12 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 system("subl &");   
 
             } else if (strcmp(item, "Shell") == 0) {
-                printf("launching kitty\n");
+                //printf("launching kitty\n");
                 system("kitty &"); 
 
-            } else if (strcmp(item, "xfceterm") == 0) {
-                printf("launching xfce4-terminal\n");
-                system("xfce4-terminal &");  // Or preferred terminal
+            } else if (strcmp(item, "Brave") == 0) {
+                //printf("launching brave\n");
+                system("brave-browser &");
             }
 
             break;
