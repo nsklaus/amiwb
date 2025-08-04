@@ -71,6 +71,15 @@ void init_render(void) {
     text_color_white.color = WHITE;
 }
 
+int get_text_width(const char *text) {
+    if (!font || !text) return 0;
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return 0;
+    XGlyphInfo extents;
+    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)text, strlen(text), &extents);
+    return extents.xOff;
+}
+
 // Clean up rendering resources
 void cleanup_render(void) {
     RenderContext *ctx = get_render_context();
@@ -99,23 +108,19 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
         return;
     }
 
-    //Canvas *canvas = find_canvas(icon->display_window);
     RenderContext *ctx = get_render_context();
     if (!ctx) {
         fprintf(stderr, "render_icon: No render context\n");
         return;
     }
-    // In render_icon, add offset calculation before composite
     if (!canvas) { printf("in render.c, render_icon(), canvas failled  \n"); }
     int base_x = (canvas->type == WINDOW) ? BORDER_WIDTH_LEFT : 0;
     int base_y = (canvas->type == WINDOW) ? BORDER_HEIGHT_TOP : 0;
     int render_x = base_x + icon->x - canvas->scroll_x;
     int render_y = base_y + icon->y - canvas->scroll_y;
-    // Composite icon picture to canvas buffer
     XRenderComposite(ctx->dpy, PictOpOver, icon->current_picture, None, canvas->canvas_render,
                      0, 0, 0, 0, render_x, render_y, icon->width, icon->height);
 
-    // Render label with Xft
     if (!font) {
         fprintf(stderr, "render_icon: Font not loaded\n");
         return;
@@ -125,9 +130,6 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
         return;
     }
 
-    //Colormap colormap = ctx->colormap;
-    //fprintf(stderr, "render_icon: Using colormap 0x%lx, visual ID 0x%lx\n", colormap, canvas->client_visual ? canvas->client_visual->visualid : DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy))->visualid);
-
     XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer,
                                   canvas->visual ? canvas->visual : DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)),
                                   canvas->colormap);
@@ -136,28 +138,14 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
         return;
     }
 
-    // Truncate label to 10 chars, add ".." if needed
-    char display_label[13]; // 10 chars + ".." + null
-    size_t len = strlen(icon->label);
-    if (len > 10) {
-        strncpy(display_label, icon->label, 10);
-        display_label[10] = '.';
-        display_label[11] = '.';
-        display_label[12] = '\0';
-    } else {
-        strncpy(display_label, icon->label, len + 1);
-    }
+    const char *display_label = icon->label;  // Use full label
 
-    // Set color based on canvas type
-
-    XftColor label_color; //.color = (canvas->type == DESKTOP) ? &DESKFONTCOL : &WINFONTCOL;
+    XftColor label_color;
     label_color.color = *((canvas->type == DESKTOP) ? &DESKFONTCOL : &WINFONTCOL);
     XGlyphInfo extents;
     XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)display_label, strlen(display_label), &extents);
-    // For label, adjust text_x and text_y similarly
     int text_x = render_x + (icon->width - extents.xOff) / 2;
     int text_y = render_y + icon->height + font->ascent + 2;
-    //fprintf(stderr, "Rendering label '%s' at (%d, %d) on canvas type %d\n",display_label, text_x, text_y, canvas->type);
     XftDrawStringUtf8(draw, &label_color, font, text_x, text_y,
                       (FcChar8 *)display_label, strlen(display_label));
     XftDrawDestroy(draw);

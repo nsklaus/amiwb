@@ -141,7 +141,7 @@ void init_menus(void) {
     tools_submenu->item_count = 4;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("XCalc");
-    tools_submenu->items[1] = strdup("Brave");
+    tools_submenu->items[1] = strdup("Brave Browser");
     tools_submenu->items[2] = strdup("Sublime Text");
     tools_submenu->items[3] = strdup("Shell");
     tools_submenu->selected_item = -1;
@@ -451,7 +451,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 //printf("launching kitty\n");
                 system("kitty &"); 
 
-            } else if (strcmp(item, "Brave") == 0) {
+            } else if (strcmp(item, "Brave Browser") == 0) {
                 //printf("launching brave\n");
                 system("brave-browser &");
             }
