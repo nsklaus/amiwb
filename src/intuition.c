@@ -715,26 +715,27 @@ void intuition_handle_button_press(XButtonEvent *event) {
 
     set_active_window(canvas);
 
-    // Handle titlebar buttons and drag
-    if (event->y < BORDER_HEIGHT_TOP) {
+    // Handle titlebar buttons
+    if (event->y < BORDER_HEIGHT_TOP ) {
 
-        // Rightmost: lower button
+        // Rightmost: lower button pos. 
         int lower_x = canvas->width - BUTTON_LOWER_SIZE;
 
-        // Middle: maximize button
+        // Middle: maximize button pos.
         int max_x = canvas->width - 2 * BUTTON_MAXIMIZE_SIZE;
 
-        // Leftmost on right: iconify button
+        // Leftmost on right: iconify button pos.
         int iconify_x = canvas->width - 3 * BUTTON_ICONIFY_SIZE;
 
-        if (event->x >= lower_x) {
+        // lower button event on LMB
+        if (event->x >= lower_x && event->button == Button1 ) {
             // lower window 
             XLowerWindow(display, canvas->win); redraw_canvas(canvas);
             return;
         } 
         
-        // maximize window
-        else if (event->x >= max_x) {
+        // maximize button event on LMB
+        else if (event->x >= max_x && event->button == Button1) {
             
             canvas->x = 0;
             canvas->y = 21;
@@ -743,34 +744,33 @@ void intuition_handle_button_press(XButtonEvent *event) {
             return;
         } 
 
-        // Iconify the window (hide and create desktop icon)
-        else if (event->x >= iconify_x) {    
+        // iconify button event on LMB 
+        else if (event->x >= iconify_x && event->button == Button1) {    
             iconify_canvas(canvas);
-            return;
-        } else if (event->x < BUTTON_CLOSE_SIZE) {
-            // Close button 
-            if (event->button == Button1)
-                destroy_canvas(canvas);
             return;
         } 
 
-        // Drag the titlebar
-        else {
+         // close button event on LMB 
+        else if (event->x < BUTTON_CLOSE_SIZE && event->button == Button1) {
+            destroy_canvas(canvas);
+            return;
+        } 
+
+        // titlebar button event on LMB
+        else if (event->button == Button1){
             dragging_canvas = canvas;
             drag_start_x = event->x_root; 
             drag_start_y = event->y_root;
             window_start_x = canvas->x; 
             window_start_y = canvas->y;
-/*          XGrabPointer(display, canvas->win, False, PointerMotionMask | 
-                ButtonReleaseMask,GrabModeAsync, GrabModeAsync, 
-                None, None, CurrentTime);*/
             return;
         }
     }
 
-    // resize button drag resize
+    // resize button event on LMB
     if (event->x >= canvas->width - BORDER_WIDTH_RIGHT && 
-            event->y >= canvas->height - BORDER_HEIGHT_BOTTOM) {
+            event->y >= canvas->height - BORDER_HEIGHT_BOTTOM  &&
+            event->button == Button1 ) {
         resizing_canvas = canvas;
         resize_start_x = event->x_root; 
         resize_start_y = event->y_root;
@@ -780,7 +780,7 @@ void intuition_handle_button_press(XButtonEvent *event) {
     }
 
     // no scrollbar on client windows
-    if (canvas->client_win != None) return;
+    if (canvas->client_win != None) { return; }
 
     // handle vertical scrollbar     
     int sb_x = canvas->width - BORDER_WIDTH_RIGHT;
@@ -790,7 +790,8 @@ void intuition_handle_button_press(XButtonEvent *event) {
         BORDER_HEIGHT_BOTTOM) - 54 - 10;
 
     if (event->x >= sb_x && event->x < sb_x + sb_w && 
-        event->y >= sb_y && event->y < sb_y + sb_h) {
+        event->y >= sb_y && event->y < sb_y + sb_h &&
+        event->button == Button1) {
 
         float ratio = (float)sb_h / canvas->content_height;
         int knob_h = max(MIN_KNOB_SIZE, (int)(ratio * sb_h));
@@ -814,7 +815,8 @@ void intuition_handle_button_press(XButtonEvent *event) {
 
     // vertical arrows clicks
     int arrow_size = 20;
-    if (event->x >= sb_x && event->x < sb_x + sb_w) {
+    if (event->x >= sb_x && event->x < sb_x + sb_w && 
+            event->button == Button1) {
 
         if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM - 
             (2 * arrow_size)) && event->y < (canvas->height -
@@ -841,7 +843,8 @@ void intuition_handle_button_press(XButtonEvent *event) {
     int hb_h = BORDER_HEIGHT_BOTTOM;
 
     if (event->x >= hb_x && event->x < hb_x + hb_w && 
-        event->y >= hb_y && event->y < hb_y + hb_h) {
+        event->y >= hb_y && event->y < hb_y + hb_h &&
+        event->button == Button1) {
 
         float ratio = (float)hb_w / canvas->content_width;
         int knob_w = max(MIN_KNOB_SIZE, (int)(ratio * hb_w));
@@ -862,7 +865,8 @@ void intuition_handle_button_press(XButtonEvent *event) {
     }
 
     // horizontal arrows clicks
-    if (event->y >= hb_y && event->y < hb_y + hb_h) {
+    if (event->y >= hb_y && event->y < hb_y + hb_h && 
+        event->button == Button1) {
         
         if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT -
             (2 * arrow_size)) && event->x < (canvas->width - 
@@ -895,7 +899,8 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
         dragging_canvas->x = window_start_x; 
         dragging_canvas->y = window_start_y;
         redraw_canvas(dragging_canvas);
-        XSync(display, False);
+        // removed XSync(); allow natural batching, reduce synchronous latency
+        // XSync(display, False);
         drag_start_x = event->x_root; drag_start_y = event->y_root;
         return;
     }
@@ -904,8 +909,24 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
         int delta_y = event->y_root - resize_start_y;
         int new_width = max(150, window_start_width + delta_x);
         int new_height = max(150, window_start_height + delta_y);
-        XResizeWindow(display, resizing_canvas->win, new_width, new_height);
-        XSync(display, False);
+        
+        // Only resize if change exceeds threshold (e.g., 5 pixels) 
+        // to throttle micro-adjustments
+        const int resize_threshold = 2;
+        if (abs(new_width - resizing_canvas->width) > resize_threshold ||
+            abs(new_height - resizing_canvas->height) > resize_threshold) {
+            XResizeWindow(display, resizing_canvas->win, new_width, new_height);
+            // Update start positions to current for next delta calculation
+            resize_start_x = event->x_root; 
+            resize_start_y = event->y_root;
+            window_start_width = new_width; 
+            window_start_height = new_height;
+        }
+
+
+        // XResizeWindow(display, resizing_canvas->win, new_width, new_height);
+        // removed XSync(); allow natural batching, reduce synchronous latency
+        // XSync(display, False);
         return;
     }
     if (scrolling_canvas) {
@@ -941,7 +962,8 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
             scrolling_canvas->scroll_x = new_scroll;
         }
         redraw_canvas(scrolling_canvas);
-        XSync(display, False);
+        // removed XSync(); allow natural batching, reduce synchronous latency
+        // XSync(display, False);
         return;
     }
 }
@@ -1227,7 +1249,9 @@ void intuition_handle_configure_notify(XConfigureEvent *event) {
     }
 
     redraw_canvas(canvas);
-    XSync(dpy, False);
+    // allow natural batching and reduce synchronous latency:
+    // don't do extra xsync()
+    // XSync(dpy, False);
 }
 
 // resize desktop and menubar upon xrandr size changes

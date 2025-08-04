@@ -103,8 +103,12 @@ void cleanup_render(void) {
 
 // Render a single icon
 void render_icon(FileIcon *icon, Canvas *canvas) {
+    //printf("render_icon called\n");
     if (!icon || icon->display_window == None || !icon->current_picture) {
-        fprintf(stderr, "render_icon: Invalid icon (icon=%p, canvas=%p, picture=%p)\n", (void*)icon, (void*)icon->display_window, (void*)icon->current_picture);
+        printf("render_icon: Invalid icon (icon=%p, canvas=%p, picture=%p)\n", 
+            (void*)icon, 
+            (void*)icon->display_window, 
+            (void*)icon->current_picture);
         return;
     }
 
@@ -131,8 +135,9 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
     }
 
     XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer,
-                                  canvas->visual ? canvas->visual : DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)),
-                                  canvas->colormap);
+        canvas->visual ? canvas->visual : 
+        DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)), canvas->colormap);
+
     if (!draw) {
         fprintf(stderr, "render_icon: Failed to create XftDraw for label '%s'\n", icon->label);
         return;
@@ -165,11 +170,13 @@ static void draw_checkerboard(Display *dpy, Picture dest, int x, int y, int w, i
 // Redraw entire canvas and its icons
 void redraw_canvas(Canvas *canvas) {
     //if (!canvas) return;
-    if (!canvas || canvas->width <= 0 || canvas->height <= 0 || canvas->canvas_render == None || canvas->window_render == None) {
+    if (!canvas || canvas->width <= 0 || canvas->height <= 0 || 
+        canvas->canvas_render == None || canvas->window_render == None) {
         return;
     }
-    if (!canvas || canvas->canvas_render == None || canvas->window_render == None) {
-        /* CHANGE: Skip rendering if resources are invalid */
+    if (!canvas || canvas->canvas_render == None || 
+        canvas->window_render == None) {
+        /* skip rendering if resources are invalid */
         return;
     }
     RenderContext *ctx = get_render_context();
@@ -177,28 +184,48 @@ void redraw_canvas(Canvas *canvas) {
 
     // If canvas is WINDOW type with a client window, 
     // dest is window_render; otherwise, canvas_render.
-    bool is_client_frame = (canvas->type == WINDOW && canvas->client_win != None);
+    bool is_client_frame = (canvas->type == WINDOW && 
+        canvas->client_win != None);
+
     Picture dest = is_client_frame ? canvas->window_render : canvas->canvas_render;
 
-    // Only fill background for non-client frames (desktop, menu, or empty windows)
+    // Only fill background for non-client frames 
+    // (desktop, menu, or empty windows)
     if (!is_client_frame) {
         if (canvas->type == WINDOW) {
             // Fill only content area for workbench windows
             int visible_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
             int visible_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color,
-                                 BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP, visible_w, visible_h);
+                BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP, visible_w, visible_h);
         } else {
             // Full fill for other types
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color, 0, 0, canvas->width, canvas->height);
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color, 
+                0, 0, canvas->width, canvas->height);
         }
-    // Render icons
-    if (canvas->type == DESKTOP || canvas->type == WINDOW){
+        // Render icons
+        if (canvas->type == DESKTOP || canvas->type == WINDOW){
             FileIcon **icon_array = get_icon_array();
             int icon_count = get_icon_count();
+
+            // Compute visible content bounds (viewport) for clipping
+            int view_left = canvas->scroll_x;
+            int view_top = canvas->scroll_y;
+            int view_right = view_left + (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT);
+            int view_bottom = view_top + (canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);
+
             for (int i = 0; i < icon_count; i++) {
-                if (icon_array[i]->display_window == canvas->win) {
-                    render_icon(icon_array[i], canvas);
+                FileIcon *icon = icon_array[i];
+                if (icon->display_window == canvas->win) {
+                    // Check if icon and label height intersects viewport
+                    int icon_right = icon->x + icon->width;
+                    // +20 for label
+                    int icon_bottom = icon->y + icon->height + 20;  
+                    if (icon_right < view_left || icon->x > view_right ||
+                        icon_bottom < view_top || icon->y > view_bottom) {
+                        continue; // Skip off-screen icon to optimize rendering
+                    }
+                    render_icon(icon, canvas);
                 }
             }
         }
@@ -258,9 +285,8 @@ void redraw_canvas(Canvas *canvas) {
         // menu button
         // ============
         if (!get_show_menus_state()){
+ 
             // menu right side, lower button 
-            //XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -31, 1 , 1, BORDER_HEIGHT_TOP-1); 
-            //XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -30, 1 , 1, BORDER_HEIGHT_TOP-2); 
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &GRAY, canvas->width -28, 0 , 26, 20);
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &WHITE, canvas->width -28, 0 , 26, 1);
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, canvas->width -2, 0 , 1, 20);
@@ -277,15 +303,6 @@ void redraw_canvas(Canvas *canvas) {
     // Draw frame for WINDOW types
     if (canvas->type == WINDOW ) {
         XRenderColor frame_color = canvas->active ? BLUE : GRAY;
-
-        //fprintf(stderr, "Redrawing window %lu as %s\n", canvas->win, canvas->active ? "active (blue)" : "inactive (gray)");
-        /*        
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 0, 0, canvas->width, BORDER_HEIGHT_TOP);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 0, canvas->height - BORDER_HEIGHT_BOTTOM, canvas->width, BORDER_HEIGHT_BOTTOM);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 0, 0, BORDER_WIDTH_LEFT, canvas->height);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, canvas->width - BORDER_WIDTH_RIGHT, 0, BORDER_WIDTH_RIGHT, canvas->height);
-        */
-
 
         // top border   
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 0, 0, canvas->width, BORDER_HEIGHT_TOP); 
@@ -408,34 +425,6 @@ void redraw_canvas(Canvas *canvas) {
 
         }
 
-        // set font color for window title (active/inactive)
- 
-
-/*        if (canvas->type == WINDOW && canvas->client_win != None) {
-
-            XftColor text_col;
-            if (canvas->active) {
-                text_col.color = WHITE; 
-            } else {
-                text_col.color = BLACK; 
-            }
-            XClassHint class_hint;
-            if (XGetClassHint(ctx->dpy, canvas->client_win, &class_hint) && class_hint.res_name) {
-                char *app_name = class_hint.res_name;  // Instance name (e.g., "xterm")
-                
-                XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer, canvas->visual, canvas->colormap);
-                int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
-                XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)app_name, strlen(app_name));  // Draw title text.
-                XftDrawDestroy(draw);
-                //printf("app_name=%s \n",app_name);
-
-                XFree(class_hint.res_name);
-                XFree(class_hint.res_class);
-            }
-        }     
-        // draw path on titlebar for workbench windows
-        else */
-
         // ==================
         // draw windows title
         // ==================
@@ -515,7 +504,7 @@ void redraw_canvas(Canvas *canvas) {
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, knob_x-1, hb_y, 1, hb_h);               // white vertical outline 
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, knob_x-1, hb_y , knob_w, 1);            // white horizintal outline 
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, knob_x+knob_w-1, hb_y, 1, hb_h+1);      // black vertical outline 
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, knob_x-1, canvas->height-4, knob_w, 1); // black horizintal outline 
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, knob_x, canvas->height-4, knob_w, 1); // black horizintal outline 
         }
     }
 

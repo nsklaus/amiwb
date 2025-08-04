@@ -73,9 +73,7 @@ void init_menus(void) {
     }
     menubar->canvas->bg_color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
     menubar->canvas->bg_color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
-/*    fprintf(stderr, "Set menubar bg_color: R=0x%04X, G=0x%04X, B=0x%04X, A=0x%04X\n",
-        menubar->canvas->bg_color.red, menubar->canvas->bg_color.green,
-        menubar->canvas->bg_color.blue, menubar->canvas->bg_color.alpha);*/
+
     menubar->item_count = 4;
     menubar->items = malloc(menubar->item_count * sizeof(char*));
     menubar->items[0] = strdup("Workbench");
@@ -89,12 +87,13 @@ void init_menus(void) {
 
     // Workbench submenu (index 0)
     Menu *wb_submenu = malloc(sizeof(Menu));
-    wb_submenu->item_count = 4;
+    wb_submenu->item_count = 5;
     wb_submenu->items = malloc(wb_submenu->item_count * sizeof(char*));
     wb_submenu->items[0] = strdup("Execute");
     wb_submenu->items[1] = strdup("Settings");
     wb_submenu->items[2] = strdup("About");
-    wb_submenu->items[3] = strdup("Quit AmiWB");
+    wb_submenu->items[3] = strdup("Suspend");
+    wb_submenu->items[4] = strdup("Quit AmiWB");
     wb_submenu->selected_item = -1;
     wb_submenu->parent_menu = menubar;
     wb_submenu->parent_index = 0;
@@ -138,12 +137,13 @@ void init_menus(void) {
 
     // Tools submenu (index 3)
     Menu *tools_submenu = malloc(sizeof(Menu));
-    tools_submenu->item_count = 4;
+    tools_submenu->item_count = 5;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("XCalc");
-    tools_submenu->items[1] = strdup("Brave Browser");
-    tools_submenu->items[2] = strdup("Sublime Text");
-    tools_submenu->items[3] = strdup("Shell");
+    tools_submenu->items[1] = strdup("PavuControl");
+    tools_submenu->items[2] = strdup("Brave Browser");
+    tools_submenu->items[3] = strdup("Sublime Text");
+    tools_submenu->items[4] = strdup("Shell");
     tools_submenu->selected_item = -1;
     tools_submenu->parent_menu = menubar;
     tools_submenu->parent_index = 3;
@@ -370,9 +370,6 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
 
     active_menu->selected_item = -1;
     XMapRaised(get_render_context()->dpy, active_menu->canvas->win);
-/*    XGrabPointer(get_display(), menubar->canvas->win, False, 
-        PointerMotionMask | ButtonReleaseMask, GrabModeAsync, 
-        GrabModeAsync, None, None, CurrentTime);*/
     redraw_canvas(active_menu->canvas);
 }
 
@@ -383,13 +380,16 @@ void handle_menu_selection(Menu *menu, int item_index) {
 
     switch (menu->parent_index) {
         case 0:  // Workbench
-            //printf("reached 'Workbench' menu\n");
             if (strcmp(item, "Execute") == 0) {
                 // TODO: Implement execute command logic
             } else if (strcmp(item, "Settings") == 0) {
                 // TODO: Open settings dialog or file
             } else if (strcmp(item, "About") == 0) {
                 // TODO: Display about information
+
+            } else if (strcmp(item, "Suspend") == 0) {
+                system("systemctl suspend &");
+
             } else if (strcmp(item, "Quit AmiWB") == 0) {
                 cleanup_menus();
                 cleanup_workbench();
@@ -401,7 +401,6 @@ void handle_menu_selection(Menu *menu, int item_index) {
             break;
 
         case 1:  // Window
-            //printf("reached 'Window' menu\n");
             if (strcmp(item, "New Drawer") == 0) {
                 // TODO: Create new directory/drawer
             } else if (strcmp(item, "Open Parent") == 0) {
@@ -410,22 +409,24 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 // TODO: Close current window
             } else if (strcmp(item, "Select Contents") == 0) {
                 // TODO: Select all icons in window
+
             } else if (strcmp(item, "Clean Up") == 0) {
                 Canvas *target = get_active_window();
-                if (target && target->type == WINDOW && target->client_win == None) {
+                if (target && target->type == WINDOW && 
+                        target->client_win == None) {
                     icon_cleanup(target);
                 } else {
                     icon_cleanup(get_desktop_canvas());
                 }
+
             } else if (strcmp(item, "Show") == 0) {
-                // TODO: Show hidden items or similar
+                // TODO: Show hidden items                
             } else if (strcmp(item, "View By ..") == 0) {
-                // TODO: Change view mode (e.g., list/icon)
+                // TODO: Change view mode (list/icon)
             }
             break;
 
         case 2:  // Icons
-            //printf("reached 'Icons' menu\n");
             if (strcmp(item, "Open") == 0) {
                 // TODO: Open selected icon
             } else if (strcmp(item, "Copy") == 0) {
@@ -440,15 +441,19 @@ void handle_menu_selection(Menu *menu, int item_index) {
             break;
 
         case 3:  // Tools
-            //printf("reached 'Tools' menu\n");
             if (strcmp(item, "XCalc") == 0) {
                 system("xcalc &");  // TODO: Handle errors and paths
+            
+            } else if (strcmp(item, "PavuControl") == 0) {
+                system("pavucontrol &");
+
+            } else if (strcmp(item, "Sublime Text") == 0) {
+                system("subl &");
 
             } else if (strcmp(item, "Sublime Text") == 0) {
                 system("subl &");   
 
             } else if (strcmp(item, "Shell") == 0) {
-                //printf("launching kitty\n");
                 system("kitty &"); 
 
             } else if (strcmp(item, "Brave Browser") == 0) {
