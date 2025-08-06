@@ -6,7 +6,6 @@
 #include "workbench.h"
 #include <X11/X.h>
 #include <X11/Xlib.h>
-// #include <X11/extensions/Xrandr.h>
 #include <X11/cursorfont.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
@@ -14,6 +13,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
+
 
 #define INITIAL_CANVAS_CAPACITY 8
 
@@ -66,6 +66,46 @@ static int x_error_handler(Display *dpy, XErrorEvent *error) {
 
     fflush(stderr);
     return 0;  // continue execution (non-fatal handling)
+}
+
+// Load image with Imlib2, create a tiled Pixmap for the desktop 
+static Pixmap load_wallpaper_to_pixmap(Display *dpy, Window root, int screen_width, int screen_height, const char *path, bool tile) {
+    
+    Imlib_Image img = imlib_load_image(path);
+    if (!img) {
+        fprintf(stderr, "Failed to load wallpaper: %s\n", path);
+        return None;
+    }
+    printf("image=%s, tile=%d  \n", path, tile);
+    imlib_context_set_image(img);
+    int img_width = imlib_image_get_width();
+    int img_height = imlib_image_get_height();
+
+    int pw = tile ? img_width : screen_width;
+    int ph = tile ? img_height : screen_height;
+
+    // Create a Pixmap matching screen size
+    Pixmap pixmap = XCreatePixmap(dpy, root, screen_width, screen_height, DefaultDepth(dpy, DefaultScreen(dpy)));
+
+    // Set drawable and render (scale to fit; for tiling, use imlib_render_image_part_on_drawable_at_size in a loop)
+    imlib_context_set_drawable(pixmap);
+    
+    if (!tile) {
+        imlib_render_image_on_drawable_at_size(0, 0, screen_width, screen_height);
+    }
+    else {
+        // Tile the image across the pixmap
+        int tile_x, tile_y;
+        for (tile_y = 0; tile_y < screen_height; tile_y += img_height) {
+            for (tile_x = 0; tile_x < screen_width; tile_x += img_width) {
+                imlib_render_image_on_drawable(tile_x, tile_y);
+            }
+        }
+    }
+
+
+    imlib_free_image();
+    return pixmap;
 }
 
 Display *get_display(void) { return display; }
@@ -142,7 +182,8 @@ static bool init_render_context(void) {
     XVisualInfo vinfo;
     XMatchVisualInfo(display, screen, depth, TrueColor, &vinfo);
     render_context->fmt = XRenderFindVisualFormat(display, vinfo.visual);
-    render_context->bg_pixmap = None;
+    render_context->desk_img = None;
+    render_context->wind_img = None;
     return true;
 }
 
@@ -188,6 +229,31 @@ Canvas *init_intuition(void) {
     Canvas *desktop = create_canvas(getenv("HOME"), 
         0, 20, width, height, DESKTOP);
     if (!desktop) return NULL;
+
+    // Initialize Imlib2 context using desktop canvas properties
+    imlib_context_set_display(display);
+    imlib_context_set_visual(desktop->visual);
+    imlib_context_set_colormap(desktop->colormap);
+    // Optional: Disable caching for lightweight usage
+    imlib_set_cache_size(0);
+
+    if (strlen(DESKPICT) > 0) {
+        render_context->desk_img = load_wallpaper_to_pixmap(display, root, width, height, DESKPICT, DESKTILE);
+/*        if (render_context->desk_img != None) {
+            // Set as root background for initial display (optional, but ensures visibility)
+            XSetWindowBackgroundPixmap(display, root, render_context->desk_img);
+            XClearWindow(display, root);
+        }*/
+    }
+
+    if (strlen(WINDPICT) > 0) {
+        render_context->wind_img = load_wallpaper_to_pixmap(display, root, width, height, WINDPICT, WINDTILE);
+/*        if (render_context->wind_img != None) {
+            // Set as root background for initial display (optional, but ensures visibility)
+            XSetWindowBackgroundPixmap(display, root, render_context->wind_img);
+            XClearWindow(display, root);
+        }*/
+    }
 
     Window root_return, parent_return;
     Window *children;
@@ -374,7 +440,7 @@ void iconify_canvas(Canvas *canvas) {
     }
 
     int next_x = 10;
-    int next_y = 40 + (desktop_icon_count * 80);
+    int next_y = 40 + (desktop_icon_count * ICON_SPACING);
 
     char *label = NULL;
     const char *icon_path = NULL;
@@ -433,7 +499,7 @@ void iconify_canvas(Canvas *canvas) {
     XUnmapWindow(display, canvas->win);
     if (active_window == canvas) active_window = NULL;
 
-    // Redraw desktop to show new icon
+    icon_cleanup(desktop);
     redraw_canvas(desktop);
     XSync(display, False);
 }
@@ -559,8 +625,19 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
         compute_max_scroll(canvas);
     }
 
+    // TODO: fix clients window from showing window pattern briefly
+    // this doesn't work well
+/*
+    if (type == WINDOW && canvas->client_win != None) {
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &GRAY, 0, 0, width, height);
+        XRenderComposite(ctx->dpy, PictOpSrc, canvas->canvas_render, None, canvas->window_render, 0, 0, 0, 0, 0, 0, width, height);
+        XFlush(ctx->dpy);
+    }
+*/
+
+
     if (type != DESKTOP) {
-        if (type == WINDOW) {
+        if (type == WINDOW ) {
             attrs.background_pixmap = None;
             XChangeWindowAttributes(display, canvas->win, CWBackPixmap, &attrs);
             //canvas->active = true;
@@ -1289,6 +1366,15 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
         desktop->window_render = XRenderCreatePicture(display, 
             desktop->win, fmt, 0, NULL);
 
+        // reload/resize desktop background picture on resolution changes
+        if (render_context->desk_img != None) {
+            XFreePixmap(display, render_context->desk_img);
+            if (strlen(DESKPICT) > 0) {
+                render_context->desk_img = 
+                load_wallpaper_to_pixmap(display, root, width, height, DESKPICT, DESKTILE);
+            }
+            XClearWindow(display, root); // Refresh root
+        }
         redraw_canvas(desktop);
     }
 
@@ -1407,8 +1493,11 @@ void cleanup_intuition(void) {
     if (root_cursor) 
         XFreeCursor(render_context->dpy, root_cursor);
     
-    if (render_context->bg_pixmap != None) 
-        XFreePixmap(render_context->dpy, render_context->bg_pixmap);
+    if (render_context->desk_img != None) 
+        XFreePixmap(render_context->dpy, render_context->desk_img);
+
+    if (render_context->wind_img != None) 
+        XFreePixmap(render_context->dpy, render_context->wind_img);
 
     XCloseDisplay(render_context->dpy);
     free(render_context); render_context = NULL; display = NULL;

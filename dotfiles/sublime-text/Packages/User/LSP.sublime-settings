@@ -1,0 +1,16 @@
+// Settings in here override those in "LSP/LSP.sublime-settings"
+
+{ 
+    "show_diagnostics_in_hover": false,
+    "show_code_actions_in_hover": false,
+    "show_symbol_action_links": false,
+    "show_references_in_quick_panel": false,
+
+	"disabled_capabilities": {
+        "hoverProvider": true,
+        "signatureHelpProvider": {
+            "triggerCharacters": true,
+            "retriggerCharacters": true
+        }
+    }
+}

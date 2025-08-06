@@ -77,6 +77,7 @@ void init_workbench(void) {
     free(home_icon->path);
     home_icon->path = strdup(getenv("HOME"));
 
+    icon_cleanup(get_desktop_canvas());
     redraw_canvas(get_desktop_canvas());
 }
 
@@ -337,6 +338,15 @@ static void open_directory(FileIcon *icon, Canvas *canvas) {
 static int icon_cmp(const void *a, const void *b) {
     FileIcon *ia = *(FileIcon **)a;
     FileIcon *ib = *(FileIcon **)b;
+
+    // Special case: Prioritize "System" before all others
+    if (strcmp(ia->label, "System") == 0) return -1;
+    if (strcmp(ib->label, "System") == 0) return 1;
+
+    // Special case: Prioritize "Home" after "System" but before others
+    if (strcmp(ia->label, "Home") == 0) return -1;
+    if (strcmp(ib->label, "Home") == 0) return 1;
+    
     // Prioritize TYPE_DRAWER (dirs) before others (files/iconified)
     if (ia->type == TYPE_DRAWER && ib->type != TYPE_DRAWER) return -1;
     if (ia->type != TYPE_DRAWER && ib->type == TYPE_DRAWER) return 1;
@@ -344,79 +354,6 @@ static int icon_cmp(const void *a, const void *b) {
     return strcmp(ia->label, ib->label);
 }
 
-/*void icon_cleanup(Canvas *canvas) {
-    if (!canvas) return;
-
-    // Step 1: Count icons on this canvas
-    int count = 0;
-    for (int i = 0; i < icon_count; i++) {
-        if (icon_array[i]->display_window == canvas->win) {
-            count++;
-        }
-    }
-    if (count == 0) return;
-
-    // Step 2: Allocate and collect icons
-    FileIcon **list = malloc(count * sizeof(FileIcon *));
-    if (!list) return;  // Memory fail, silent return
-    int idx = 0;
-    for (int i = 0; i < icon_count; i++) {
-        if (icon_array[i]->display_window == canvas->win) {
-            list[idx++] = icon_array[i];
-        }
-    }
-
-    // Step 3: Sort icons (dirs first alphabetically, then files alphabetically)
-    qsort(list, count, sizeof(FileIcon *), icon_cmp);
-
-    // Step 4: Calculate dynamic cell width based on longest label
-    int max_label_w = 0;
-    for (int i = 0; i < count; i++) {
-        int label_w = get_text_width(list[i]->label);  // Measure full label width
-        if (label_w > max_label_w) max_label_w = label_w;
-    }
-    char max_str[81];  // 80 chars + null
-    memset(max_str, 'W', 80); max_str[80] = '\0';
-    int max_allowed_w = get_text_width(max_str);  // Width for 80 chars (conservative)
-    int padding = 20;  // For centering and spacing
-    int cell_w = max(80, min(max_label_w + padding, max_allowed_w + padding));
-    int cell_h = ICON_SPACING;  // Fixed height from config (enough for icon + label)
-
-    // Calculate visible area for grid
-    int visible_w = (canvas->type == WINDOW) ? 
-                    (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) : 
-                    canvas->width;
-    int visible_h = (canvas->type == WINDOW) ? 
-                    (canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM) : 
-                    canvas->height;
-    int start_x = 10;
-    int start_y = (canvas->type == DESKTOP) ? 40 : 10;  // Higher y for desktop
-
-    // Step 5: Determine grid (max columns fitting width, then rows as needed)
-    int num_columns = max(1, (visible_w - 20) / cell_w);  // Max columns with padding
-    int num_rows = (count + num_columns - 1) / num_columns;  // Ceil division for rows
-
-    // Step 6: Reposition icons in column-major grid (vertical fill), bottom-aligned
-    for (int col = 0; col < num_columns; col++) {
-        for (int row = 0; row < num_rows; row++) {
-            int idx = col * num_rows + row;
-            if (idx >= count) break;
-
-            int cell_x = start_x + col * cell_w;
-            int cell_y = start_y + row * cell_h;
-
-            // Center horizontally, bottom-align vertically (adjust y for varying icon heights)
-            list[idx]->x = cell_x + (cell_w - list[idx]->width) / 2;
-            list[idx]->y = cell_y + (cell_h - list[idx]->height - 20);  // 20 for label space below icon
-        }
-    }
-
-    // Step 7: Clean up and update canvas
-    free(list);
-    compute_content_bounds(canvas);
-    compute_max_scroll(canvas);
-    redraw_canvas(canvas);
-}*/
 
 void icon_cleanup(Canvas *canvas) {
     if (!canvas) return;
@@ -465,7 +402,7 @@ void icon_cleanup(Canvas *canvas) {
     int start_y = (canvas->type == DESKTOP) ? 40 : 10;  
 
     // Max rows fitting in visible height, with bottom padding
-    int num_rows = max(1, (visible_h - start_y - 10) / cell_h);  
+    int num_rows = max(1, (visible_h - start_y - 0) / cell_h);  
     
     // Ceil division for columns needed
     int num_columns = (count + num_rows - 1) / num_rows; 
@@ -561,7 +498,7 @@ void compute_content_bounds(Canvas *canvas) {
             max_y = max(max_y, icon_array[i]->y + icon_array[i]->height + 20);  // +20 for label height
         }
     }
-    canvas->content_width = max_x + 10;   // +10 padding
+    canvas->content_width = max_x + 80;   // +10 padding
     canvas->content_height = max_y + 10;  // +10 padding
 }
 
@@ -586,16 +523,15 @@ void workbench_handle_button_press(XButtonEvent *event) {
     if (!canvas) return;
 
     FileIcon *icon = find_icon(event->window, event->x, event->y);
-    if (icon) {
+    if (icon && event->button == Button1) {
         select_icon(icon, canvas, event->state); // Pass event->state
-        if (event->button == Button1) {
-/*            Display *display = get_display();
-            XGrabPointer(display, canvas->win, False, PointerMotionMask | ButtonReleaseMask,
-                                 GrabModeAsync, GrabModeAsync, None, None, CurrentTime);*/
+        //if (event->button == Button1) {
 
-            start_drag_icon(icon, event->x, event->y);
-        }
+        start_drag_icon(icon, event->x, event->y);
+        //}
+
         if (is_double_click(event->time, icon->last_click_time)) {
+
             if (icon->type == TYPE_DRAWER) {
                 open_directory(icon, canvas);
             } else if (icon->type == TYPE_FILE) {

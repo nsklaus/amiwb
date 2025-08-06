@@ -2,10 +2,12 @@
 #ifndef INTUITION_H
 #define INTUITION_H
 
+#include <X11/X.h>
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/Xrandr.h>
 #include <stdbool.h>
+#include <Imlib2.h>
 
 #define MENUBAR_HEIGHT 20
 #define BORDER_WIDTH_LEFT 8
@@ -20,7 +22,10 @@ typedef enum CanvasType { DESKTOP, WINDOW, MENU } CanvasType;
 typedef struct {
     Display *dpy;                 // X11 display connection
     XRenderPictFormat *fmt;       // XRender visual format
-    Pixmap bg_pixmap;             // Wallpaper pixmap
+    Pixmap desk_img;              // desktop background pic
+    Pixmap wind_img;              // windows background pic 
+    int desk_img_w, desk_img_h;
+    int wind_img_w, wind_img_h;
     
 } RenderContext;
 

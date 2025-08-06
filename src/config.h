@@ -22,13 +22,13 @@ a dot file .amiwbrc or many dedicated setting files like on amiga env:archives/ 
 #define GRAY (XRenderColor){0xa0a0, 0xa2a2, 0xa0a0, 0xffff}
 
 // font colors for desktop and windows icons
-#define DESKFONTCOL (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}
-#define WINFONTCOL (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}
+#define DESKFONTCOL WHITE
+#define WINFONTCOL BLACK
 
 #define DOUBLE_CLICK_TIME 1000 	// Time threshold for double-click in ms.
 #define CLICK_TOLERANCE 10 		// Pixel tolerance for double-click.
 #define DRAG_THRESHOLD 10 		// Pixel threshold to start drag.
-#define ICON_SPACING 80 		// Spacing between icons in grid (increased).
+#define ICON_SPACING 70 		// Spacing between icons in grid (increased).
 #define MAX_FILES 10000 		// Max icons per canvas.
 
 // frame sizes
@@ -44,7 +44,7 @@ a dot file .amiwbrc or many dedicated setting files like on amiga env:archives/ 
 #define BUTTON_LOWER_SIZE 30
 #define BUTTON_RESIZE_SIZE 20
 
-#define GLOBAL_DEPTH 32 		// Set to 8, 16, 24, or 32; fallback to default if not available
+#define GLOBAL_DEPTH 32 		// Set to 8, 16, 24, or 32
 #define TYPE_ICONIFIED 3 		// Type for iconified windows.
 #define MAX_WINDOWS 100 		// Max open windows.
 #define ICON_HEADER_SIZE 20 	// Size of icon file header.
@@ -67,4 +67,12 @@ extern char *iconify_path;
 #define DEBUG false  		// enable debug output
 #define MIN_KNOB_SIZE 10  	// Minimum size for scrollbar knobs in pixels
 
+// desktop and windows backgrounds, with tile option 0/1
+// "/home/klaus/Pictures/backgrounds/1164147.png"
+// "/home/klaus/Sources/amiwb/patterns/pattern7.png"
+
+#define DESKPICT //"/home/klaus/Pictures/backgrounds/1164147.png"
+#define DESKTILE 0
+#define WINDPICT //"/home/klaus/Sources/amiwb/patterns/pattern8.png"
+#define WINDTILE 1
 #endif

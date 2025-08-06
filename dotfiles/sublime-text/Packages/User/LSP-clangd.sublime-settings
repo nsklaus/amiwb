@@ -1,0 +1,17 @@
+// Settings in here override those in "LSP-clangd/LSP-clangd.sublime-settings"
+
+{
+  "clients": {
+    "clangd": {
+      "enabled": true,
+      "command": ["clangd"], // or full path, e.g., "/usr/bin/clangd-9"
+      "scopes": ["source.c", "source.cpp"],
+      "syntaxes": ["Packages/C/C.sublime-syntax"],
+      "languageId": "c",
+/*      "settings": {
+          "show_diagnostics_severity_level": "hover"
+      }
+*/
+    }
+  }
+}

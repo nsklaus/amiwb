@@ -1,0 +1,17 @@
+// Documentation at https://www.sublimetext.com/docs/themes.html
+{
+	"variables":
+	{
+
+
+
+	},
+	"rules":
+	[
+		{
+	        "class": "tab_label",
+	        "color": [0, 0, 0],
+	        "font.bold": true
+    	}
+	]
+}

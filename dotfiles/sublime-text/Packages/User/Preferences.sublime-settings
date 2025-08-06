@@ -1,0 +1,15 @@
+{
+	"color_scheme": "AmigaLightGray.sublime-color-scheme",
+	"font_face": "Source Code Pro",
+	"font_size": 11,
+	"theme": "auto",
+	"font_options": ["bold"],
+	"word_wrap": true,
+	"ignored_packages": [ "Vintage" ],
+	"index_files": true,
+	"drag_text": false,
+	"fold_buttons": true,
+	"auto_match_enabled": false,
+	"show_definitions": false,
+	"mdpopups.disable": false
+}

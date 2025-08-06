@@ -186,24 +186,61 @@ void redraw_canvas(Canvas *canvas) {
     // dest is window_render; otherwise, canvas_render.
     bool is_client_frame = (canvas->type == WINDOW && 
         canvas->client_win != None);
-
+    bool has_bg_image = false;
     Picture dest = is_client_frame ? canvas->window_render : canvas->canvas_render;
 
-    // Only fill background for non-client frames 
-    // (desktop, menu, or empty windows)
+    // set background pictures or fill background for non-client canvas
+    // (desktop or empty windows and not clients, not menus)
     if (!is_client_frame) {
-        if (canvas->type == WINDOW) {
-            // Fill only content area for workbench windows
-            int visible_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
-            int visible_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color,
-                BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP, visible_w, visible_h);
-        } else {
-            // Full fill for other types
+        if (canvas->type == DESKTOP && ctx->desk_img != None) {
+
+            Display *dpy = ctx->dpy;
+            Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
+            // Create Picture from bg_pixmap
+            XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, visual);
+            Picture bg_picture = XRenderCreatePicture(dpy, ctx->desk_img, fmt, 0, NULL);
+            // Composite (blend) onto canvas; 
+            // use PictOpSrc for direct copy or adjust for transparency
+            XRenderComposite(dpy, PictOpSrc, bg_picture, None, canvas->canvas_render, 
+                0, 0, 0, 0, 0, 0, canvas->width, canvas->height);
+            XRenderFreePicture(dpy, bg_picture);
+            has_bg_image = true;
+        } /*else {
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color, 
+                0, 0, canvas->width, canvas->height);
+        }*/
+
+        if (canvas->type == WINDOW && ctx->wind_img != None) {
+
+            Display *dpy = ctx->dpy;
+            Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
+            // Create Picture from bg_pixmap
+            XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, visual);
+            Picture bg_picture = XRenderCreatePicture(dpy, ctx->wind_img, fmt, 0, NULL);
+            // Composite (blend) onto canvas; 
+            // use PictOpSrc for direct copy or adjust for transparency
+            XRenderComposite(dpy, PictOpSrc, bg_picture, None, canvas->canvas_render, 
+                0, 0, 0, 0, 0, 0, canvas->width, canvas->height);
+            XRenderFreePicture(dpy, bg_picture);
+            has_bg_image = true;
+        } 
+
+        if (!has_bg_image) {
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color, 
                 0, 0, canvas->width, canvas->height);
         }
+
+/*    } else {
+        // Fill only content area for workbench windows
+        int visible_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+        int visible_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color,
+            BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP, visible_w, visible_h);
+    } 
+    if (!is_client_frame) {*/
+        // =============
         // Render icons
+        // =============
         if (canvas->type == DESKTOP || canvas->type == WINDOW){
             FileIcon **icon_array = get_icon_array();
             int icon_count = get_icon_count();

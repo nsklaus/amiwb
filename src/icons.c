@@ -63,7 +63,12 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
     }
     memset(image->data, 0, width * height * 4);
 
-    unsigned long colors[8] = {0x00000000, 0xFF000000, 0xFFFFFFFF, 0xFF6666BB, 0xFF999999, 0xFFBBBBBB, 0xFFBBAA99, 0xFFFFAA22};
+    // icons use transparency
+    // unsigned long colors[8] = {0x00000000, 0xFF000000, 0xFFFFFFFF, 0xFF6666BB, 0xFF999999, 0xFFBBBBBB, 0xFFBBAA99, 0xFFFFAA22};
+
+    // icons use gray fill instead of transparency
+    // Updated palette: Replace transparent black (0x00000000) with opaque gray (0xFFA0A2A0UL)
+    unsigned long colors[8] = {0xFFA0A2A0UL, 0xFF000000, 0xFFFFFFFF, 0xFF6666BB, 0xFF999999, 0xFFBBBBBB, 0xFFBBAA99, 0xFFFFAA22};
     int row_bytes = ((width + 15) / 16) * 2;
     long plane_size = row_bytes * height;
     const uint8_t *planes = data;
@@ -125,7 +130,6 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         return;
     }
     icon->normal_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);
-    XFreePixmap(ctx->dpy, normal_pixmap);
 
     uint32_t has_selected = read_be32(data + 0x1A);
     if (has_selected) {
@@ -136,6 +140,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         if (second_header_offset + ICON_HEADER_SIZE > size) {
             XRenderFreePicture(ctx->dpy, icon->normal_picture);
             icon->normal_picture = None;
+            XFreePixmap(ctx->dpy, normal_pixmap);  
             free(data);
             return;
         }
@@ -144,6 +149,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         if (parse_icon_header(data + second_header_offset, size - second_header_offset, &sel_width, &sel_height, &sel_depth)) {
             XRenderFreePicture(ctx->dpy, icon->normal_picture);
             icon->normal_picture = None;
+            XFreePixmap(ctx->dpy, normal_pixmap);  
             free(data);
             return;
         }
@@ -155,6 +161,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
             if (render_icon(ctx->dpy, &selected_pixmap, data + second_header_offset + ICON_HEADER_SIZE, sel_width, sel_height, sel_depth)) {
                 XRenderFreePicture(ctx->dpy, icon->normal_picture);
                 icon->normal_picture = None;
+                XFreePixmap(ctx->dpy, normal_pixmap); 
                 free(data);
                 return;
             }
@@ -167,11 +174,14 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         XRenderFillRectangle(ctx->dpy, PictOpOver, icon->selected_picture, &tint, 0, 0, width, height);
     }
 
+    XFreePixmap(ctx->dpy, normal_pixmap);
+
     icon->width = width;
     icon->height = height;
     icon->current_picture = icon->normal_picture;
     free(data);
 }
+
 
 void free_icon(FileIcon *icon) {
     if (!icon) return;

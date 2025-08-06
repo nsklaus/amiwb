@@ -24,7 +24,7 @@ LIBS = \
   -lXft \
   -lXrandr \
   -lm \
-  -ljpeg \
+  -lImlib2 \
   -lfontconfig 
 
   # attempt at getting menus from clients
