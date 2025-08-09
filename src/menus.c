@@ -4,6 +4,7 @@
 #include "intuition.h"
 #include "workbench.h"
 #include "render.h"
+#include "compositor.h"
 #include "events.h"
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
@@ -391,8 +392,15 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 system("systemctl suspend &");
 
             } else if (strcmp(item, "Quit AmiWB") == 0) {
+                // Enter shutdown mode: silence X errors from teardown
+                begin_shutdown();
+                // Menus/workbench use canvases; keep render/Display alive until after compositor shut down
+                // First, stop compositing (uses the Display)
+                shutdown_compositor(get_display());
+                // Then tear down UI modules
                 cleanup_menus();
                 cleanup_workbench();
+                // Finally close Display and render resources
                 cleanup_intuition();
                 cleanup_render();
                 quit_event_loop();

@@ -1,5 +1,7 @@
 #include "menus.h"
+#include "render.h" // kept for now if indirect types are needed
 #include "events.h"
+#include "compositor.h"
 #include "intuition.h"
 #include "workbench.h"
 #include <X11/extensions/Xrandr.h>
@@ -8,44 +10,35 @@
 #include <X11/keysym.h>
 #include <stdio.h> // For fprintf
 
+// Track the window that owns the current button interaction so motion/release
+// events are routed consistently, even if X delivers them to the desktop.
+static Window g_press_target = 0;
+
 bool running = true;
 
+// Gated debug helper (set WB_DEBUG=1 in env)
+static inline int wb_dbg(void) { return 0; }
+
 // Initialize event handling
-void init_events(void) {
-    fprintf(stderr, "Initializing events\n");
-    // no event system initialization needed for now; 
-    // modules handle their own masks and events
-}
+void init_events(void) { /* no-op */ }
 
 // Main event loop
 void handle_events(void) {
     Display *dpy = get_display();
-    if (!dpy) {
-        fprintf(stderr, "No display in handle_events\n");
-        return;
-    }
+    if (!dpy) { return; }
 
-    fprintf(stderr, "Entering event loop\n");
+    // entering event loop
     XEvent event;
 
     // X connection file descriptor for select
     int fd = ConnectionNumber(dpy);  
 
     while (running) {
-        // compress motion events discard redundant MotionNotify events 
-        // to throttle processing during drags,resizes..
-        XEvent peek_event;
-        while (XPending(dpy)) {
-            XPeekEvent(dpy, &peek_event);
-            if (peek_event.type == MotionNotify) {
-                // Discard extra motions
-                XNextEvent(dpy, &peek_event);
-            } else {
-                break;
-            }
-        }
-
+        // Deliver events as-is; do not drop MotionNotify. If we later need
+        // coalescing, implement 'keep last motion' per window instead of discarding all.
         XNextEvent(dpy, &event);
+        // Let the compositor see every event so it can maintain damage/topology
+        compositor_handle_event(dpy, &event);
 
         if (event.type == randr_event_base + RRScreenChangeNotify) {
             intuition_handle_rr_screen_change(
@@ -60,6 +53,14 @@ void handle_events(void) {
             case ButtonRelease:
                 handle_button_release(&event.xbutton);
                 break;
+            case EnterNotify: {
+                // Do not auto-activate on pointer enter to avoid focus ping-pong
+                break;
+            }
+            case FocusIn: {
+                // Do not auto-activate on FocusIn; activation is explicit via click or map
+                break;
+            }
             case KeyPress:
                 handle_key_press(&event.xkey);
                 break;
@@ -68,6 +69,10 @@ void handle_events(void) {
                 break;
             case MapRequest:
                 handle_map_request(&event.xmaprequest);
+                break;
+            case MapNotify:
+                // Catch unmanaged toplevels when SubstructureRedirect was not granted
+                intuition_handle_map_notify(&event.xmap);
                 break;
             case ConfigureRequest:
                 handle_configure_request(&event.xconfigurerequest);
@@ -85,7 +90,6 @@ void handle_events(void) {
                 handle_destroy_notify(&event.xdestroywindow);
                 break;
             default:
-                // fprintf(stderr, "Unhandled event type %d\n", event.type);
                 break;
         }
     }
@@ -95,50 +99,146 @@ void quit_event_loop(void) {
     running = false;
 }
 
+// Walk up ancestors to find a Canvas window and translate coordinates
+static Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, int *out_y) {
+    Display *dpy = get_display();
+    Window root = DefaultRootWindow(dpy);
+    Window cur = w;
+    int rx = in_x, ry = in_y;
+    if (wb_dbg()) fprintf(stderr, "[WB] resolve_event_canvas: w=0x%lx in=(%d,%d)\n", w, in_x, in_y);
+    while (cur && cur != root) {
+        Canvas *c = find_canvas(cur);
+        if (c) {
+            // Translate original event coords to this canvas window coords
+            int tx=0, ty=0; Window dummy;
+            XTranslateCoordinates(dpy, w, c->win, in_x, in_y, &tx, &ty, &dummy);
+            if (out_x) *out_x = tx; if (out_y) *out_y = ty;
+            if (wb_dbg()) fprintf(stderr, "[WB]  -> resolved to canvas win=0x%lx type=%d tx,ty=(%d,%d)\n", c->win, c->type, tx, ty);
+            return c;
+        }
+        Window root_ret, parent_ret, *children = NULL; unsigned int n = 0;
+        if (!XQueryTree(dpy, cur, &root_ret, &parent_ret, &children, &n)) break;
+        if (children) XFree(children);
+        if (parent_ret == 0 || parent_ret == cur) break;
+        cur = parent_ret;
+    }
+    return NULL;
+}
+
 // Dispatch mouse button press
 void handle_button_press(XButtonEvent *event) {
+    int cx = event->x, cy = event->y; // may be rewritten
     Canvas *canvas = find_canvas(event->window);
+    if (wb_dbg()) fprintf(stderr, "[WB] ButtonPress win=0x%lx x,y=(%d,%d) state=0x%x\n", event->window, event->x, event->y, event->state);
+    // If the press is on a managed client, translate to its frame canvas
     if (!canvas) {
-        fprintf(stderr, "No canvas for ButtonPress event \
-            on window %lu\n", event->window);
-        return;
+        Canvas *owner = find_canvas_by_client(event->window);
+        if (owner) {
+            set_active_window(owner);
+            // translate coords from client to frame canvas
+            Window dummy; XTranslateCoordinates(get_display(), event->window, owner->win, event->x, event->y, &cx, &cy, &dummy);
+            canvas = owner;
+            if (wb_dbg()) fprintf(stderr, "[WB]  client press routed to frame=0x%lx tx,ty=(%d,%d)\n", canvas->win, cx, cy);
+        }
+    }
+    if (!canvas) canvas = resolve_event_canvas(event->window, event->x, event->y, &cx, &cy);
+    if (!canvas) { return; }
+    if (wb_dbg()) fprintf(stderr, "[WB]  press resolved: canvas=0x%lx type=%d tx,ty=(%d,%d) was_active=%d\n",
+                           canvas->win, canvas->type, cx, cy, canvas->active?1:0);
+
+    // If the desktop got the press but a window is actually under the pointer,
+    // reroute the event to the topmost WINDOW canvas at the pointer's root coords.
+    if (canvas->type == DESKTOP) {
+        Display *dpy = get_display();
+        Window root = DefaultRootWindow(dpy);
+        // Query stacking order
+        Window root_ret, parent_ret, *children = NULL; unsigned int n = 0;
+        if (XQueryTree(dpy, root, &root_ret, &parent_ret, &children, &n)) {
+            // children are bottom-to-top; scan from topmost down
+            for (int i = (int)n - 1; i >= 0; --i) {
+                Canvas *c = find_canvas(children[i]);
+                if (!c || c->type != WINDOW) continue;
+                // Validate the X window is still valid and viewable
+                XWindowAttributes a; 
+                if (!XGetWindowAttributes(dpy, c->win, &a) || a.map_state != IsViewable) continue;
+                // Hit test in root coordinates against frame rect
+                int rx = event->x_root, ry = event->y_root;
+                if (rx >= c->x && rx < c->x + c->width &&
+                    ry >= c->y && ry < c->y + c->height) {
+                    // Translate root coords to frame coords
+                    Window dummy; int tx=0, ty=0;
+                    XTranslateCoordinates(dpy, root, c->win, rx, ry, &tx, &ty, &dummy);
+                    if (wb_dbg()) fprintf(stderr, "[WB]  desktop press rerouted to frame=0x%lx tx,ty=(%d,%d)\n", c->win, tx, ty);
+                    set_active_window(c);
+                    XButtonEvent ev = *event; ev.window = c->win; ev.x = tx; ev.y = ty;
+                    intuition_handle_button_press(&ev);
+                    workbench_handle_button_press(&ev);
+                    g_press_target = c->win; // lock routing until release
+                    if (children) XFree(children);
+                    return;
+                }
+            }
+            if (children) XFree(children);
+        }
     }
 
     if (canvas->type == MENU) {
-        //menu_handle_button_press(event);
+        // Menus are handled exclusively by menu subsystem
         if (canvas == get_menubar()) {
-            menu_handle_menubar_press(event);
+            XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
+            menu_handle_menubar_press(&ev);
         } else {
-            menu_handle_button_press(event);
+            XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
+            menu_handle_button_press(&ev);
         }
-    
-    } else if (canvas == get_menubar()) {
-        menu_handle_menubar_press(event);
-
-    } else if (canvas->type == DESKTOP) {
-        workbench_handle_button_press(event);
-        intuition_handle_button_press(event);
-    
+        g_press_target = canvas->win; // route motion/release to this menu until release
     } else if (canvas->type == WINDOW) {
-        intuition_handle_button_press(event);
-        workbench_handle_button_press(event);   
+        // Activate and forward to window frame
+        set_active_window(canvas);
+        XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
+        intuition_handle_button_press(&ev);
+        workbench_handle_button_press(&ev);
+        g_press_target = canvas->win;
+    } else {
+        // default: forward to specific canvas
+        XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
+        workbench_handle_button_press(&ev);
+        intuition_handle_button_press(&ev);
     }
+    // No grabs in use; nothing to release
 }
 
 // Dispatch mouse button release
 void handle_button_release(XButtonEvent *event) {
+    // If we have a press target, translate release to it
+    if (g_press_target) {
+        Display *dpy = get_display();
+        Window dummy; int tx=0, ty=0;
+        XTranslateCoordinates(dpy, event->window, g_press_target, event->x, event->y, &tx, &ty, &dummy);
+        XButtonEvent ev = *event; ev.window = g_press_target; ev.x = tx; ev.y = ty;
+        Canvas *tc = find_canvas(g_press_target);
+        if (tc && tc->type == MENU) {
+            menu_handle_button_release(&ev);
+        } else {
+            workbench_handle_button_release(&ev);
+            intuition_handle_button_release(&ev);
+        }
+        g_press_target = 0; // clear routing lock
+        return;
+    }
+    int cx = event->x, cy = event->y; // fallback path
     Canvas *canvas = find_canvas(event->window);
-    if (!canvas) return;
-
-    intuition_handle_button_release(event);
-    workbench_handle_button_release(event);
-    menu_handle_button_release(event);
+    if (!canvas) canvas = resolve_event_canvas(event->window, event->x, event->y, &cx, &cy);
+    if (!canvas) { return; }
+    XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
+    workbench_handle_button_release(&ev);
+    intuition_handle_button_release(&ev);
 }
 
 // Dispatch key press
 void handle_key_press(XKeyEvent *event) {
     /*
-    fprintf(stderr, "KeyPress event\n");
+    // keypress debug removed
     KeySym keysym = XLookupKeysym(event, 0);
     if (keysym == XK_Escape) {
         running = false;
@@ -157,8 +257,7 @@ void handle_expose(XExposeEvent *event) {
 void handle_map_request(XMapRequestEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) {
-        fprintf(stderr, "MapRequest: No canvas, handling as \
-            client window %lu\n", event->window);
+        // MapRequest tracing removed
         intuition_handle_map_request(event);
     }
 }
@@ -167,11 +266,10 @@ void handle_configure_request(XConfigureRequestEvent *event) {
 
     Canvas *canvas = find_canvas_by_client(event->window);
     if (canvas) {
-        fprintf(stderr, "ConfigureRequest on canvas window %lu\n", canvas->win);
+        // ConfigureRequest trace removed
         intuition_handle_configure_request(event);
     } else {
-        fprintf(stderr, "ConfigureRequest on non-canvas \
-            window %lu\n", event->window);
+        // ConfigureRequest trace removed
         XWindowChanges changes;
         changes.x = event->x;
         changes.y = event->y;
@@ -189,7 +287,32 @@ void handle_property_notify(XPropertyEvent *event) {
 
 // Dispatch mouse motion
 void handle_motion_notify(XMotionEvent *event) {
+    // If we're in an active interaction, forward motion to the press target
+    if (g_press_target) {
+        Display *dpy = get_display();
+        Window dummy; int tx=0, ty=0;
+        // Translate from source to target using root coords for robustness
+        int rx = event->x_root, ry = event->y_root;
+        XTranslateCoordinates(dpy, DefaultRootWindow(dpy), g_press_target, rx, ry, &tx, &ty, &dummy);
+        XMotionEvent ev = *event; ev.window = g_press_target; ev.x = tx; ev.y = ty;
+        Canvas *tc = find_canvas(g_press_target);
+        if (tc && tc->type == MENU) {
+            if (tc == get_menubar()) menu_handle_menubar_motion(&ev);
+            else menu_handle_motion_notify(&ev);
+        } else {
+            // First icons (drag icon), then window move/resize if applicable
+            workbench_handle_motion_notify(&ev);
+            if (tc && tc->type == WINDOW) {
+                intuition_handle_motion_notify(&ev);
+            }
+        }
+        return;
+    }
+
+    int cx = event->x, cy = event->y;
     Canvas *canvas = find_canvas(event->window);
+    // Suppress motion logging to avoid log spam
+    if (!canvas) canvas = resolve_event_canvas(event->window, event->x, event->y, &cx, &cy);
     if (!canvas) {
         fprintf(stderr, "No canvas for MotionNotify \
             event on window %lu\n", event->window);
@@ -208,12 +331,12 @@ void handle_motion_notify(XMotionEvent *event) {
     } 
     else if (canvas == get_menubar()) {
         menu_handle_menubar_motion(event);
-        printf("something\n");
     } 
     else {
-        workbench_handle_motion_notify(event); // Call first for icon dragging
+        XMotionEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
+        workbench_handle_motion_notify(&ev); // Call first for icon dragging
         if (canvas->type == WINDOW) {
-            intuition_handle_motion_notify(event); // Then window dragging
+            intuition_handle_motion_notify(&ev); // Then window dragging
         }
     }
 }

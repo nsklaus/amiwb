@@ -41,6 +41,7 @@ amiwb
 plan.txt
 compile_flags.txt
 valgrind_new.log
+.vscode/
 
 # Debug files
 *.dSYM/

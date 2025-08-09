@@ -1,0 +1,13 @@
+CompileFlags:
+  Add: 
+    - -Isrc
+    - -I/usr/include/X11/Xft
+    - -I/usr/include/freetype2
+    - -I/usr/include/X11
+    - -I/usr/include
+    - -std=c11
+    - -g
+    - -Wno-int-conversion
+  Compiler: gcc
+InlayHints:
+  Enabled: No

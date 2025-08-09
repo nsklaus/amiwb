@@ -44,7 +44,7 @@ a dot file .amiwbrc or many dedicated setting files like on amiga env:archives/ 
 #define BUTTON_LOWER_SIZE 30
 #define BUTTON_RESIZE_SIZE 20
 
-#define GLOBAL_DEPTH 32 		// Set to 8, 16, 24, or 32
+#define GLOBAL_DEPTH 24 		// Set to 8, 16, 24, or 32
 #define TYPE_ICONIFIED 3 		// Type for iconified windows.
 #define MAX_WINDOWS 100 		// Max open windows.
 #define ICON_HEADER_SIZE 20 	// Size of icon file header.
@@ -71,8 +71,8 @@ extern char *iconify_path;
 // "/home/klaus/Pictures/backgrounds/1164147.png"
 // "/home/klaus/Sources/amiwb/patterns/pattern7.png"
 
-#define DESKPICT //"/home/klaus/Pictures/backgrounds/1164147.png"
+#define DESKPICT "/home/klaus/Pictures/backgrounds/1164147.png"
 #define DESKTILE 0
-#define WINDPICT //"/home/klaus/Sources/amiwb/patterns/pattern8.png"
+#define WINDPICT "/home/klaus/Sources/amiwb/patterns/pattern8.png"
 #define WINDTILE 1
 #endif

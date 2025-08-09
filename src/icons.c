@@ -63,11 +63,10 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
     }
     memset(image->data, 0, width * height * 4);
 
-    // icons use transparency
-    // unsigned long colors[8] = {0x00000000, 0xFF000000, 0xFFFFFFFF, 0xFF6666BB, 0xFF999999, 0xFFBBBBBB, 0xFFBBAA99, 0xFFFFAA22};
+    // Icons use true alpha; index 0 is fully transparent
+    //unsigned long colors[8] = {0x00000000UL, 0xFF000000UL, 0xFFFFFFFFUL, 0xFF6666BBUL, 0xFF999999UL, 0xFFBBBBBBUL, 0xFFBBAA99UL, 0xFFFFAA22UL};
 
     // icons use gray fill instead of transparency
-    // Updated palette: Replace transparent black (0x00000000) with opaque gray (0xFFA0A2A0UL)
     unsigned long colors[8] = {0xFFA0A2A0UL, 0xFF000000, 0xFFFFFFFF, 0xFF6666BB, 0xFF999999, 0xFFBBBBBB, 0xFFBBAA99, 0xFFFFAA22};
     int row_bytes = ((width + 15) / 16) * 2;
     long plane_size = row_bytes * height;

@@ -1,7 +1,7 @@
 CC = gcc
 
 CFLAGS = -g \
-  -Iinclude \
+  -Isrc \
   -I/usr/include/X11/Xft \
   -I/usr/include/freetype2 
   
@@ -21,8 +21,11 @@ LIBS = \
   -lXmu \
   -lX11 \
   -lXrender \
+  -lXfixes \
+  -lXdamage \
   -lXft \
   -lXrandr \
+  -lXcomposite \
   -lm \
   -lImlib2 \
   -lfontconfig 

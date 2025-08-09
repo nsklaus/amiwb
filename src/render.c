@@ -1,4 +1,5 @@
 // File: render.c
+#define _POSIX_C_SOURCE 200809L
 #include "render.h"
 #include "intuition.h"
 #include "workbench.h"
@@ -78,6 +79,11 @@ int get_text_width(const char *text) {
     XGlyphInfo extents;
     XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)text, strlen(text), &extents);
     return extents.xOff;
+}
+
+// Provide access to the loaded UI font
+XftFont *get_font(void) {
+    return font;
 }
 
 // Clean up rendering resources
@@ -552,4 +558,57 @@ void redraw_canvas(Canvas *canvas) {
         XRenderComposite(ctx->dpy, PictOpSrc, canvas->canvas_render, None, canvas->window_render, 0, 0, 0, 0, 0, 0, canvas->width, canvas->height);
     }
     XFlush(ctx->dpy);
+}
+
+// Destroy pixmap and XRender Pictures attached to a canvas
+void render_destroy_canvas_surfaces(Canvas *canvas) {
+    if (!canvas) return;
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return;
+    if (canvas->canvas_render != None) {
+        XRenderFreePicture(ctx->dpy, canvas->canvas_render);
+        canvas->canvas_render = None;
+    }
+    if (canvas->window_render != None) {
+        XRenderFreePicture(ctx->dpy, canvas->window_render);
+        canvas->window_render = None;
+    }
+    if (canvas->canvas_buffer != None) {
+        XFreePixmap(ctx->dpy, canvas->canvas_buffer);
+        canvas->canvas_buffer = None;
+    }
+}
+
+// Recreate pixmap and XRender Pictures based on current canvas size/visual
+void render_recreate_canvas_surfaces(Canvas *canvas) {
+    if (!canvas) return;
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return;
+
+    // Free existing resources first
+    render_destroy_canvas_surfaces(canvas);
+
+    if (canvas->width <= 0 || canvas->height <= 0) return;
+
+    // Create offscreen pixmap matching canvas depth
+    canvas->canvas_buffer = XCreatePixmap(ctx->dpy, canvas->win,
+        canvas->width, canvas->height, canvas->depth);
+    if (!canvas->canvas_buffer) return;
+
+    // Picture format for the offscreen buffer
+    XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, canvas->visual);
+    if (!fmt) { render_destroy_canvas_surfaces(canvas); return; }
+
+    canvas->canvas_render = XRenderCreatePicture(ctx->dpy, canvas->canvas_buffer, fmt, 0, NULL);
+    if (!canvas->canvas_render) { render_destroy_canvas_surfaces(canvas); return; }
+
+    // For the on-screen window picture, desktop uses root visual
+    Visual *win_visual = (canvas->type == DESKTOP)
+        ? DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy))
+        : canvas->visual;
+    XRenderPictFormat *wfmt = XRenderFindVisualFormat(ctx->dpy, win_visual);
+    if (!wfmt) { render_destroy_canvas_surfaces(canvas); return; }
+
+    canvas->window_render = XRenderCreatePicture(ctx->dpy, canvas->win, wfmt, 0, NULL);
+    if (!canvas->window_render) { render_destroy_canvas_surfaces(canvas); return; }
 }

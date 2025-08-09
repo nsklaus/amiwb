@@ -1,6 +1,8 @@
 // File: intuition.c
+#define _POSIX_C_SOURCE 200809L
 #include "intuition.h"
 #include "render.h"
+#include "compositor.h"
 #include "menus.h"
 #include "config.h"
 #include "workbench.h"
@@ -8,7 +10,9 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <X11/Xatom.h>
+#include <time.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/Xdamage.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -17,6 +21,9 @@
 
 #define INITIAL_CANVAS_CAPACITY 8
 
+// Forward declarations
+static bool should_skip_framing(Window win, XWindowAttributes *attrs);
+
 // Global state for intuition
 static Display *display = NULL;
 static RenderContext *render_context = NULL;
@@ -24,14 +31,59 @@ static Canvas **canvas_array = NULL;
 static int canvas_count = 0;
 static int canvas_array_size = 0;
 static Bool fullscreen_active = False;
-static Canvas *active_window = NULL;
+static Canvas *active_window = NULL;    // currently active window
+
+// Suppress desktop deactivation after restore to avoid losing focus immediately
+static long long g_deactivate_suppress_until_ms = 0;
+
+static long long now_ms(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
+static void lower_window_to_back(Canvas *win_canvas) {
+    if (!win_canvas) return;
+    Canvas *desktop = get_desktop_canvas();
+    if (!desktop) { XLowerWindow(display, win_canvas->win); return; }
+
+    // Deterministically place the window immediately above the desktop
+    XWindowChanges ch;
+    ch.sibling = desktop->win;
+    ch.stack_mode = Above; // directly above the desktop means bottom-most among windows
+    XConfigureWindow(display, win_canvas->win, CWSibling | CWStackMode, &ch);
+    XSync(display, False);
+
+}
+
+// Returns the bottom-most WINDOW canvas excluding a specific one
+static Canvas *find_bottommost_window_excluding(Canvas *exclude) {
+    Window root_return, parent_return, *children = NULL; unsigned int n = 0;
+    Window xr = DefaultRootWindow(display);
+    if (!XQueryTree(display, xr, &root_return, &parent_return, &children, &n)) return NULL;
+    Canvas *result = NULL;
+    // iterate bottom -> top
+    for (unsigned int i = 0; i < n; ++i) {
+        Canvas *c = find_canvas(children[i]);
+        if (c && c->type == WINDOW && c != exclude) { result = c; break; }
+    }
+    if (children) XFree(children);
+    return result;
+}
+
+void suppress_desktop_deactivate_for_ms(int ms) {
+    long long n = now_ms();
+    if (ms < 0) ms = 0;
+    long long until = n + (long long)ms;
+    if (until > g_deactivate_suppress_until_ms) g_deactivate_suppress_until_ms = until;
+}
+
 static Cursor root_cursor;
 static int width = 0;
 static int height = 0;
-static Window screen = 0;
+static int screen = 0;
 static Window root = 0;
 static int depth = 0;
-static Visual *visual = NULL;
+// removed unused global Visual *visual
 static Canvas *dragging_canvas = NULL;
 static int drag_start_x = 0, drag_start_y = 0;
 static int window_start_x = 0, window_start_y = 0;
@@ -55,15 +107,23 @@ static int initial_scroll = 0;
 static int scroll_start_pos = 0;
 
 // X error handler, log details and make them non-fatal
+static bool g_shutting_down = false;
+
+void begin_shutdown(void) {
+    g_shutting_down = true;
+}
+
+// motion helpers are defined later near event handlers
+
 static int x_error_handler(Display *dpy, XErrorEvent *error) {
     char error_text[1024];
     XGetErrorText(dpy, error->error_code, error_text, sizeof(error_text));
-    
-    fprintf(stderr, "X Error intercepted: error_code=%d (%s), \
-        request_code=%d, minor_code=%d, resource_id=0x%lx\n",
-        error->error_code, error_text, error->request_code, 
-        error->minor_code, error->resourceid);
 
+    // During shutdown, suppress all X errors to ensure graceful exit
+    if (g_shutting_down) return 0;
+
+    fprintf(stderr, "X Error intercepted: error_code=%d (%s), request_code=%d, minor_code=%d, resource_id=0x%lx\n",
+            error->error_code, error_text, error->request_code, error->minor_code, error->resourceid);
     fflush(stderr);
     return 0;  // continue execution (non-fatal handling)
 }
@@ -76,7 +136,6 @@ static Pixmap load_wallpaper_to_pixmap(Display *dpy, Window root, int screen_wid
         fprintf(stderr, "Failed to load wallpaper: %s\n", path);
         return None;
     }
-    printf("image=%s, tile=%d  \n", path, tile);
     imlib_context_set_image(img);
     int img_width = imlib_image_get_width();
     int img_height = imlib_image_get_height();
@@ -102,7 +161,6 @@ static Pixmap load_wallpaper_to_pixmap(Display *dpy, Window root, int screen_wid
             }
         }
     }
-
 
     imlib_free_image();
     return pixmap;
@@ -158,7 +216,7 @@ Canvas *manage_canvases(bool add, Canvas *canvas_to_remove) {
 // ============
 static XVisualInfo select_visual(CanvasType type) {
     XVisualInfo vinfo;
-    if (type == DESKTOP || type == MENU) {
+    if (type == DESKTOP) {
         vinfo.visual = DefaultVisual(display, screen);
         vinfo.depth = DefaultDepth(display, screen);
     } else {
@@ -239,20 +297,15 @@ Canvas *init_intuition(void) {
 
     if (strlen(DESKPICT) > 0) {
         render_context->desk_img = load_wallpaper_to_pixmap(display, root, width, height, DESKPICT, DESKTILE);
-/*        if (render_context->desk_img != None) {
-            // Set as root background for initial display (optional, but ensures visibility)
+        if (render_context->desk_img != None) {
+            // Set as root background for initial display (ensures visibility)
             XSetWindowBackgroundPixmap(display, root, render_context->desk_img);
             XClearWindow(display, root);
-        }*/
+        }
     }
 
     if (strlen(WINDPICT) > 0) {
         render_context->wind_img = load_wallpaper_to_pixmap(display, root, width, height, WINDPICT, WINDTILE);
-/*        if (render_context->wind_img != None) {
-            // Set as root background for initial display (optional, but ensures visibility)
-            XSetWindowBackgroundPixmap(display, root, render_context->wind_img);
-            XClearWindow(display, root);
-        }*/
     }
 
     Window root_return, parent_return;
@@ -277,26 +330,10 @@ Canvas *init_intuition(void) {
                 attrs.override_redirect || attrs.map_state != IsViewable || 
                 attrs.class == InputOnly) continue;
 
-            Atom motif_wm_hints = XInternAtom(display, "_MOTIF_WM_HINTS", True);
-            Atom actual_type;
-            int actual_format;
-            unsigned long nitems, bytes_after;
-            unsigned char *prop = NULL;
-            bool skip_framing = false;
-
-            if (motif_wm_hints != None && XGetWindowProperty(display, child, 
-                    motif_wm_hints, 0, 5, False, AnyPropertyType, &actual_type, 
-                    &actual_format, &nitems, &bytes_after, &prop) == Success && 
-                    nitems >= 3) {
-
-                long *hints = (long *)prop;
-                if (hints[0] & (1L << 2) && hints[2] == 0) skip_framing = true;
-                XFree(prop);
-            }
+            bool skip_framing = should_skip_framing(child, &attrs);
             if (skip_framing) continue;
 
             int frame_x = attrs.x;
-            //, frame_y = attrs.y;
             // Clamp y to ensure titlebar is below menubar
             int frame_y = max(attrs.y, MENUBAR_HEIGHT);  
             int frame_width = attrs.width + BORDER_WIDTH_LEFT +
@@ -379,15 +416,36 @@ static void deselect_all_icons(void) {
     }
 }
 
+// Activate the topmost WINDOW canvas, excluding one (e.g., the just-lowered window)
+static void activate_topmost_window_excluding(Canvas *exclude) {
+    Window root_ret, parent_ret, *children = NULL;
+    unsigned int n = 0;
+    if (!XQueryTree(display, root, &root_ret, &parent_ret, &children, &n)) return;
+    // Children are bottom-to-top; scan from topmost down
+    for (int i = (int)n - 1; i >= 0; --i) {
+        Canvas *c = find_canvas(children[i]);
+        if (c && c->type == WINDOW && c != exclude) {
+            set_active_window(c);
+            break;
+        }
+    }
+    if (children) XFree(children);
+}
+
+// Debug: print stacking position for a frame and whether it's topmost among WINDOWs
 void set_active_window(Canvas *canvas) {
     if (!canvas || canvas->type != WINDOW) return;
     deactivate_other_windows(canvas);
     active_window = canvas;
     canvas->active = true;
     XRaiseWindow(display, canvas->win);
+    compositor_sync_stacking(display);
     if (canvas->client_win != None) {
-        XSetInputFocus(display, canvas->client_win, 
-            RevertToParent, CurrentTime);
+        XSetInputFocus(display, canvas->client_win,
+                       RevertToParent, CurrentTime);
+    } else {
+        XSetInputFocus(display, canvas->win,
+                       RevertToParent, CurrentTime);
     }
     redraw_canvas(canvas);
     XSync(display, False);
@@ -421,6 +479,70 @@ static bool is_fullscreen_active(Window win) {
     return active;
 }
 
+// Find next free grid slot on the desktop without moving existing icons
+static void find_next_desktop_slot(Canvas *desktop, int *out_x, int *out_y) {
+    if (!desktop || !out_x || !out_y) return;
+    const int start_x = 10;
+    const int start_y = 40;
+    const int col_step = 100; // matches refresh_canvas_from_directory spacing
+    const int row_step = ICON_SPACING; // vertical spacing
+
+    FileIcon **icons = get_icon_array();
+    int count = get_icon_count();
+
+    // Build list of existing column x baselines by clustering icon x positions
+    int col_x[64]; int col_x_count = 0; const int col_merge_thresh = 32;
+    for (int i = 0; i < count; i++) {
+        FileIcon *ic = icons[i];
+        if (ic->display_window != desktop->win) continue;
+        int x = ic->x;
+        bool merged = false;
+        for (int c = 0; c < col_x_count; c++) {
+            if (abs(col_x[c] - x) <= col_merge_thresh) {
+                // keep the minimum to represent the column baseline
+                if (x < col_x[c]) col_x[c] = x;
+                merged = true; break;
+            }
+        }
+        if (!merged && col_x_count < 64) col_x[col_x_count++] = x;
+    }
+    // sort ascending
+    for (int i = 0; i < col_x_count; i++)
+        for (int j = i + 1; j < col_x_count; j++)
+            if (col_x[j] < col_x[i]) { int t = col_x[i]; col_x[i] = col_x[j]; col_x[j] = t; }
+
+    // Iterate grid positions left-to-right columns, top-to-bottom rows
+    int col_idx = 0;
+    for (int x = start_x; x < desktop->width - 64; x += col_step, col_idx++) {
+        for (int y = start_y; y < desktop->height - 64; y += row_step) {
+            bool occupied = false;
+            for (int i = 0; i < count; i++) {
+                FileIcon *ic = icons[i];
+                if (ic->display_window != desktop->win) continue;
+                // Icon rect including label area
+                int iw = ic->width;
+                int ih = ic->height + 20;
+                if (!(x + 64 < ic->x || ic->x + iw < x ||
+                      y + 64 < ic->y || ic->y + ih < y)) {
+                    occupied = true; break;
+                }
+            }
+            if (!occupied) {
+                // Align x to existing column baseline if available
+                if (col_idx < col_x_count) *out_x = col_x[col_idx];
+                else {
+                    // Default center akin to first column's minimal width
+                    int default_center = start_x + (80 - 64) / 2; // min_cell_w=80
+                    *out_x = default_center + col_idx * col_step;
+                }
+                *out_y = y; return;
+            }
+        }
+    }
+    // Fallback to start
+    *out_x = start_x; *out_y = start_y;
+}
+
 // Iconify a canvas window (hide it and create a desktop icon)
 void iconify_canvas(Canvas *canvas) {
 
@@ -430,17 +552,9 @@ void iconify_canvas(Canvas *canvas) {
     Canvas *desktop = get_desktop_canvas();
     if (!desktop) return;
 
-    // Compute next icon position on desktop 
-    // (vertical stack starting at y=40, x=10, 80px spacing)
-    int desktop_icon_count = 0;
-    FileIcon **icons = get_icon_array();
-    int count = get_icon_count();
-    for (int i = 0; i < count; i++) {
-        if (icons[i]->display_window == desktop->win) desktop_icon_count++;
-    }
-
-    int next_x = 10;
-    int next_y = 40 + (desktop_icon_count * ICON_SPACING);
+    // Compute next free slot in the desktop grid without re-layout
+    int next_x = 10, next_y = 40;
+    find_next_desktop_slot(desktop, &next_x, &next_y);
 
     char *label = NULL;
     const char *icon_path = NULL;
@@ -487,7 +601,8 @@ void iconify_canvas(Canvas *canvas) {
 
     // Create the iconified icon
     create_icon(icon_path, desktop, next_x, next_y);
-    FileIcon *new_icon = icons[get_icon_count() - 1];
+    FileIcon **icons_arr = get_icon_array();
+    FileIcon *new_icon = icons_arr[get_icon_count() - 1];
     new_icon->type = TYPE_ICONIFIED;
     free(new_icon->label);
     new_icon->label = label;
@@ -499,7 +614,7 @@ void iconify_canvas(Canvas *canvas) {
     XUnmapWindow(display, canvas->win);
     if (active_window == canvas) active_window = NULL;
 
-    icon_cleanup(desktop);
+    // Do not auto-reorganize; just redraw
     redraw_canvas(desktop);
     XSync(display, False);
 }
@@ -561,10 +676,19 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
     XSetWindowAttributes attrs = {0};
     attrs.colormap = XCreateColormap(ctx->dpy, root, canvas->visual, AllocNone);
     attrs.border_pixel = 0;
-    unsigned long valuemask = CWColormap | CWBorderPixel;
-    canvas->win = (type == DESKTOP) ? DefaultRootWindow(ctx->dpy) :
-            XCreateWindow(display, root, x, y, width, height, 1, 
-            vinfo.depth, InputOutput, canvas->visual, valuemask, &attrs);
+    attrs.background_pixel = 0;        // fully transparent for ARGB visuals
+    attrs.background_pixmap = None;    // avoid server clears that paint black
+    unsigned long valuemask = CWColormap | CWBorderPixel | CWBackPixel | CWBackPixmap;
+    if (type == DESKTOP) {
+        // Create a real desktop window so the compositor can redirect and composite it
+        // Fullscreen at (0, MENUBAR_HEIGHT) to allow menubar above it
+        canvas->win = XCreateWindow(display, root, 0, MENUBAR_HEIGHT, width, height - MENUBAR_HEIGHT,
+                                    0, vinfo.depth, InputOutput, canvas->visual, valuemask, &attrs);
+    } else {
+        // Use border width 0 to avoid server-side 1px border truncation
+        canvas->win = XCreateWindow(display, root, x, y, width, height, 0,
+                                    vinfo.depth, InputOutput, canvas->visual, valuemask, &attrs);
+    }
     
     if (!canvas->win) {
         destroy_canvas(canvas);
@@ -572,17 +696,21 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
     }
     canvas->colormap = attrs.colormap;
 
+    const char *dbg = getenv("WB_DEBUG");
+    if (dbg && *dbg) {
+        fprintf(stderr, "[WB] create_canvas: type=%d win=0x%lx pos=(%d,%d) size=%dx%d path=%s\n",
+                type, (unsigned long)canvas->win, x, y, width, height, path ? path : "-");
+    }
+
     long event_mask = ExposureMask | ButtonPressMask | PointerMotionMask |
                       ButtonReleaseMask | KeyPressMask;
     
     if (type == DESKTOP) 
         event_mask |= SubstructureRedirectMask | SubstructureNotifyMask;
     if (type == WINDOW) 
-        event_mask |= StructureNotifyMask | SubstructureNotifyMask;
-    
-/*    if (type == MENU) 
-        event_mask |= PointerMotionMask | ButtonPressMask | ButtonReleaseMask;  
-*/
+        event_mask |= StructureNotifyMask | SubstructureNotifyMask | EnterWindowMask | FocusChangeMask;
+    if (type == MENU)
+        event_mask |= PointerMotionMask | ButtonPressMask | ButtonReleaseMask;
 
     XSelectInput(ctx->dpy, canvas->win, event_mask);
 
@@ -594,6 +722,7 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
         return NULL;
     }
 
+    // Picture format for the offscreen buffer (matches pixmap depth/visual)
     XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, canvas->visual);
     if (!fmt) {
         destroy_canvas(canvas);
@@ -608,12 +737,37 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
         return NULL;
     }
     
+    // For the on-screen window picture, use the ACTUAL window visual format.
+    // Desktop uses the root window visual, not canvas->visual.
+    Visual *win_visual = (type == DESKTOP) ? DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)) : canvas->visual;
+    XRenderPictFormat *wfmt = XRenderFindVisualFormat(ctx->dpy, win_visual);
+    if (!wfmt) {
+        destroy_canvas(canvas);
+        return NULL;
+    }
     canvas->window_render = XRenderCreatePicture(ctx->dpy, canvas->win, 
-        fmt, 0, NULL);
+        wfmt, 0, NULL);
     
     if (!canvas->window_render) {
         destroy_canvas(canvas);
         return NULL;
+    }
+
+    // Ensure the canvas window is viewable so it can receive input events.
+    // Map immediately; stacking (raise) is handled explicitly by activation.
+    if (type == WINDOW) {
+        XMapWindow(ctx->dpy, canvas->win);
+    } else if (type == MENU) {
+        XMapRaised(ctx->dpy, canvas->win);
+    } else {
+        // Desktop should be viewable but kept at the bottom of the stack
+        XMapWindow(ctx->dpy, canvas->win);
+        XLowerWindow(ctx->dpy, canvas->win);
+    }
+
+    if (dbg && *dbg) {
+        const char *tn = (type == DESKTOP ? "DESKTOP" : (type == WINDOW ? "WINDOW" : "MENU"));
+        fprintf(stderr, "[WB] mapped %s win=0x%lx (raised=%d)\n", tn, (unsigned long)canvas->win, (type!=DESKTOP)?1:0);
     }
 
     if (type == WINDOW) {
@@ -640,36 +794,28 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
         if (type == WINDOW ) {
             attrs.background_pixmap = None;
             XChangeWindowAttributes(display, canvas->win, CWBackPixmap, &attrs);
-            //canvas->active = true;
-            set_active_window(canvas);
         }
         XMapRaised(ctx->dpy, canvas->win);
-        if (type == WINDOW) redraw_canvas(canvas);
+        if (type == WINDOW) {
+            // Newly created Workbench windows should become active immediately
+            set_active_window(canvas);
+            redraw_canvas(canvas);
+        }
+        XSync(ctx->dpy, False);
+    } else {
+        // Map desktop window at bottom of stack
+        XMapWindow(ctx->dpy, canvas->win);
+        redraw_canvas(canvas);
         XSync(ctx->dpy, False);
     }
     return canvas;
 }
 
 static bool should_skip_framing(Window win, XWindowAttributes *attrs) {
+    // Only skip truly unmanaged windows
     if (attrs->override_redirect || attrs->class == InputOnly) return true;
-
-    Atom motif_wm_hints = XInternAtom(display, "_MOTIF_WM_HINTS", True);
-    Atom actual_type;
-    int actual_format;
-    unsigned long nitems, bytes_after;
-    unsigned char *prop = NULL;
-    bool skip = false;
-    
-    if (motif_wm_hints != None && XGetWindowProperty(display, win, 
-        motif_wm_hints, 0, 5, False, AnyPropertyType, 
-        &actual_type, &actual_format, &nitems, &bytes_after, 
-        &prop) == Success && nitems >= 3) {
-
-        long *hints = (long *)prop;
-        if (hints[0] & (1L << 2) && hints[2] == 0) skip = true;
-        XFree(prop);
-    }
-    return skip;
+    // Always frame normal client windows; ignore MWM hints requesting no decorations
+    return false;
 }
 
 static void select_next_window(Canvas *closing_canvas) {
@@ -732,255 +878,227 @@ void intuition_handle_property_notify(XPropertyEvent *event) {
     }
 }
 
-// intuition_handle_button_press
-void intuition_handle_button_press(XButtonEvent *event) {
-    Canvas *canvas = find_canvas(event->window);
-    if (!canvas) return;
-
-
-    // revert menubar to defaut state upon clicks outside menus
-    if (canvas->type != MENU && ( event->button == Button1 || 
-                                  event->button == Button3 )) {
-        if (get_show_menus_state()) {
-            toggle_menubar_state();  
-            redraw_canvas(get_desktop_canvas());
+// === compact helpers to reduce bloat in button_press ===
+static void handle_desktop_button(Canvas *canvas, XButtonEvent *event) {
+    if (event->button == Button3) {
+        toggle_menubar_state();
+        Canvas *mb = get_menubar();
+        if (mb) { XMapWindow(display, mb->win); redraw_canvas(mb); }
+    }
+    if (event->button == Button1) {
+        // If we recently restored a window, suppress deactivation once
+        if (now_ms() < g_deactivate_suppress_until_ms) {
             return;
         }
-    }
-
-    // RMB on desktop toggle menubar state 
-    // LMB on desktop deactivate windows
-    if (canvas->type == DESKTOP) {
-        if (event->button == Button3) { toggle_menubar_state(); }
-        if (event->button == Button1) { 
-
-            // differentiate between clicking on a 
-            // desktop icon or desktop empty space
-            bool on_icon = false;
-            FileIcon **icon_array = get_icon_array();
-            int icon_count = get_icon_count();
-            for (int i = 0; i < icon_count; i++) {
-
-                if (icon_array[i]->display_window == canvas->win &&
-                    event->x >= icon_array[i]->x && 
-                    event->x < icon_array[i]->x + icon_array[i]->width &&
-                    event->y >= icon_array[i]->y && 
-                    event->y < icon_array[i]->y + icon_array[i]->height) {
-
-                    on_icon = true;
-                    break;
-                }
-            }
-
-            // clicking on desktop empty space, deactivate all windows
-            if (!on_icon) {
-                deactivate_all_windows();
-            }
+        bool on_icon = false;
+        FileIcon **icon_array = get_icon_array();
+        int icon_count = get_icon_count();
+        for (int i = 0; i < icon_count; i++) {
+            if (icon_array[i]->display_window == canvas->win &&
+                event->x >= icon_array[i]->x &&
+                event->x < icon_array[i]->x + icon_array[i]->width &&
+                event->y >= icon_array[i]->y &&
+                event->y < icon_array[i]->y + icon_array[i]->height) { on_icon = true; break; }
         }
+        if (!on_icon) deactivate_all_windows();
+    }
+}
+
+// Returns the WINDOW canvas immediately behind the given window in current Z order
+static Canvas *find_next_window_behind(Window w) {
+    Window root_return, parent_return, *children = NULL; unsigned int n = 0;
+    if (!XQueryTree(display, root, &root_return, &parent_return, &children, &n)) return NULL;
+    Canvas *result = NULL;
+    // iterate top -> bottom
+    for (int i = (int)n - 1; i >= 0; --i) {
+        if (children[i] == w) {
+            for (int j = i - 1; j >= 0; --j) {
+                Canvas *c = find_canvas(children[j]);
+                if (c && c->type == WINDOW) { result = c; break; }
+            }
+            break;
+        }
+    }
+    if (children) XFree(children);
+    return result;
+}
+
+static Bool handle_titlebar_buttons(Canvas *canvas, XButtonEvent *event) {
+    if (event->y >= BORDER_HEIGHT_TOP) return False;
+    int lower_x = canvas->width - BUTTON_LOWER_SIZE;
+    int max_x = canvas->width - 2 * BUTTON_MAXIMIZE_SIZE;
+    int iconify_x = canvas->width - 3 * BUTTON_ICONIFY_SIZE;
+
+    if (event->x >= lower_x && event->button == Button1) {
+        // Determine who was immediately behind BEFORE lowering
+        Canvas *next = find_next_window_behind(canvas->win);
+
+        // Send this window to the absolute back among WINDOWs (just above desktop)
+        lower_window_to_back(canvas);
+        // Update active state BEFORE compositor sync so the lowered window isn't re-raised
+        canvas->active = false;
+        if (next && next != canvas) set_active_window(next);
+        else {
+            // fallback: activate topmost other window or desktop
+            activate_topmost_window_excluding(canvas);
+        }
+        // Now sync compositor stacking and repaint reflecting the new active
+        compositor_sync_stacking(display);
         redraw_canvas(canvas);
-        return;
+        return True;
+    } else if (event->x >= max_x && event->button == Button1) {
+        canvas->x = 0; canvas->y = 21;
+        XMoveResizeWindow(display, canvas->win, 0, 21,
+                          get_desktop_canvas()->width,
+                          get_desktop_canvas()->height - 20);
+        return True;
+    } else if (event->x >= iconify_x && event->button == Button1) {
+        iconify_canvas(canvas); return True;
+    } else if (event->x < BUTTON_CLOSE_SIZE && event->button == Button1) {
+        destroy_canvas(canvas); return True;
+    } else if (event->button == Button1) {
+        dragging_canvas = canvas;
+        drag_start_x = event->x_root; drag_start_y = event->y_root;
+        window_start_x = canvas->x; window_start_y = canvas->y;
+        return True;
     }
+    return False;
+}
 
-    // window button processing past this point.
-    // if canvas is not a window then stop here.
-    if (canvas->type != WINDOW) 
-        return;
-
-    // ===============
-    // window buttons
-    // ===============
-
-    set_active_window(canvas);
-
-    // Handle titlebar buttons
-    if (event->y < BORDER_HEIGHT_TOP ) {
-
-        // Rightmost: lower button pos. 
-        int lower_x = canvas->width - BUTTON_LOWER_SIZE;
-
-        // Middle: maximize button pos.
-        int max_x = canvas->width - 2 * BUTTON_MAXIMIZE_SIZE;
-
-        // Leftmost on right: iconify button pos.
-        int iconify_x = canvas->width - 3 * BUTTON_ICONIFY_SIZE;
-
-        // lower button event on LMB
-        if (event->x >= lower_x && event->button == Button1 ) {
-            // lower window 
-            XLowerWindow(display, canvas->win); redraw_canvas(canvas);
-            return;
-        } 
-        
-        // maximize button event on LMB
-        else if (event->x >= max_x && event->button == Button1) {
-            
-            canvas->x = 0;
-            canvas->y = 21;
-            XMoveResizeWindow(display,canvas->win, 0, 21, 
-                get_desktop_canvas()->width, get_desktop_canvas()->height - 20);
-            return;
-        } 
-
-        // iconify button event on LMB 
-        else if (event->x >= iconify_x && event->button == Button1) {    
-            iconify_canvas(canvas);
-            return;
-        } 
-
-         // close button event on LMB 
-        else if (event->x < BUTTON_CLOSE_SIZE && event->button == Button1) {
-            destroy_canvas(canvas);
-            return;
-        } 
-
-        // titlebar button event on LMB
-        else if (event->button == Button1){
-            dragging_canvas = canvas;
-            drag_start_x = event->x_root; 
-            drag_start_y = event->y_root;
-            window_start_x = canvas->x; 
-            window_start_y = canvas->y;
-            return;
-        }
-    }
-
-    // resize button event on LMB
-    if (event->x >= canvas->width - BORDER_WIDTH_RIGHT && 
-            event->y >= canvas->height - BORDER_HEIGHT_BOTTOM  &&
-            event->button == Button1 ) {
+static Bool handle_resize_button(Canvas *canvas, XButtonEvent *event) {
+    if (event->x >= canvas->width - BORDER_WIDTH_RIGHT &&
+        event->y >= canvas->height - BORDER_HEIGHT_BOTTOM &&
+        event->button == Button1) {
         resizing_canvas = canvas;
-        resize_start_x = event->x_root; 
-        resize_start_y = event->y_root;
-        window_start_width = canvas->width; 
-        window_start_height = canvas->height;
-        return;
+        resize_start_x = event->x_root; resize_start_y = event->y_root;
+        window_start_width = canvas->width; window_start_height = canvas->height;
+        return True;
     }
+    return False;
+}
 
-    // no scrollbar on client windows
-    if (canvas->client_win != None) { return; }
+static Bool handle_scrollbars(Canvas *canvas, XButtonEvent *event) {
+    if (canvas->client_win != None) return False; // no scrollbars on client windows
 
-    // handle vertical scrollbar     
     int sb_x = canvas->width - BORDER_WIDTH_RIGHT;
     int sb_y = BORDER_HEIGHT_TOP + 10;
     int sb_w = BORDER_WIDTH_RIGHT;
-    int sb_h = (canvas->height - BORDER_HEIGHT_TOP - 
-        BORDER_HEIGHT_BOTTOM) - 54 - 10;
+    int sb_h = (canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM) - 54 - 10;
+    int arrow_size = 20;
 
-    if (event->x >= sb_x && event->x < sb_x + sb_w && 
+    // Vertical track
+    if (event->x >= sb_x && event->x < sb_x + sb_w &&
         event->y >= sb_y && event->y < sb_y + sb_h &&
         event->button == Button1) {
-
         float ratio = (float)sb_h / canvas->content_height;
         int knob_h = max(MIN_KNOB_SIZE, (int)(ratio * sb_h));
         float pos_ratio = (float)canvas->scroll_y / canvas->max_scroll_y;
         int knob_y = sb_y + (int)(pos_ratio * (sb_h - knob_h));
         if (event->y >= knob_y && event->y < knob_y + knob_h) {
             scrolling_canvas = canvas; scrolling_vertical = true;
-            initial_scroll = canvas->scroll_y; 
-            scroll_start_pos = event->y_root;
-            return;
+            initial_scroll = canvas->scroll_y; scroll_start_pos = event->y_root;
+            return True;
         } else {
-
             float click_ratio = (float)(event->y - sb_y) / sb_h;
-            canvas->scroll_y = max(0, min((int)(click_ratio * 
-                canvas->max_scroll_y), canvas->max_scroll_y));
-            
-            redraw_canvas(canvas);
-            return;
+            canvas->scroll_y = max(0, min((int)(click_ratio * canvas->max_scroll_y), canvas->max_scroll_y));
+            redraw_canvas(canvas); return True;
+        }
+    }
+    // Vertical arrows
+    if (event->x >= sb_x && event->x < sb_x + sb_w && event->button == Button1) {
+        if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM - (2 * arrow_size)) &&
+            event->y < (canvas->height - BORDER_HEIGHT_BOTTOM - arrow_size)) {
+            canvas->scroll_y = max(0, canvas->scroll_y - 20); redraw_canvas(canvas); return True;
+        } else if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM - arrow_size) &&
+                   event->y < (canvas->height - BORDER_HEIGHT_BOTTOM)) {
+            canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + 20); redraw_canvas(canvas); return True;
         }
     }
 
-    // vertical arrows clicks
-    int arrow_size = 20;
-    if (event->x >= sb_x && event->x < sb_x + sb_w && 
-            event->button == Button1) {
-
-        if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM - 
-            (2 * arrow_size)) && event->y < (canvas->height -
-             BORDER_HEIGHT_BOTTOM - arrow_size)) {
-
-            canvas->scroll_y = max(0, canvas->scroll_y - 20); 
-            redraw_canvas(canvas); return;
-        } 
-
-        else if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM -
-            arrow_size) && event->y < (canvas->height - 
-            BORDER_HEIGHT_BOTTOM)) {
-            
-            canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + 20); redraw_canvas(canvas); 
-            return;
-        }
-    }
-
-    // handle horizontal scrollbar
+    // Horizontal track
     int hb_x = BORDER_WIDTH_LEFT + 10;
     int hb_y = canvas->height - BORDER_HEIGHT_BOTTOM;
-    int hb_w = (canvas->width - BORDER_WIDTH_LEFT -
-        BORDER_WIDTH_RIGHT) - 54 - 10;
+    int hb_w = (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) - 54 - 10;
     int hb_h = BORDER_HEIGHT_BOTTOM;
-
-    if (event->x >= hb_x && event->x < hb_x + hb_w && 
+    if (event->x >= hb_x && event->x < hb_x + hb_w &&
         event->y >= hb_y && event->y < hb_y + hb_h &&
         event->button == Button1) {
-
         float ratio = (float)hb_w / canvas->content_width;
         int knob_w = max(MIN_KNOB_SIZE, (int)(ratio * hb_w));
         float pos_ratio = (float)canvas->scroll_x / canvas->max_scroll_x;
         int knob_x = hb_x + (int)(pos_ratio * (hb_w - knob_w));
-
         if (event->x >= knob_x && event->x < knob_x + knob_w) {
             scrolling_canvas = canvas; scrolling_vertical = false;
-            initial_scroll = canvas->scroll_x; scroll_start_pos = event->x_root;
-            return;
+            initial_scroll = canvas->scroll_x; scroll_start_pos = event->x_root; return True;
         } else {
             float click_ratio = (float)(event->x - hb_x) / hb_w;
-            canvas->scroll_x = max(0, min((int)(click_ratio * 
-                canvas->max_scroll_x), canvas->max_scroll_x));
-            redraw_canvas(canvas);
-            return;
+            canvas->scroll_x = max(0, min((int)(click_ratio * canvas->max_scroll_x), canvas->max_scroll_x));
+            redraw_canvas(canvas); return True;
         }
     }
-
-    // horizontal arrows clicks
-    if (event->y >= hb_y && event->y < hb_y + hb_h && 
-        event->button == Button1) {
-        
-        if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT -
-            (2 * arrow_size)) && event->x < (canvas->width - 
-            BORDER_WIDTH_RIGHT - arrow_size)) {
-
-            canvas->scroll_x = max(0, canvas->scroll_x - 20); 
-            redraw_canvas(canvas); 
-            return;
-        } 
-
-        else if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT - arrow_size)
-            && event->x < (canvas->width - BORDER_WIDTH_RIGHT)) {
-
-            canvas->scroll_x = min(canvas->max_scroll_x, canvas->scroll_x + 20);
-            redraw_canvas(canvas); 
-            return;
+    // Horizontal arrows
+    if (event->y >= hb_y && event->y < hb_y + hb_h && event->button == Button1) {
+        if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT - (2 * arrow_size)) &&
+            event->x < (canvas->width - BORDER_WIDTH_RIGHT - arrow_size)) {
+            canvas->scroll_x = max(0, canvas->scroll_x - 20); redraw_canvas(canvas); return True;
+        } else if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT - arrow_size) &&
+                   event->x < (canvas->width - BORDER_WIDTH_RIGHT)) {
+            canvas->scroll_x = min(canvas->max_scroll_x, canvas->scroll_x + 20); redraw_canvas(canvas); return True;
         }
     }
+    return False;
 }
 
-void intuition_handle_motion_notify(XMotionEvent *event) {
+// intuition_handle_button_press
+void intuition_handle_button_press(XButtonEvent *event) {
+    Canvas *canvas = find_canvas(event->window);
+    if (!canvas) return;
+
+    // Revert menubar to default state upon clicks outside menus
+    if (canvas->type != MENU && (event->button == Button1 || event->button == Button3)) {
+        if (get_show_menus_state()) {
+            toggle_menubar_state();
+            Canvas *mb = get_menubar();
+            if (mb) { XMapWindow(display, mb->win); redraw_canvas(mb); }
+            return;
+        }
+    }
+
+    // Desktop: toggle menus on RMB, deactivate windows on empty LMB
+    if (canvas->type == DESKTOP) { handle_desktop_button(canvas, event); redraw_canvas(canvas); return; }
+
+    // window button processing past this point.
+    // if canvas is not a window then stop here.
+    if (canvas->type != WINDOW) 
+        return;
+
+    // Intentionally no compositor stack dump here (perf)
+
+    set_active_window(canvas);
+    if (handle_titlebar_buttons(canvas, event)) return;
+
+    if (handle_resize_button(canvas, event)) return;
+
+    if (handle_scrollbars(canvas, event)) return;
+}
+
+static Bool handle_drag_motion(XMotionEvent *event) {
     if (dragging_canvas) {
         int delta_x = event->x_root - drag_start_x;
         int delta_y = event->y_root - drag_start_y;
         window_start_x += delta_x; 
-        //window_start_y += delta_y;
         // Clamp y to ensure titlebar is below menubar
         window_start_y = max(window_start_y + delta_y, MENUBAR_HEIGHT);  
         XMoveWindow(display, dragging_canvas->win, window_start_x, window_start_y);
         dragging_canvas->x = window_start_x; 
         dragging_canvas->y = window_start_y;
-        redraw_canvas(dragging_canvas);
-        // removed XSync(); allow natural batching, reduce synchronous latency
-        // XSync(display, False);
         drag_start_x = event->x_root; drag_start_y = event->y_root;
-        return;
+        return True;
     }
+    return False;
+}
+
+static Bool handle_resize_motion(XMotionEvent *event) {
     if (resizing_canvas) {
         int delta_x = event->x_root - resize_start_x;
         int delta_y = event->y_root - resize_start_y;
@@ -999,13 +1117,12 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
             window_start_width = new_width; 
             window_start_height = new_height;
         }
-
-
-        // XResizeWindow(display, resizing_canvas->win, new_width, new_height);
-        // removed XSync(); allow natural batching, reduce synchronous latency
-        // XSync(display, False);
-        return;
+        return True;
     }
+    return False;
+}
+
+static Bool handle_scroll_motion(XMotionEvent *event) {
     if (scrolling_canvas) {
         int delta, scale, new_scroll;
         if (scrolling_vertical) {
@@ -1039,10 +1156,15 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
             scrolling_canvas->scroll_x = new_scroll;
         }
         redraw_canvas(scrolling_canvas);
-        // removed XSync(); allow natural batching, reduce synchronous latency
-        // XSync(display, False);
-        return;
+        return True;
     }
+    return False;
+}
+
+void intuition_handle_motion_notify(XMotionEvent *event) {
+    if (handle_drag_motion(event)) return;
+    if (handle_resize_motion(event)) return;
+    if (handle_scroll_motion(event)) return;
 }
 
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
@@ -1092,6 +1214,7 @@ void intuition_handle_button_release(XButtonEvent *event) {
     dragging_canvas = NULL;
     resizing_canvas = NULL;
     scrolling_canvas = NULL;
+    // Intentionally no compositor stack dump here (perf)
 /*    XUngrabPointer(display, CurrentTime);
     printf("release button, do xungrab, reset scrolling, dragging...\n");*/
 }
@@ -1109,7 +1232,7 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
         attrs.border_width = 0;
     }
 
-    if (!attrs_valid || should_skip_framing(event->window, &attrs)) {
+    if (should_skip_framing(event->window, &attrs)) {
         XMapWindow(display, event->window);
         XSync(display, False);
         return;
@@ -1117,7 +1240,7 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
 
     int frame_x = max(attrs.x, 100);
     // Clamp y to ensure titlebar is below menubar
-    int frame_y = max(attrs.y, 150);  
+    int frame_y = max(attrs.y, MENUBAR_HEIGHT);  
     int frame_width = attrs.width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
     int frame_height = attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
     
@@ -1141,6 +1264,12 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
     }
     XMapWindow(display, event->window);
     frame->client_win = event->window;
+    // Listen for structure and enter events on client (no grabs)
+    XSelectInput(display, frame->client_win,
+                 StructureNotifyMask | PropertyChangeMask | EnterWindowMask | FocusChangeMask);
+    const char *dbg = getenv("WB_DEBUG");
+    if (dbg && *dbg) fprintf(stderr, "[WB] map_request: framed client=0x%lx into frame=0x%lx at (%d,%d) size %dx%d\n",
+                              (unsigned long)event->window, (unsigned long)frame->win, frame_x, frame_y, frame_width, frame_height);
 
     // ===========================
     // set client name on titlebar
@@ -1158,7 +1287,81 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
     //printf(" ---intuition:   frame->title=%s \n", frame->title);
 
     XAddToSaveSet(display, event->window);
+    set_active_window(frame);
     XRaiseWindow(display, frame->win);
+    compositor_sync_stacking(display);
+    redraw_canvas(frame);
+    XSync(display, False);
+}
+
+// Handle MapNotify for toplevel client windows that became viewable without a MapRequest
+void intuition_handle_map_notify(XMapEvent *event) {
+    // Ignore if this is one of our frame windows or already managed as client
+    if (find_canvas(event->window) || find_canvas_by_client(event->window)) {
+        return;
+    }
+
+    // Ensure it's a toplevel, viewable, input-output window and not override-redirect
+    XWindowAttributes attrs;
+    if (!XGetWindowAttributes(display, event->window, &attrs)) {
+        return;
+    }
+    if (attrs.override_redirect || attrs.class == InputOnly) {
+        return;
+    }
+
+    // Only handle if parent is root (toplevel)
+    Window root_return, parent_return, *children = NULL;
+    unsigned int nchildren = 0;
+    if (!XQueryTree(display, event->window, &root_return, &parent_return, &children, &nchildren)) {
+        return;
+    }
+    if (children) XFree(children);
+    if (parent_return != root) {
+        return;
+    }
+
+    if (should_skip_framing(event->window, &attrs)) {
+        return;
+    }
+
+    // Compute frame geometry
+    int frame_x = max(attrs.x, 100);
+    int frame_y = max(attrs.y, MENUBAR_HEIGHT);
+    int frame_width = attrs.width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+    int frame_height = attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+
+    Canvas *frame = create_canvas(NULL, frame_x, frame_y, frame_width, frame_height, WINDOW);
+    if (!frame) return;
+
+    // Reparent the already-mapped client into our frame and zero its border width to avoid truncation
+    XReparentWindow(display, event->window, frame->win, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
+    XSelectInput(display, event->window, StructureNotifyMask | PropertyChangeMask);
+    if (attrs.border_width != 0) {
+        XWindowChanges bw_changes = { .border_width = 0 };
+        XConfigureWindow(display, event->window, CWBorderWidth, &bw_changes);
+    }
+
+    frame->client_win = event->window;
+
+    // Set title from class hint if available
+    if (frame->client_win != None) {
+        XClassHint class_hint;
+        if (XGetClassHint(display, frame->client_win, &class_hint)) {
+            if (class_hint.res_name) {
+                frame->title = class_hint.res_name;
+            } else {
+                frame->title = "NoNameApp";
+            }
+        } else {
+            frame->title = "NoNameApp";
+        }
+    }
+
+    XAddToSaveSet(display, event->window);
+    set_active_window(frame);
+    XRaiseWindow(display, frame->win);
+    compositor_sync_stacking(display);
     redraw_canvas(frame);
     XSync(display, False);
 }

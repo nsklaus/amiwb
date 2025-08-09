@@ -69,12 +69,17 @@ Canvas  *find_canvas_by_client(Window client_win); // Find canvas by client wind
 void destroy_canvas(Canvas *canvas); 
 void cleanup_intuition(void);               // Clean up intuition resources
 void set_active_window(Canvas *canvas);     // activate one, deactivate the others
+// Temporarily suppress desktop deactivation on empty clicks (used after restore)
+void suppress_desktop_deactivate_for_ms(int ms);
 
 // Add prototype for compute_max_scroll
 void compute_max_scroll(Canvas *canvas);    // Compute max scroll limits and clamp current scroll
 
 // Iconify a workbench canvas window (hide window and create desktop icon)
 void iconify_canvas(Canvas *canvas);
+
+// Enter global shutdown mode (suppress X errors during teardown)
+void begin_shutdown(void);
 
 
 
@@ -86,6 +91,7 @@ void intuition_handle_button_press(XButtonEvent *event);
 void intuition_handle_button_release(XButtonEvent *event);
 
 void intuition_handle_map_request(XMapRequestEvent *event);       
+void intuition_handle_map_notify(XMapEvent *event);
 void intuition_handle_configure_request(XConfigureRequestEvent *event); 
 
 void intuition_handle_property_notify(XPropertyEvent *event);     

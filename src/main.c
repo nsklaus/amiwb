@@ -3,6 +3,7 @@
 #include "menus.h"
 #include "workbench.h"
 #include "events.h"
+#include "compositor.h"
 #include "render.h"
 #include <X11/Xlib.h>
 #include <stdio.h> // For fprintf
@@ -30,6 +31,11 @@ int main(int argc, char *argv[]) {
     // Initialize events
     fprintf(stderr, "Calling init_events\n");
     init_events();
+    // Initialize compositor
+    fprintf(stderr, "Calling init_compositor\n");
+    if (!init_compositor(get_display())) {
+        fprintf(stderr, "Compositor: could not acquire selection, continuing without\n");
+    }
     
     // Start event loop
     fprintf(stderr, "Starting event loop\n");
@@ -37,8 +43,14 @@ int main(int argc, char *argv[]) {
     
     // Clean up
     fprintf(stderr, "Cleaning up\n");
+    // Enter shutdown mode to suppress benign X errors
+    begin_shutdown();
+    // Stop compositor before closing the Display in cleanup_intuition()
+    shutdown_compositor(get_display());
+    // Then tear down UI modules
     cleanup_menus();
     cleanup_workbench();
+    // Finally close Display and render resources
     cleanup_intuition();
     cleanup_render();
     
