@@ -289,6 +289,47 @@ static bool init_display_and_root(void) {
     return true;
 }
 
+// Frame a client toplevel X window into our managed WINDOW canvas.
+// Returns the created frame Canvas* or NULL on failure. Caller decides
+// whether to map client (for MapRequest), raise/focus, and redraw.
+static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
+    if (!attrs) return NULL;
+
+    // Compute frame geometry and ensure titlebar below menubar
+    int frame_x = max(attrs->x, 100);
+    int frame_y = max(attrs->y, MENUBAR_HEIGHT);
+    int frame_width  = attrs->width  + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+    int frame_height = attrs->height + BORDER_HEIGHT_TOP  + BORDER_HEIGHT_BOTTOM;
+
+    Canvas *frame = create_canvas(NULL, frame_x, frame_y, frame_width, frame_height, WINDOW);
+    if (!frame) return NULL;
+
+    // Reparent client into our frame and listen for important changes
+    XReparentWindow(display, client, frame->win, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
+    XSelectInput(display, client, StructureNotifyMask | PropertyChangeMask);
+
+    // Ensure client border is 0 to avoid visual truncation under our frame
+    if (attrs->border_width != 0) {
+        XWindowChanges bw_changes = { .border_width = 0 };
+        XConfigureWindow(display, client, CWBorderWidth, &bw_changes);
+    }
+
+    frame->client_win = client;
+
+    // Set a friendly title if available
+    if (frame->client_win != None) {
+        XClassHint class_hint;
+        if (XGetClassHint(display, frame->client_win, &class_hint) && class_hint.res_name) {
+            frame->title = class_hint.res_name;  // e.g., "xterm"
+        } else {
+            frame->title = "NoNameApp";
+        }
+    }
+
+    XAddToSaveSet(display, client);
+    return frame;
+}
+
 // ==============
 // init intuition
 // ==============
@@ -341,24 +382,9 @@ Canvas *init_intuition(void) {
             bool skip_framing = should_skip_framing(child, &attrs);
             if (skip_framing) continue;
 
-            int frame_x = attrs.x;
-            // Clamp y to ensure titlebar is below menubar
-            int frame_y = max(attrs.y, MENUBAR_HEIGHT);  
-            int frame_width = attrs.width + BORDER_WIDTH_LEFT +
-                BORDER_WIDTH_RIGHT;
-            int frame_height = attrs.height + BORDER_HEIGHT_TOP + 
-                BORDER_HEIGHT_BOTTOM;
-            Canvas *frame = create_canvas(NULL, frame_x, frame_y, frame_width, 
-                frame_height, WINDOW);
+            Canvas *frame = frame_client_window(child, &attrs);
             if (!frame) continue;
-
-            XReparentWindow(display, child, frame->win, BORDER_WIDTH_LEFT, 
-                BORDER_HEIGHT_TOP);
-            XSelectInput(display, child, StructureNotifyMask | 
-                PropertyChangeMask);
-            XResizeWindow(display, child, attrs.width, attrs.height);
-            frame->client_win = child;
-            XAddToSaveSet(display, child);
+            // At startup, do not steal focus; just ensure the frame is drawn
             XRaiseWindow(display, frame->win);
             redraw_canvas(frame);
         }
@@ -391,13 +417,12 @@ Canvas *find_canvas_by_client(Window client_win) {
     return NULL;
 }
 
-Canvas *find_canvas_by_path(const char *path) {
-    for (int i = 0; i < canvas_count; i++) {
-        if (canvas_array[i]->path && strcmp(canvas_array[i]->path, path) == 0) 
-            return canvas_array[i];
-    }
-    return NULL;
-}
+/*
+ * Note: path-based lookup is provided by find_window_by_path(), which
+ * returns only WINDOW canvases and is the intended API. The previous
+ * generic find_canvas_by_path() duplicate has been removed to avoid
+ * ambiguity and reduce bloat.
+ */
 
 static void deactivate_all_windows(void){
     for (int i = 0; i < canvas_count; i++) {
@@ -421,16 +446,11 @@ static void deactivate_other_windows(Canvas *except) {
     }
 }
 
-static void deselect_all_icons(void) {
-    FileIcon **icon_array = get_icon_array();
-    int icon_count = get_icon_count();
-    for (int i = 0; i < icon_count; i++) {
-        if (icon_array[i]->selected) {
-            icon_array[i]->selected = false;
-            icon_array[i]->current_picture = icon_array[i]->normal_picture;
-        }
-    }
-}
+/*
+ * Selection/deselection is managed in workbench.c on a per-canvas basis.
+ * The prior global deselect_all_icons() duplicate is removed to keep
+ * responsibilities clear and avoid cross-module coupling.
+ */
 
 // Activate the topmost WINDOW canvas, excluding one (e.g., the just-lowered window)
 static void activate_topmost_window_excluding(Canvas *exclude) {
@@ -1254,59 +1274,11 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
         XSync(display, False);
         return;
     }
-
-    int frame_x = max(attrs.x, 100);
-    // Clamp y to ensure titlebar is below menubar
-    int frame_y = max(attrs.y, MENUBAR_HEIGHT);  
-    int frame_width = attrs.width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
-    int frame_height = attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
-    
-    Canvas *frame = create_canvas(NULL, frame_x, frame_y, 
-        frame_width, frame_height, WINDOW);
-    
-    if (!frame) {
-        XMapWindow(display, event->window);
-        return;
-    }
-
-    XReparentWindow(display, event->window, frame->win, 
-        BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
-
-    XSelectInput(display, event->window, 
-        StructureNotifyMask | PropertyChangeMask);
-
-    if (attrs.border_width != 0) {
-        XWindowChanges bw_changes = {.border_width = 0};
-        XConfigureWindow(display, event->window, CWBorderWidth, &bw_changes);
-    }
+    Canvas *frame = frame_client_window(event->window, &attrs);
+    if (!frame) { XMapWindow(display, event->window); return; }
+    // Map the client now that it's reparented
     XMapWindow(display, event->window);
-    frame->client_win = event->window;
-    // Listen for structure and enter events on client (no grabs)
-    XSelectInput(display, frame->client_win,
-                 StructureNotifyMask | PropertyChangeMask | EnterWindowMask | FocusChangeMask);
-    const char *dbg = getenv("WB_DEBUG");
-    if (dbg && *dbg) fprintf(stderr, "[WB] map_request: framed client=0x%lx into frame=0x%lx at (%d,%d) size %dx%d\n",
-                              (unsigned long)event->window, (unsigned long)frame->win, frame_x, frame_y, frame_width, frame_height);
-
-    // ===========================
-    // set client name on titlebar
-    // ===========================
-    if (frame->client_win != None) {
-        XClassHint class_hint;
-        XGetClassHint(display, frame->client_win, &class_hint); 
-        if (class_hint.res_name)
-
-            // Instance name (e.g., "xterm")
-            frame->title = class_hint.res_name;  
-        else
-            frame->title = "NoNameApp";
-    }
-    //printf(" ---intuition:   frame->title=%s \n", frame->title);
-
-    XAddToSaveSet(display, event->window);
     set_active_window(frame);
-    XRaiseWindow(display, frame->win);
-    compositor_sync_stacking(display);
     redraw_canvas(frame);
     XSync(display, False);
 }
@@ -1342,43 +1314,9 @@ void intuition_handle_map_notify(XMapEvent *event) {
         return;
     }
 
-    // Compute frame geometry
-    int frame_x = max(attrs.x, 100);
-    int frame_y = max(attrs.y, MENUBAR_HEIGHT);
-    int frame_width = attrs.width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
-    int frame_height = attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
-
-    Canvas *frame = create_canvas(NULL, frame_x, frame_y, frame_width, frame_height, WINDOW);
+    Canvas *frame = frame_client_window(event->window, &attrs);
     if (!frame) return;
-
-    // Reparent the already-mapped client into our frame and zero its border width to avoid truncation
-    XReparentWindow(display, event->window, frame->win, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
-    XSelectInput(display, event->window, StructureNotifyMask | PropertyChangeMask);
-    if (attrs.border_width != 0) {
-        XWindowChanges bw_changes = { .border_width = 0 };
-        XConfigureWindow(display, event->window, CWBorderWidth, &bw_changes);
-    }
-
-    frame->client_win = event->window;
-
-    // Set title from class hint if available
-    if (frame->client_win != None) {
-        XClassHint class_hint;
-        if (XGetClassHint(display, frame->client_win, &class_hint)) {
-            if (class_hint.res_name) {
-                frame->title = class_hint.res_name;
-            } else {
-                frame->title = "NoNameApp";
-            }
-        } else {
-            frame->title = "NoNameApp";
-        }
-    }
-
-    XAddToSaveSet(display, event->window);
     set_active_window(frame);
-    XRaiseWindow(display, frame->win);
-    compositor_sync_stacking(display);
     redraw_canvas(frame);
     XSync(display, False);
 }
