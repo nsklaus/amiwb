@@ -1,4 +1,5 @@
 // File: menus.c
+#define _POSIX_C_SOURCE 200809L
 #include "menus.h"
 #include "config.h"
 #include "intuition.h"
@@ -19,7 +20,8 @@
 // Static menu resources
 static XftFont *font = NULL;
 static XftColor text_color;
-static Menu *active_menu = NULL;    // Current dropdown menu
+static Menu *active_menu = NULL;    // Current dropdown menu (top-level or current)
+static Menu *nested_menu = NULL;    // Currently open nested submenu (child of active_menu)
 static Menu *menubar = NULL;        // Global menubar
 static bool show_menus = false;     // State: false for logo, true for menus
 
@@ -111,13 +113,37 @@ void init_menus(void) {
     win_submenu->items[2] = strdup("Close");
     win_submenu->items[3] = strdup("Select Contents");
     win_submenu->items[4] = strdup("Clean Up");
-    win_submenu->items[5] = strdup("Show");
+    win_submenu->items[5] = strdup("Show Hidden");
     win_submenu->items[6] = strdup("View By ..");
     win_submenu->selected_item = -1;
     win_submenu->parent_menu = menubar;
     win_submenu->parent_index = 1;
-    win_submenu->submenus = NULL;
+    win_submenu->submenus = calloc(win_submenu->item_count, sizeof(Menu*));
     win_submenu->canvas = NULL;
+    // Create nested submenu for "Show Hidden" (index 5)
+    Menu *show_hidden_sub = malloc(sizeof(Menu));
+    show_hidden_sub->item_count = 2;
+    show_hidden_sub->items = malloc(show_hidden_sub->item_count * sizeof(char*));
+    show_hidden_sub->items[0] = strdup("Yes");
+    show_hidden_sub->items[1] = strdup("No");
+    show_hidden_sub->selected_item = -1;
+    show_hidden_sub->parent_menu = win_submenu;   // parent is Window submenu
+    show_hidden_sub->parent_index = 5;            // index within Window submenu
+    show_hidden_sub->submenus = NULL;
+    show_hidden_sub->canvas = NULL;
+    win_submenu->submenus[5] = show_hidden_sub;
+    // Create nested submenu for "View By .." (index 6)
+    Menu *view_by_sub = malloc(sizeof(Menu));
+    view_by_sub->item_count = 2;
+    view_by_sub->items = malloc(view_by_sub->item_count * sizeof(char*));
+    view_by_sub->items[0] = strdup("Icons");
+    view_by_sub->items[1] = strdup("Names");
+    view_by_sub->selected_item = -1;
+    view_by_sub->parent_menu = win_submenu;
+    view_by_sub->parent_index = 6;
+    view_by_sub->submenus = NULL;
+    view_by_sub->canvas = NULL;
+    win_submenu->submenus[6] = view_by_sub;
     menubar->submenus[1] = win_submenu;
 
     // Icons submenu (index 2)
@@ -225,6 +251,12 @@ void toggle_menubar_state(void) {
             destroy_canvas(active_menu->canvas);
             active_menu = NULL;
         }
+        if (nested_menu) {
+            RenderContext *ctx = get_render_context();
+            if (ctx) XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            destroy_canvas(nested_menu->canvas);
+            nested_menu = NULL;
+        }
 
     }
     if (menubar) redraw_canvas(menubar->canvas);
@@ -244,6 +276,7 @@ Menu *get_menubar_menu(void) {
 Menu *get_menu_by_canvas(Canvas *canvas) {
     if (canvas == get_menubar()) return get_menubar_menu();
     if (active_menu && active_menu->canvas == canvas) return active_menu;
+    if (nested_menu && nested_menu->canvas == canvas) return nested_menu;
     return NULL;
 }
 
@@ -275,6 +308,11 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
             destroy_canvas(active_menu->canvas);
             active_menu = NULL;
         }
+        if (nested_menu) {
+            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            destroy_canvas(nested_menu->canvas);
+            nested_menu = NULL;
+        }
         if (menubar->selected_item != -1 && 
                 menubar->submenus[menubar->selected_item]) {
             int submenu_x = 10;
@@ -291,19 +329,34 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
     }        
 }
 
+static void close_nested_if_any(void) {
+    RenderContext *ctx = get_render_context();
+    if (nested_menu) {
+        if (ctx) XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+        destroy_canvas(nested_menu->canvas);
+        nested_menu = NULL;
+    }
+}
+
 void menu_handle_button_press(XButtonEvent *event) {
     RenderContext *ctx = get_render_context();
-    if (!ctx || !active_menu || event->window != active_menu->canvas->win) {
-        return;
-    }
+    if (!ctx) return;
+
+    Menu *target_menu = NULL;
+    if (active_menu && event->window == active_menu->canvas->win) target_menu = active_menu;
+    else if (nested_menu && event->window == nested_menu->canvas->win) target_menu = nested_menu;
+    else return;
 
     int item = event->y / MENU_ITEM_HEIGHT;
-    if (item >= 0 && item < active_menu->item_count) {
-        handle_menu_selection(active_menu, item);
+    if (item >= 0 && item < target_menu->item_count) {
+        handle_menu_selection(target_menu, item);
     }
-    // Close submenu
-    // Check if active_menu is still set 
-    // (may have been closed in handle_menu_selection via toggle)
+    // Close dropped-down menus after selection
+    if (nested_menu) {
+        XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+        destroy_canvas(nested_menu->canvas);
+        nested_menu = NULL;
+    }
     if (active_menu) {  
         XUnmapWindow(ctx->dpy, active_menu->canvas->win);
         destroy_canvas(active_menu->canvas);
@@ -311,6 +364,8 @@ void menu_handle_button_press(XButtonEvent *event) {
     }
     // Conditional redraw: only if not quitting (running is true)
     if (running && menubar && menubar->canvas) {
+        // Always revert menubar to logo state after a click
+        if (get_show_menus_state()) toggle_menubar_state();
         redraw_canvas(menubar->canvas);
     }
 }
@@ -328,23 +383,73 @@ void menu_handle_menubar_press(XButtonEvent *event) {
 }
 
 // Handle motion on dropdown
+static void maybe_open_nested_for_selection(void) {
+    if (!active_menu) return;
+    // Only open nested if the selected item has a submenu
+    if (!active_menu->submenus) return;
+    int sel = active_menu->selected_item;
+    if (sel < 0 || sel >= active_menu->item_count) return;
+    Menu *child = active_menu->submenus[sel];
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return;
+    if (child) {
+        // If already open for the same selection, do nothing
+        if (nested_menu && nested_menu == child) return;
+        // Close previous nested if any
+        if (nested_menu) {
+            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            destroy_canvas(nested_menu->canvas);
+            nested_menu = NULL;
+        }
+        // Open new nested at the right edge of active_menu, aligned to item
+        int submenu_width = get_submenu_width(child);
+        int nx = active_menu->canvas->x + active_menu->canvas->width;
+        int ny = active_menu->canvas->y + sel * MENU_ITEM_HEIGHT;
+        nested_menu = child;
+        nested_menu->canvas = create_canvas(NULL, nx, ny, submenu_width,
+            nested_menu->item_count * MENU_ITEM_HEIGHT, MENU);
+        if (nested_menu->canvas) {
+            nested_menu->canvas->bg_color = (XRenderColor){0xFFFF,0xFFFF,0xFFFF,0xFFFF};
+            nested_menu->selected_item = -1;
+            XMapRaised(ctx->dpy, nested_menu->canvas->win);
+            redraw_canvas(nested_menu->canvas);
+        }
+    } else {
+        // No child for this item; close nested if open
+        close_nested_if_any();
+    }
+}
+
 void menu_handle_motion_notify(XMotionEvent *event) {
     
     RenderContext *ctx = get_render_context();
-    if (!ctx || !active_menu || event->window != active_menu->canvas->win) {
+    if (!ctx) return;
+
+    if (active_menu && event->window == active_menu->canvas->win) {
+        int prev_selected = active_menu->selected_item;
+        active_menu->selected_item = event->y / MENU_ITEM_HEIGHT;
+        if (active_menu->selected_item < 0 || 
+                active_menu->selected_item >= active_menu->item_count) {
+            active_menu->selected_item = -1;
+        }
+        if (active_menu->selected_item != prev_selected) {
+            redraw_canvas(active_menu->canvas);
+            maybe_open_nested_for_selection();
+        }
         return;
     }
 
-    int prev_selected = active_menu->selected_item;
-    active_menu->selected_item = event->y / MENU_ITEM_HEIGHT;
-    if (active_menu->selected_item < 0 || 
-            active_menu->selected_item >= active_menu->item_count) {
-
-        active_menu->selected_item = -1;
-    }
-
-    if (active_menu->selected_item != prev_selected) {
-        redraw_canvas(active_menu->canvas);
+    if (nested_menu && event->window == nested_menu->canvas->win) {
+        int prev_selected = nested_menu->selected_item;
+        nested_menu->selected_item = event->y / MENU_ITEM_HEIGHT;
+        if (nested_menu->selected_item < 0 || 
+                nested_menu->selected_item >= nested_menu->item_count) {
+            nested_menu->selected_item = -1;
+        }
+        if (nested_menu->selected_item != prev_selected) {
+            redraw_canvas(nested_menu->canvas);
+        }
+        return;
     }
 }
 
@@ -361,6 +466,12 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
         return;
     }
 
+    // Close any nested submenu from a previous active dropdown
+    if (nested_menu) {
+        XUnmapWindow(get_render_context()->dpy, nested_menu->canvas->win);
+        destroy_canvas(nested_menu->canvas);
+        nested_menu = NULL;
+    }
     active_menu = menu->submenus[index];
     int submenu_width = get_submenu_width(active_menu);
     active_menu->canvas = create_canvas(NULL, x, y, submenu_width, 
@@ -377,7 +488,32 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
 // Process menu item selection
 void handle_menu_selection(Menu *menu, int item_index) {
     const char *item = menu->items[item_index];
-    if (menu->parent_menu != menubar) return;  // Safeguard for non-top-level 
+    // If this is a nested submenu under Window, handle here
+    if (menu->parent_menu && menu->parent_menu->parent_menu == menubar && 
+        menu->parent_menu->parent_index == 1) {
+        // Determine which child: by parent_index in Window submenu
+        if (menu->parent_index == 5) { // Show Hidden
+            Canvas *aw = get_active_window();
+            if (aw) {
+                if (strcmp(item, "Yes") == 0) aw->show_hidden = true;
+                else if (strcmp(item, "No") == 0) aw->show_hidden = false;
+                // Refresh directory view to apply hidden filter
+                refresh_canvas_from_directory(aw, aw->path);
+                // Ensure layout matches current view mode (fix initial list spacing)
+                apply_view_layout(aw);
+                compute_max_scroll(aw);
+                redraw_canvas(aw);
+            }
+        } else if (menu->parent_index == 6) { // View By ..
+            Canvas *aw = get_active_window();
+            if (aw) {
+                if (strcmp(item, "Icons") == 0) set_canvas_view_mode(aw, VIEW_ICONS);
+                else if (strcmp(item, "Names") == 0) set_canvas_view_mode(aw, VIEW_NAMES);
+            }
+        }
+        return;
+    }
+    if (menu->parent_menu != menubar) return;  // Only top-level or handled above
 
     switch (menu->parent_index) {
         case 0:  // Workbench
@@ -410,27 +546,24 @@ void handle_menu_selection(Menu *menu, int item_index) {
 
         case 1:  // Window
             if (strcmp(item, "New Drawer") == 0) {
-                // TODO: Create new directory/drawer
+                // TODO: create new drawer
             } else if (strcmp(item, "Open Parent") == 0) {
-                // TODO: Navigate to parent directory
+                // TODO: navigate up
             } else if (strcmp(item, "Close") == 0) {
-                // TODO: Close current window
+                // TODO: close active window
             } else if (strcmp(item, "Select Contents") == 0) {
-                // TODO: Select all icons in window
-
+                // TODO: select all icons in active window
             } else if (strcmp(item, "Clean Up") == 0) {
-                Canvas *target = get_active_window();
-                if (target && target->type == WINDOW && 
-                        target->client_win == None) {
-                    icon_cleanup(target);
-                } else {
-                    icon_cleanup(get_desktop_canvas());
-                }
-
+                Canvas *aw = get_active_window();
+                if (aw) { icon_cleanup(aw); compute_max_scroll(aw); redraw_canvas(aw); }
             } else if (strcmp(item, "Show") == 0) {
-                // TODO: Show hidden items                
-            } else if (strcmp(item, "View By ..") == 0) {
-                // TODO: Change view mode (list/icon)
+                // TODO: toggle hidden items
+            } else if (strcmp(item, "View Icons") == 0) {
+                Canvas *aw = get_active_window();
+                if (aw) set_canvas_view_mode(aw, VIEW_ICONS);
+            } else if (strcmp(item, "View Names") == 0) {
+                Canvas *aw = get_active_window();
+                if (aw) set_canvas_view_mode(aw, VIEW_NAMES);
             }
             break;
 

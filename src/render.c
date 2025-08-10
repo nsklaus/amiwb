@@ -216,20 +216,17 @@ void redraw_canvas(Canvas *canvas) {
                 0, 0, canvas->width, canvas->height);
         }*/
 
-        if (canvas->type == WINDOW && ctx->wind_img != None) {
-
+        // For WINDOWS: only show wallpaper in icon view; names view stays gray
+        if (canvas->type == WINDOW && canvas->view_mode == VIEW_ICONS && ctx->wind_img != None) {
             Display *dpy = ctx->dpy;
             Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
-            // Create Picture from bg_pixmap
             XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, visual);
             Picture bg_picture = XRenderCreatePicture(dpy, ctx->wind_img, fmt, 0, NULL);
-            // Composite (blend) onto canvas; 
-            // use PictOpSrc for direct copy or adjust for transparency
-            XRenderComposite(dpy, PictOpSrc, bg_picture, None, canvas->canvas_render, 
-                0, 0, 0, 0, 0, 0, canvas->width, canvas->height);
+            XRenderComposite(dpy, PictOpSrc, bg_picture, None, canvas->canvas_render,
+                             0, 0, 0, 0, 0, 0, canvas->width, canvas->height);
             XRenderFreePicture(dpy, bg_picture);
             has_bg_image = true;
-        } 
+        }
 
         if (!has_bg_image) {
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color, 
@@ -247,7 +244,7 @@ void redraw_canvas(Canvas *canvas) {
         // =============
         // Render icons
         // =============
-        if (canvas->type == DESKTOP || canvas->type == WINDOW){
+        if ((canvas->type == DESKTOP || canvas->type == WINDOW) && !canvas->scanning){
             FileIcon **icon_array = get_icon_array();
             int icon_count = get_icon_count();
 
@@ -257,18 +254,72 @@ void redraw_canvas(Canvas *canvas) {
             int view_right = view_left + (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT);
             int view_bottom = view_top + (canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);
 
-            for (int i = 0; i < icon_count; i++) {
-                FileIcon *icon = icon_array[i];
-                if (icon->display_window == canvas->win) {
-                    // Check if icon and label height intersects viewport
-                    int icon_right = icon->x + icon->width;
-                    // +20 for label
-                    int icon_bottom = icon->y + icon->height + 20;  
-                    if (icon_right < view_left || icon->x > view_right ||
-                        icon_bottom < view_top || icon->y > view_bottom) {
-                        continue; // Skip off-screen icon to optimize rendering
+            if (canvas->type == WINDOW && canvas->view_mode == VIEW_NAMES) {
+                // Names list: draw rows with selection highlight and label text only
+                XftFont *font = get_font();
+                if (font) {
+                    XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer,
+                        canvas->visual ? canvas->visual : DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)), canvas->colormap);
+                    if (draw) {
+                        int row_h = font->ascent + font->descent + 6;
+                        for (int i = 0; i < icon_count; i++) {
+                            FileIcon *icon = icon_array[i];
+                            if (!icon || icon->display_window != canvas->win) continue;
+                            int rx = icon->x; int ry = icon->y;
+                            int render_x = BORDER_WIDTH_LEFT + rx - canvas->scroll_x;
+                            int render_y = BORDER_HEIGHT_TOP + ry - canvas->scroll_y;
+                            // Clip by viewport
+                            if (render_y > BORDER_HEIGHT_TOP + (view_bottom - view_top)) continue;
+                            if (render_y + row_h < BORDER_HEIGHT_TOP) continue;
+                            // Compute text width for this row
+                            const char *label = icon->label ? icon->label : "";
+                            XGlyphInfo ext;
+                            XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)label, (int)strlen(label), &ext);
+                            int padding = 10; // small horizontal padding
+                            int sel_w = ext.xOff + padding;
+                            int max_row_w = (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT);
+                            if (sel_w > max_row_w) sel_w = max_row_w; // do not exceed frame
+                            // Background fill: always draw base gray for the viewport row band
+                            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color,
+                                BORDER_WIDTH_LEFT, render_y, max_row_w, row_h);
+                            // Selection overlay should move with horizontal scroll
+                            if (icon->selected) {
+                                int sel_x = BORDER_WIDTH_LEFT - canvas->scroll_x;
+                                // Clip selection overlay to viewport bounds
+                                int clip_x = max(BORDER_WIDTH_LEFT, sel_x);
+                                int clip_w = min(BORDER_WIDTH_LEFT + max_row_w, sel_x + sel_w) - clip_x;
+                                if (clip_w > 0) {
+                                    XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLUE,
+                                        clip_x, render_y, clip_w, row_h);
+                                }
+                            }
+                            // Text color: directories are white, files are black; selection stays white
+                            bool is_dir = (icon->type == TYPE_DRAWER);
+                            XRenderColor fg = icon->selected ? WHITE : (is_dir ? WHITE : WINFONTCOL);
+                            XftColor xftfg; XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &fg, &xftfg);
+                            int baseline = render_y + font->ascent + 3;
+                            int text_x = BORDER_WIDTH_LEFT + 6 - canvas->scroll_x;
+                            XftDrawStringUtf8(draw, &xftfg, font, text_x, baseline,
+                                              (FcChar8*)label, (int)strlen(label));
+                            XftColorFree(ctx->dpy, canvas->visual, canvas->colormap, &xftfg);
+                        }
+                        XftDrawDestroy(draw);
                     }
-                    render_icon(icon, canvas);
+                }
+            } else {
+                for (int i = 0; i < icon_count; i++) {
+                    FileIcon *icon = icon_array[i];
+                    if (icon->display_window == canvas->win) {
+                        // Check if icon and label height intersects viewport
+                        int icon_right = icon->x + icon->width;
+                        // +20 for label
+                        int icon_bottom = icon->y + icon->height + 20;  
+                        if (icon_right < view_left || icon->x > view_right ||
+                            icon_bottom < view_top || icon->y > view_bottom) {
+                            continue; // Skip off-screen icon to optimize rendering
+                        }
+                        render_icon(icon, canvas);
+                    }
                 }
             }
         }
@@ -353,19 +404,19 @@ void redraw_canvas(Canvas *canvas) {
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, 0, 19 , canvas->width, 1); 
 
         // left border 
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 0, BORDER_HEIGHT_TOP, BORDER_WIDTH_LEFT, canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);  
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 0, BORDER_HEIGHT_TOP, BORDER_WIDTH_LEFT, canvas->height - BORDER_HEIGHT_TOP);  
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 0, 0, 1, canvas->height); 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, BORDER_WIDTH_LEFT -1, 20, 1, canvas->height); 
 
         // right border
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, canvas->width - BORDER_WIDTH_RIGHT, BORDER_HEIGHT_TOP, BORDER_WIDTH_RIGHT, canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);  
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width - BORDER_WIDTH_RIGHT, 20, 1, canvas->height); 
-        //XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -1, 0, 1, canvas->height); 
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -1, 0, 1, canvas->height); 
 
         // bottom border
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 1, canvas->height - BORDER_HEIGHT_BOTTOM, canvas->width , BORDER_HEIGHT_BOTTOM);
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 1, canvas->height - BORDER_HEIGHT_BOTTOM, canvas->width -2 , BORDER_HEIGHT_BOTTOM);
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, BORDER_WIDTH_LEFT, canvas->height - BORDER_HEIGHT_BOTTOM, canvas->width -9 , 1);  
-        //XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, 0, canvas->height - 1, canvas->width, 1); 
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, 0, canvas->height - 1, canvas->width, 1); 
 
         // top border, close button 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, 29, 1 , 1, BORDER_HEIGHT_TOP-1); 

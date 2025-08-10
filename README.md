@@ -23,8 +23,8 @@ status:
 - menubar:
 	works but very few entries are implemented, 
 	"Tools" menu have some entries to launch a few apps (kitty,	xcalc, sublime-text, brave, ..), 
-	"Workbench" menu have "Quit AmiWB", 
-	"Window" menu have "Clean up" and that's about it for now.
+	"Workbench" menu have "Quit AmiWB" and "Suspend" 
+	"Window" menu have "Clean up", "Show Hidden (Yes/No)", "Show by .. (Icons/Names)"
 	menus are not dynamic yet, there's only system menus, 
 	app menus substitutions later, if i ever succeed with it..
 
@@ -54,6 +54,6 @@ TODO:
 - fullscreen support
 - workbench "Show by names" listers
 - custom menus, similar to toolsdaemon
-- drag and drop support with copy progress bar
+- progress bar (copy/delete)
 - auto mount external drives as icons on the desktop
 - icon information UI window

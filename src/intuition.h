@@ -17,6 +17,9 @@
 #define BG_COLOR_DESKTOP 0xFF888888
 #define BG_COLOR_FOLDER 0xFFFFFFFF
 
+// View mode for workbench windows
+typedef enum { VIEW_ICONS = 0, VIEW_NAMES = 1 } ViewMode;
+
 typedef enum CanvasType { DESKTOP, WINDOW, MENU } CanvasType;
 
 typedef struct {
@@ -49,8 +52,11 @@ typedef struct {
     int content_width, content_height;  // Content dimensions
     int depth;                          // Visual depth (for pixmap recreation during resize)
     XRenderColor bg_color;              // Background color
+    ViewMode view_mode;                 // View mode (icons or names) for WINDOW canvases
     bool active;                        // Active state
     Colormap colormap;                  // Colormap for the canvas
+    bool scanning;                      // True while directory scan is in progress
+    bool show_hidden;                   // Show dotfiles in directory views
 } Canvas;
 
 extern int randr_event_base;
@@ -65,6 +71,7 @@ Canvas  *find_canvas(Window win);           // Find canvas by window
 Canvas  *create_canvas(const char *path, int x, int y, int width, int height, CanvasType type); 
 Canvas  *get_active_window(void);
 Canvas  *find_canvas_by_client(Window client_win); // Find canvas by client window
+Canvas  *find_window_by_path(const char *path);   // Find an existing workbench window by path
 
 void destroy_canvas(Canvas *canvas); 
 void cleanup_intuition(void);               // Clean up intuition resources
@@ -80,6 +87,10 @@ void iconify_canvas(Canvas *canvas);
 
 // Enter global shutdown mode (suppress X errors during teardown)
 void begin_shutdown(void);
+
+// Query helpers for event routing
+bool intuition_last_press_consumed(void);   // True if last frame press consumed (scrollbar/title/resize)
+bool intuition_is_scrolling_active(void);   // True while dragging a scrollbar knob
 
 
 

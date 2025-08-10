@@ -11,6 +11,7 @@
 #include <X11/cursorfont.h>
 #include <X11/Xatom.h>
 #include <time.h>
+#include <math.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xdamage.h>
 #include <stdlib.h>
@@ -211,6 +212,16 @@ Canvas *manage_canvases(bool add, Canvas *canvas_to_remove) {
     return NULL;
 }
 
+Canvas *find_window_by_path(const char *path) {
+    if (!path) return NULL;
+    for (int i = 0; i < canvas_count; ++i) {
+        Canvas *c = canvas_array[i];
+        if (!c || c->type != WINDOW || !c->path) continue;
+        if (strcmp(c->path, path) == 0) return c;
+    }
+    return NULL;
+}
+
 // ============
 // init helpers
 // ============
@@ -297,11 +308,8 @@ Canvas *init_intuition(void) {
 
     if (strlen(DESKPICT) > 0) {
         render_context->desk_img = load_wallpaper_to_pixmap(display, root, width, height, DESKPICT, DESKTILE);
-        if (render_context->desk_img != None) {
-            // Set as root background for initial display (ensures visibility)
-            XSetWindowBackgroundPixmap(display, root, render_context->desk_img);
-            XClearWindow(display, root);
-        }
+        // Avoid clearing or changing root background to prevent flashes; the
+        // desktop canvas will composite the wallpaper via double-buffer.
     }
 
     if (strlen(WINDPICT) > 0) {
@@ -380,6 +388,14 @@ Canvas *find_canvas_by_client(Window client_win) {
     for (int i = 0; i < canvas_count; i++) 
         if (canvas_array[i]->client_win == client_win) 
             return canvas_array[i];
+    return NULL;
+}
+
+Canvas *find_canvas_by_path(const char *path) {
+    for (int i = 0; i < canvas_count; i++) {
+        if (canvas_array[i]->path && strcmp(canvas_array[i]->path, path) == 0) 
+            return canvas_array[i];
+    }
     return NULL;
 }
 
@@ -647,6 +663,7 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
     canvas->path = path ? strdup(path) : NULL;
     canvas->title = path ? strdup(strrchr(path, '/') ? 
         strrchr(path, '/') + 1 : path) : NULL;
+    canvas->view_mode = VIEW_ICONS; // default view
     
     // default string ("/" isn't nice)
     if (canvas->title && strlen(canvas->title) == 0) {
@@ -668,6 +685,7 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
     canvas->height = height;
     canvas->bg_color = GRAY;
     canvas->active = false;
+    canvas->show_hidden = false;
 
     XVisualInfo vinfo = select_visual(type);
     canvas->visual = vinfo.visual;
@@ -753,14 +771,11 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
         return NULL;
     }
 
-    // Ensure the canvas window is viewable so it can receive input events.
-    // Map immediately; stacking (raise) is handled explicitly by activation.
-    if (type == WINDOW) {
-        XMapWindow(ctx->dpy, canvas->win);
-    } else if (type == MENU) {
+    // Do not map the WINDOW yet: prepaint offscreen to avoid initial black.
+    // Menus and Desktop can be mapped immediately.
+    if (type == MENU) {
         XMapRaised(ctx->dpy, canvas->win);
-    } else {
-        // Desktop should be viewable but kept at the bottom of the stack
+    } else if (type == DESKTOP) {
         XMapWindow(ctx->dpy, canvas->win);
         XLowerWindow(ctx->dpy, canvas->win);
     }
@@ -794,12 +809,13 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
         if (type == WINDOW ) {
             attrs.background_pixmap = None;
             XChangeWindowAttributes(display, canvas->win, CWBackPixmap, &attrs);
+            // Prepaint background/frame into offscreen buffer, then blit once
+            redraw_canvas(canvas);
         }
         XMapRaised(ctx->dpy, canvas->win);
         if (type == WINDOW) {
             // Newly created Workbench windows should become active immediately
             set_active_window(canvas);
-            redraw_canvas(canvas);
         }
         XSync(ctx->dpy, False);
     } else {
@@ -1050,6 +1066,11 @@ static Bool handle_scrollbars(Canvas *canvas, XButtonEvent *event) {
 }
 
 // intuition_handle_button_press
+static bool g_last_press_consumed = false;
+
+bool intuition_last_press_consumed(void) { return g_last_press_consumed; }
+bool intuition_is_scrolling_active(void) { return scrolling_canvas != NULL; }
+
 void intuition_handle_button_press(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) return;
@@ -1065,7 +1086,7 @@ void intuition_handle_button_press(XButtonEvent *event) {
     }
 
     // Desktop: toggle menus on RMB, deactivate windows on empty LMB
-    if (canvas->type == DESKTOP) { handle_desktop_button(canvas, event); redraw_canvas(canvas); return; }
+    if (canvas->type == DESKTOP) { handle_desktop_button(canvas, event); redraw_canvas(canvas); g_last_press_consumed = true; return; }
 
     // window button processing past this point.
     // if canvas is not a window then stop here.
@@ -1075,11 +1096,13 @@ void intuition_handle_button_press(XButtonEvent *event) {
     // Intentionally no compositor stack dump here (perf)
 
     set_active_window(canvas);
-    if (handle_titlebar_buttons(canvas, event)) return;
+    if (handle_titlebar_buttons(canvas, event)) { g_last_press_consumed = true; return; }
 
-    if (handle_resize_button(canvas, event)) return;
+    if (handle_resize_button(canvas, event)) { g_last_press_consumed = true; return; }
 
-    if (handle_scrollbars(canvas, event)) return;
+    if (handle_scrollbars(canvas, event)) { g_last_press_consumed = true; return; }
+
+    g_last_press_consumed = false;
 }
 
 static Bool handle_drag_motion(XMotionEvent *event) {
@@ -1124,35 +1147,29 @@ static Bool handle_resize_motion(XMotionEvent *event) {
 
 static Bool handle_scroll_motion(XMotionEvent *event) {
     if (scrolling_canvas) {
-        int delta, scale, new_scroll;
+        int delta, new_scroll;
         if (scrolling_vertical) {
             delta = event->y_root - scroll_start_pos;
-            int sb_h = scrolling_canvas->height - BORDER_HEIGHT_TOP -
-                BORDER_HEIGHT_BOTTOM;
-
-            float ratio = (float)sb_h / scrolling_canvas->content_height;
+            int sb_h = scrolling_canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+            float ratio = (scrolling_canvas->content_height > 0) ? ((float)sb_h / (float)scrolling_canvas->content_height) : 0.0f;
             int knob_h = max(MIN_KNOB_SIZE, (int)(ratio * sb_h));
-            
-            scale = (sb_h - knob_h > 0) ? 
-                (scrolling_canvas->max_scroll_y / (sb_h - knob_h)) : 0;
-
-            new_scroll = max(0, min(initial_scroll + delta * scale,
-                scrolling_canvas->max_scroll_y));
+            int track = max(1, sb_h - knob_h);
+            // Map initial scroll to knob position, then apply delta in pixels
+            float knob0 = (scrolling_canvas->max_scroll_y > 0) ? ((float)initial_scroll / (float)scrolling_canvas->max_scroll_y) * track : 0.0f;
+            float knob  = min((float)track, max(0.0f, knob0 + (float)delta));
+            new_scroll = (scrolling_canvas->max_scroll_y > 0) ? (int)roundf((knob / (float)track) * (float)scrolling_canvas->max_scroll_y) : 0;
             scrolling_canvas->scroll_y = new_scroll;
 
         } else {
             delta = event->x_root - scroll_start_pos;
-            int sb_w = scrolling_canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
-
-            float ratio = (float)sb_w / scrolling_canvas->content_width;
+            // Match horizontal track width used in handle_scrollbars()
+            int sb_w = (scrolling_canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) - 54 - 10;
+            float ratio = (scrolling_canvas->content_width > 0) ? ((float)sb_w / (float)scrolling_canvas->content_width) : 0.0f;
             int knob_w = max(MIN_KNOB_SIZE, (int)(ratio * sb_w));
-            
-            scale = (sb_w - knob_w > 0) ? 
-                (scrolling_canvas->max_scroll_x / (sb_w - knob_w)) : 0;
-            
-            new_scroll = max(0, min(initial_scroll + delta * scale,
-                scrolling_canvas->max_scroll_x));
-
+            int track = max(1, sb_w - knob_w);
+            float knob0 = (scrolling_canvas->max_scroll_x > 0) ? ((float)initial_scroll / (float)scrolling_canvas->max_scroll_x) * track : 0.0f;
+            float knob  = min((float)track, max(0.0f, knob0 + (float)delta));
+            new_scroll = (scrolling_canvas->max_scroll_x > 0) ? (int)roundf((knob / (float)track) * (float)scrolling_canvas->max_scroll_x) : 0;
             scrolling_canvas->scroll_x = new_scroll;
         }
         redraw_canvas(scrolling_canvas);
@@ -1496,27 +1513,12 @@ void intuition_handle_configure_notify(XConfigureEvent *event) {
         return;
     }
 
+    // Update size then recreate double-buffered surfaces in one place
+    canvas->width = event->width; 
+    canvas->height = event->height;
+    render_recreate_canvas_surfaces(canvas);
+
     Display *dpy = get_display();
-    if (canvas->canvas_buffer != None) XFreePixmap(dpy, canvas->canvas_buffer);
-    
-    if (canvas->canvas_render != None) XRenderFreePicture(dpy, 
-            canvas->canvas_render);
-    
-    if (canvas->window_render != None) XRenderFreePicture(dpy, 
-            canvas->window_render);
-
-    canvas->width = event->width; canvas->height = event->height;
-
-    canvas->canvas_buffer = XCreatePixmap(dpy, canvas->win, 
-        canvas->width, canvas->height, canvas->depth);
-    
-    XRenderPictFormat *fmt = XRenderFindVisualFormat(dpy, canvas->visual);
-    canvas->canvas_render = XRenderCreatePicture(dpy, 
-        canvas->canvas_buffer, fmt, 0, NULL);
-
-    canvas->window_render = XRenderCreatePicture(dpy, 
-        canvas->win, fmt, 0, NULL);
-
     if (canvas->client_win != None) {
         XWindowChanges changes = {.width = canvas->width - BORDER_WIDTH_LEFT -
             BORDER_WIDTH_RIGHT, .height = canvas->height - BORDER_HEIGHT_TOP -
@@ -1529,9 +1531,7 @@ void intuition_handle_configure_notify(XConfigureEvent *event) {
     }
 
     redraw_canvas(canvas);
-    // allow natural batching and reduce synchronous latency:
-    // don't do extra xsync()
-    // XSync(dpy, False);
+    // allow natural batching, avoid extra XSync here
 }
 
 // resize desktop and menubar upon xrandr size changes
@@ -1543,31 +1543,10 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     // Resize and redraw desktop
     Canvas *desktop = get_desktop_canvas();
     if (desktop) {
-        if (desktop->canvas_buffer != None) 
-            XFreePixmap(display, desktop->canvas_buffer);
-
-        if (desktop->canvas_render != None) 
-            XRenderFreePicture(display, desktop->canvas_render);
-        
-        if (desktop->window_render != None) 
-            XRenderFreePicture(display, desktop->window_render);
-
+        // Set new size then recreate surfaces via helper
         desktop->width = width;
-
-        // Keep full height; menubar overlays top
-        desktop->height = height;  
-
-        desktop->canvas_buffer = XCreatePixmap(display, 
-            desktop->win, width, height, desktop->depth);
-
-        XRenderPictFormat *fmt = XRenderFindVisualFormat(display, 
-            desktop->visual);
-        
-        desktop->canvas_render = XRenderCreatePicture(display, 
-            desktop->canvas_buffer, fmt, 0, NULL);
-        
-        desktop->window_render = XRenderCreatePicture(display, 
-            desktop->win, fmt, 0, NULL);
+        desktop->height = height;  // full height; menubar overlays top
+        render_recreate_canvas_surfaces(desktop);
 
         // reload/resize desktop background picture on resolution changes
         if (render_context->desk_img != None) {
@@ -1576,7 +1555,7 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
                 render_context->desk_img = 
                 load_wallpaper_to_pixmap(display, root, width, height, DESKPICT, DESKTILE);
             }
-            XClearWindow(display, root); // Refresh root
+            // Avoid clearing the root to prevent flashes; desktop will redraw
         }
         redraw_canvas(desktop);
     }
@@ -1584,30 +1563,11 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     // Resize and redraw menubar
     Canvas *menubar_canvas = get_menubar();
     if (menubar_canvas) {
-
-        if (menubar_canvas->canvas_buffer != None) 
-            XFreePixmap(display, menubar_canvas->canvas_buffer);
-
-        if (menubar_canvas->canvas_render != None) 
-            XRenderFreePicture(display, menubar_canvas->canvas_render);
-        
-        if (menubar_canvas->window_render != None) 
-            XRenderFreePicture(display, menubar_canvas->window_render);
-
         // Height remains MENUBAR_HEIGHT
         menubar_canvas->width = width;
-
         XResizeWindow(display, menubar_canvas->win, width, MENUBAR_HEIGHT);
-
-        menubar_canvas->canvas_buffer = XCreatePixmap(display, 
-            menubar_canvas->win, width, MENUBAR_HEIGHT, menubar_canvas->depth);
-        
-        XRenderPictFormat *fmt = XRenderFindVisualFormat(display, 
-            menubar_canvas->visual);
-        
-        menubar_canvas->canvas_render = XRenderCreatePicture(display, menubar_canvas->canvas_buffer, fmt, 0, NULL);
-        
-        menubar_canvas->window_render = XRenderCreatePicture(display, menubar_canvas->win, fmt, 0, NULL);
+        menubar_canvas->height = MENUBAR_HEIGHT;
+        render_recreate_canvas_surfaces(menubar_canvas);
 
         redraw_canvas(menubar_canvas);
     }

@@ -1,5 +1,4 @@
 #include "menus.h"
-#include "render.h" // kept for now if indirect types are needed
 #include "events.h"
 #include "compositor.h"
 #include "intuition.h"
@@ -197,7 +196,9 @@ void handle_button_press(XButtonEvent *event) {
         set_active_window(canvas);
         XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
         intuition_handle_button_press(&ev);
-        workbench_handle_button_press(&ev);
+        if (!intuition_last_press_consumed()) {
+            workbench_handle_button_press(&ev);
+        }
         g_press_target = canvas->win;
     } else {
         // default: forward to specific canvas
@@ -300,8 +301,10 @@ void handle_motion_notify(XMotionEvent *event) {
             if (tc == get_menubar()) menu_handle_menubar_motion(&ev);
             else menu_handle_motion_notify(&ev);
         } else {
-            // First icons (drag icon), then window move/resize if applicable
-            workbench_handle_motion_notify(&ev);
+            // While scrolling a scrollbar, do not send motion to icons
+            if (!(tc && tc->type == WINDOW && intuition_is_scrolling_active())) {
+                workbench_handle_motion_notify(&ev);
+            }
             if (tc && tc->type == WINDOW) {
                 intuition_handle_motion_notify(&ev);
             }
@@ -334,9 +337,11 @@ void handle_motion_notify(XMotionEvent *event) {
     } 
     else {
         XMotionEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
-        workbench_handle_motion_notify(&ev); // Call first for icon dragging
+        if (!(canvas->type == WINDOW && intuition_is_scrolling_active())) {
+            workbench_handle_motion_notify(&ev);
+        }
         if (canvas->type == WINDOW) {
-            intuition_handle_motion_notify(&ev); // Then window dragging
+            intuition_handle_motion_notify(&ev);
         }
     }
 }

@@ -7,6 +7,7 @@
 #include "config.h"  // Added to include config.h for max/min macros
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <stdio.h>
@@ -17,12 +18,14 @@
 #include <time.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/shape.h>
+#include <signal.h>
 
 // Forward declarations for local helpers used later
 static Window window_under_pointer(void);
 static Canvas *canvas_under_pointer(void);
 static int move_file_to_directory(const char *src_path, const char *dst_dir, char *dst_path, size_t dst_sz);
 static bool is_directory(const char *path);
+static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas);
 // Forward declarations for functions used before their definitions
 void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath);
 extern void open_file(FileIcon *icon);
@@ -57,6 +60,16 @@ static Visual *target_visual = NULL;
 static Colormap target_colormap = 0;
 static Canvas *target_canvas = NULL;
 static Canvas *prev_canvas = NULL;         // For erasing previous frame by redraw
+
+// Case-insensitive label comparator for FileIcon** (used in list view)
+static int label_cmp(const void *a, const void *b) {
+    const FileIcon *ia = *(FileIcon* const*)a;
+    const FileIcon *ib = *(FileIcon* const*)b;
+    const char *la = (ia && ia->label) ? ia->label : "";
+    const char *lb = (ib && ib->label) ? ib->label : "";
+    return strcasecmp(la, lb);
+}
+
 static int last_draw_x = -10000, last_draw_y = -10000; // last window-relative draw pos
 static int last_root_x = -10000, last_root_y = -10000; // last root coords of pointer
 static bool use_floating_window = false;   // Always use ARGB top-level drag window
@@ -151,6 +164,9 @@ static void end_drag_icon(Canvas *canvas) {
 
         char dst_path[2048];
         // moved file (debug print removed)
+        // Save absolute source path before moving for potential desktop cleanup
+        char src_path_abs[2048];
+        snprintf(src_path_abs, sizeof(src_path_abs), "%s", dragged_icon->path ? dragged_icon->path : "");
         int moved = move_file_to_directory(dragged_icon->path, dst_dir, dst_path, sizeof(dst_path));
         if (moved == 0) {
             // Success: manually update icon lists without global re-layout
@@ -190,7 +206,21 @@ static void end_drag_icon(Canvas *canvas) {
             if (new_icon->label) { free(new_icon->label); }
             new_icon->label = strdup(base ? base + 1 : dst_path);
 
-            // 3) Recompute bounds and redraw both canvases without auto cleanup
+            // 3) If the source was Desktop directory, also remove the desktop canvas icon
+            const char *home = getenv("HOME");
+            char desktop_dir[1024] = {0};
+            if (home) snprintf(desktop_dir, sizeof(desktop_dir), "%s/Desktop/", home);
+            if (home && strncmp(src_path_abs, desktop_dir, strlen(desktop_dir)) == 0) {
+                Canvas *desktop = get_desktop_canvas();
+                if (desktop) {
+                    remove_icon_by_path_on_canvas(src_path_abs, desktop);
+                    compute_content_bounds(desktop);
+                    compute_max_scroll(desktop);
+                    redraw_canvas(desktop);
+                }
+            }
+
+            // 4) Recompute bounds and redraw both canvases without auto cleanup
             if (drag_source_canvas) { compute_content_bounds(drag_source_canvas); compute_max_scroll(drag_source_canvas); redraw_canvas(drag_source_canvas); }
             compute_content_bounds(target); compute_max_scroll(target); redraw_canvas(target);
         } else {
@@ -468,6 +498,17 @@ static FileIcon *manage_icons(bool add, FileIcon *icon_to_remove) {
 int get_icon_count(void) { return icon_count; }
 FileIcon **get_icon_array(void) { return icon_array; }
 
+// Remove first icon on a given canvas whose absolute path matches
+static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas) {
+    if (!abs_path || !canvas) return;
+    for (int i = 0; i < icon_count; ++i) {
+        FileIcon *ic = icon_array[i];
+        if (!ic) continue;
+        if (ic->display_window != canvas->win) continue;
+        if (ic->path && strcmp(ic->path, abs_path) == 0) { destroy_icon(ic); break; }
+    }
+}
+
 void create_icon(const char *path, Canvas *canvas, int x, int y) {
     FileIcon *icon = manage_icons(true, NULL);
     if (!icon) return;
@@ -581,14 +622,95 @@ void icon_cleanup(Canvas *canvas) {
         current_x += col_w;
     }
     free(col_widths); free(list);
-    compute_content_bounds(canvas); compute_max_scroll(canvas); redraw_canvas(canvas);
+    // After scan, lay out according to current view mode (names or icons)
+    apply_view_layout(canvas);
+    compute_max_scroll(canvas);
+    redraw_canvas(canvas);
+}
+
+// ========================
+// View mode layout helpers
+// ========================
+void apply_view_layout(Canvas *canvas) {
+    if (!canvas) return;
+    // Desktop remains icon grid; windows can switch
+    if (canvas->type != WINDOW) {
+        compute_content_bounds(canvas);
+        return;
+    }
+    if (canvas->view_mode == VIEW_NAMES) {
+        // Vertical list of names; directories first (A..Z), then files (A..Z)
+        int y = 10;                // start below title area inside content
+        int x = 12;                // slight left padding
+        int row_h = 18 + 6;        // approx font height + padding
+        int max_text_w = 0;
+
+        // Collect icons for this window into two lists: dirs then files
+        int dir_count = 0, file_count = 0;
+        for (int i = 0; i < icon_count; i++) {
+            FileIcon *ic = icon_array[i];
+            if (!ic || ic->display_window != canvas->win) continue;
+            if (ic->type == TYPE_DRAWER) dir_count++; else file_count++;
+        }
+        FileIcon **dirs = dir_count ? (FileIcon**)malloc(sizeof(FileIcon*) * dir_count) : NULL;
+        FileIcon **files = file_count ? (FileIcon**)malloc(sizeof(FileIcon*) * file_count) : NULL;
+        int di = 0, fi = 0;
+        for (int i = 0; i < icon_count; i++) {
+            FileIcon *ic = icon_array[i];
+            if (!ic || ic->display_window != canvas->win) continue;
+            if (ic->type == TYPE_DRAWER) dirs[di++] = ic; else files[fi++] = ic;
+        }
+        if (dir_count > 0) qsort(dirs, dir_count, sizeof(FileIcon*), label_cmp);
+        if (file_count > 0) qsort(files, file_count, sizeof(FileIcon*), label_cmp);
+
+        // Position rows: first dirs, then files
+        for (int i = 0; i < dir_count; i++) {
+            FileIcon *ic = dirs[i];
+            ic->x = x; ic->y = y; y += row_h;
+            int lw = get_text_width(ic->label ? ic->label : ""); if (lw > max_text_w) max_text_w = lw;
+        }
+        for (int i = 0; i < file_count; i++) {
+            FileIcon *ic = files[i];
+            ic->x = x; ic->y = y; y += row_h;
+            int lw = get_text_width(ic->label ? ic->label : ""); if (lw > max_text_w) max_text_w = lw;
+        }
+        if (dirs) free(dirs); if (files) free(files);
+
+        // Content width equals max label width + padding; clamp at least to visible width
+        int padding = 10 + 6; // selection pad + left text offset
+        int visible_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+        canvas->content_width = max(visible_w, max_text_w + padding);
+        canvas->content_height = y + 10;
+    } else {
+        // Icon grid mode: keep current positions; just recompute bounds
+        compute_content_bounds(canvas);
+    }
+}
+
+void set_canvas_view_mode(Canvas *canvas, ViewMode m) {
+    if (!canvas) return;
+    if (canvas->view_mode == m) return;
+    canvas->view_mode = m;
+    // Reset scroll to start for consistent knob/size on mode changes
+    canvas->scroll_x = 0; canvas->scroll_y = 0;
+    if (m == VIEW_ICONS) {
+        // Re-grid icons when returning to icon view
+        icon_cleanup(canvas);
+    }
+    apply_view_layout(canvas);
+    compute_max_scroll(canvas);
+    redraw_canvas(canvas);
 }
 
 void remove_icon_for_canvas(Canvas *canvas) {
+    if (!canvas) return;
     for (int i = 0; i < icon_count; i++) {
-        if (icon_array[i]->iconified_canvas == canvas) { destroy_icon(icon_array[i]); break; }
+        FileIcon *ic = icon_array[i];
+        if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == canvas) {
+            destroy_icon(ic);
+            break;
+        }
     }
-    Canvas *desktop = get_desktop_canvas(); if (desktop) redraw_canvas(desktop);
 }
 
 // ========================
@@ -608,6 +730,12 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
         dir = pathbuf;
     }
     clear_canvas_icons(canvas);
+    // Draw background immediately so long directory scans don't show black
+    redraw_canvas(canvas);
+    // Ensure compositor pushes the frame now
+    XSync(get_display(), False);
+    // Suppress icon rendering during long scan
+    canvas->scanning = true;
     // Recreate prime desktop icons that must always exist
     if (canvas->type == DESKTOP) {
         create_icon("/usr/local/share/amiwb/icons/harddisk.info", canvas, 10, 40);
@@ -631,7 +759,10 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
         int x = 20, y = 20; int x_offset = 100;
         struct dirent *entry;
         while ((entry = readdir(dirp))) {
-            if (entry->d_name[0] == '.') continue;
+            // Skip current and parent directory entries always
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+            // Skip hidden unless show_hidden is enabled
+            if (entry->d_name[0] == '.' && !canvas->show_hidden) continue;
             char full_path[1024]; snprintf(full_path, sizeof(full_path), "%s/%s", dir, entry->d_name);
             if (ends_with(entry->d_name, ".info")) {
                 char base[256]; size_t namelen = strlen(entry->d_name);
@@ -663,17 +794,27 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
         fprintf(stderr, "Failed to open directory %s\n", dir);
     }
     // Do not auto-reorganize icons; only menu > Window > Cleanup should do that
+    canvas->scanning = false;
 }
 
 static void open_directory(FileIcon *icon, Canvas *current_canvas) {
+    if (!icon || !icon->path) return;
+    // If window for this path exists, raise and activate it
+    Canvas *existing = find_window_by_path(icon->path);
+    if (existing) {
+        set_active_window(existing);
+        XRaiseWindow(get_display(), existing->win);
+        redraw_canvas(existing);
+        return;
+    }
+    // Otherwise create a new window
     Canvas *new_canvas = create_canvas(icon->path, 50, 50, 400, 300, WINDOW);
     if (new_canvas) {
         refresh_canvas_from_directory(new_canvas, icon->path);
         // Initial placement for new window must use icon_cleanup
         icon_cleanup(new_canvas);
         redraw_canvas(new_canvas);
-        // Make the newly created window active (raise on top) without
-        // disturbing the relative order of other windows.
+        // Make the newly created window active (raise on top)
         set_active_window(new_canvas);
     }
 }
@@ -694,13 +835,19 @@ FileIcon *find_icon(Window win, int x, int y) {
     for (int i = icon_count - 1; i >= 0; i--) {
         FileIcon *ic = icon_array[i];
         if (ic->display_window != win) continue;
-        int w = ic->width;
-        int h = ic->height;
-        int label_pad = 20; // include label area under the icon
         int rx = base_x + ic->x - sx;
         int ry = base_y + ic->y - sy;
-        if (x >= rx && x <= rx + w && y >= ry && y <= ry + h + label_pad) {
-            return ic;
+        if (c && c->type == WINDOW && c->view_mode == VIEW_NAMES) {
+            // Row spans full content width; row height ~ font + padding
+            int row_h = 18 + 6; // keep in sync with apply_view_layout/render
+            int row_x = base_x; // full width inside content area
+            int row_w = (c->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT);
+            if (x >= row_x && x <= row_x + row_w && y >= ry && y <= ry + row_h) return ic;
+        } else {
+            int w = ic->width;
+            int h = ic->height;
+            int label_pad = 20; // include label area under the icon
+            if (x >= rx && x <= rx + w && y >= ry && y <= ry + h + label_pad) return ic;
         }
     }
     return NULL;
@@ -708,8 +855,22 @@ FileIcon *find_icon(Window win, int x, int y) {
 
 void open_file(FileIcon *icon) {
     if (!icon || !icon->path) return;
-    // open_file debug print removed
-    // TODO: integrate with actual file opener if available
+    // Directories should be opened within AmiWB (safety guard)
+    if (icon->type == TYPE_DRAWER) {
+        Canvas *c = find_canvas(icon->display_window);
+        if (c) open_directory(icon, c);
+        return;
+    }
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork failed in open_file");
+        return;
+    } else if (pid == 0) {
+        // Child: replace with xdg-open
+        execlp("xdg-open", "xdg-open", icon->path, (char *)NULL);
+        perror("execlp failed for xdg-open");
+        _exit(EXIT_FAILURE);
+    }
 }
 
 void restore_iconified(FileIcon *icon) {
@@ -823,6 +984,8 @@ void workbench_handle_button_release(XButtonEvent *event) {
 void init_workbench(void) {
     icon_array = malloc(INITIAL_ICON_CAPACITY * sizeof(FileIcon *)); if (!icon_array) return;
     icon_array_size = INITIAL_ICON_CAPACITY; icon_count = 0;
+    // Avoid zombie processes from file launches
+    signal(SIGCHLD, SIG_IGN);
     // Create desktop prime icons
     create_icon("/usr/local/share/amiwb/icons/harddisk.info", get_desktop_canvas(), 10, 40);
     FileIcon *system_icon = icon_array[icon_count - 1];

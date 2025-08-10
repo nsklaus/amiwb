@@ -31,4 +31,11 @@ void compute_content_bounds(Canvas *canvas);  // Compute content bounds from ico
 // Remove any icon associated with an iconified canvas (e.g., on destroy)
 void remove_icon_for_canvas(Canvas *canvas);
 
+// View mode/layout helpers
+void apply_view_layout(Canvas *canvas);                 // Position icons based on canvas->view_mode
+void set_canvas_view_mode(Canvas *canvas, ViewMode m);  // Set mode, relayout, recompute scroll, redraw
+
+// Directory refresh
+void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath);
+
 #endif
