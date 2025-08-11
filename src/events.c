@@ -1,27 +1,51 @@
+// Event dispatch and routing between intuition (window frames),
+// workbench (icons), and menus. Keeps interactions coherent
+// by locking routing to the initial press target.
 #include "menus.h"
 #include "events.h"
 #include "compositor.h"
 #include "intuition.h"
 #include "workbench.h"
+#include "config.h"
 #include <X11/extensions/Xrandr.h>
 
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <stdio.h> // For fprintf
+#include <sys/stat.h>
+#include <unistd.h>
+#include <string.h>
+#include <stdlib.h> // getenv
 
-// Track the window that owns the current button interaction so motion/release
-// events are routed consistently, even if X delivers them to the desktop.
+// Track the window that owns the current button interaction so motion and
+// release are routed consistently, even if X delivers them elsewhere.
 static Window g_press_target = 0;
 
 bool running = true;
 
-// Gated debug helper (set WB_DEBUG=1 in env)
+// Gated debug helper (wire to env later if needed)
 static inline int wb_dbg(void) { return 0; }
 
 // Initialize event handling
-void init_events(void) { /* no-op */ }
+// Initialize event subsystem (reserved for future setup).
+static char g_log_path[1024] = {0};
+void init_events(void) {
+    #if LOGGING_ENABLED
+    // Expand LOG_FILE_PATH (support leading $HOME)
+    const char *cfg = LOG_FILE_PATH;
+    if (cfg && strncmp(cfg, "$HOME/", 6) == 0) {
+        const char *home = getenv("HOME");
+        if (home) snprintf(g_log_path, sizeof(g_log_path), "%s/%s", home, cfg + 6);
+        else snprintf(g_log_path, sizeof(g_log_path), "%s", cfg);
+    } else if (cfg) {
+        snprintf(g_log_path, sizeof(g_log_path), "%s", cfg);
+    }
+    #endif
+}
 
 // Main event loop
+// Central dispatcher that forwards X events to subsystems. We translate
+// coordinates and reroute presses so each canvas receives coherent input.
 void handle_events(void) {
     Display *dpy = get_display();
     if (!dpy) { return; }
@@ -32,10 +56,28 @@ void handle_events(void) {
     // X connection file descriptor for select
     int fd = ConnectionNumber(dpy);  
 
+    // Log cap management
+    unsigned int iter = 0;
     while (running) {
-        // Deliver events as-is; do not drop MotionNotify. If we later need
-        // coalescing, implement 'keep last motion' per window instead of discarding all.
+        // Deliver events as-is. If coalescing is needed, keep the last motion
+        // per target window rather than discarding all motions globally.
         XNextEvent(dpy, &event);
+
+        // Periodically enforce log cap (optional)
+        #if LOGGING_ENABLED && LOG_CAP_ENABLED
+        if ((++iter % 1000u) == 0u && g_log_path[0]) {
+            struct stat st;
+            if (stat(g_log_path, &st) == 0 && st.st_size > (off_t)LOG_CAP_BYTES) {
+                FILE *lf = fopen(g_log_path, "w"); // truncate
+                if (lf) {
+                    setvbuf(lf, NULL, _IOLBF, 0);
+                    dup2(fileno(lf), fileno(stdout));
+                    dup2(fileno(lf), fileno(stderr));
+                    fprintf(stderr, "[amiwb] log truncated (cap=%ld bytes)\n", (long)LOG_CAP_BYTES);
+                }
+            }
+        }
+        #endif
         // Let the compositor see every event so it can maintain damage/topology
         compositor_handle_event(dpy, &event);
 
@@ -88,12 +130,16 @@ void handle_events(void) {
             case DestroyNotify:
                 handle_destroy_notify(&event.xdestroywindow);
                 break;
+            case ClientMessage:
+                intuition_handle_client_message(&event.xclient);
+                break;
             default:
                 break;
         }
     }
 }
 
+// Ask the main loop to exit cleanly.
 void quit_event_loop(void) {
     running = false;
 }
@@ -115,6 +161,9 @@ static Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, in
             if (wb_dbg()) fprintf(stderr, "[WB]  -> resolved to canvas win=0x%lx type=%d tx,ty=(%d,%d)\n", c->win, c->type, tx, ty);
             return c;
         }
+        // Ensure 'cur' is still a valid window before walking up the tree
+        XWindowAttributes wa;
+        if (!XGetWindowAttributes(dpy, cur, &wa)) break;
         Window root_ret, parent_ret, *children = NULL; unsigned int n = 0;
         if (!XQueryTree(dpy, cur, &root_ret, &parent_ret, &children, &n)) break;
         if (children) XFree(children);
@@ -129,11 +178,14 @@ void handle_button_press(XButtonEvent *event) {
     int cx = event->x, cy = event->y; // may be rewritten
     Canvas *canvas = find_canvas(event->window);
     if (wb_dbg()) fprintf(stderr, "[WB] ButtonPress win=0x%lx x,y=(%d,%d) state=0x%x\n", event->window, event->x, event->y, event->state);
-    // If the press is on a managed client, translate to its frame canvas
+    // If the press is on a managed client, activate its frame, replay pointer, and translate
     if (!canvas) {
         Canvas *owner = find_canvas_by_client(event->window);
         if (owner) {
             set_active_window(owner);
+            // We grabbed buttons on the client in frame_client_window();
+            // allow the click to proceed to the client after focusing
+            XAllowEvents(get_display(), ReplayPointer, event->time);
             // translate coords from client to frame canvas
             Window dummy; XTranslateCoordinates(get_display(), event->window, owner->win, event->x, event->y, &cx, &cy, &dummy);
             canvas = owner;
@@ -153,14 +205,14 @@ void handle_button_press(XButtonEvent *event) {
         // Query stacking order
         Window root_ret, parent_ret, *children = NULL; unsigned int n = 0;
         if (XQueryTree(dpy, root, &root_ret, &parent_ret, &children, &n)) {
-            // children are bottom-to-top; scan from topmost down
+            // Children array is bottom-to-top; scan from topmost down.
             for (int i = (int)n - 1; i >= 0; --i) {
                 Canvas *c = find_canvas(children[i]);
                 if (!c || c->type != WINDOW) continue;
                 // Validate the X window is still valid and viewable
                 XWindowAttributes a; 
                 if (!XGetWindowAttributes(dpy, c->win, &a) || a.map_state != IsViewable) continue;
-                // Hit test in root coordinates against frame rect
+                // Hit test in root coordinates against the frame rect
                 int rx = event->x_root, ry = event->y_root;
                 if (rx >= c->x && rx < c->x + c->width &&
                     ry >= c->y && ry < c->y + c->height) {
@@ -214,6 +266,11 @@ void handle_button_release(XButtonEvent *event) {
     // If we have a press target, translate release to it
     if (g_press_target) {
         Display *dpy = get_display();
+        // Ensure both source and target windows still exist before translating
+        XWindowAttributes src_attrs, dst_attrs;
+        bool src_ok = XGetWindowAttributes(dpy, event->window, &src_attrs);
+        bool dst_ok = XGetWindowAttributes(dpy, g_press_target, &dst_attrs);
+        if (!src_ok || !dst_ok) { g_press_target = 0; return; }
         Window dummy; int tx=0, ty=0;
         XTranslateCoordinates(dpy, event->window, g_press_target, event->x, event->y, &tx, &ty, &dummy);
         XButtonEvent ev = *event; ev.window = g_press_target; ev.x = tx; ev.y = ty;
@@ -250,11 +307,13 @@ void handle_key_press(XKeyEvent *event) {
 }
 
 // Dispatch window expose
+// Forward to intuition so frames and canvases redraw.
 void handle_expose(XExposeEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     intuition_handle_expose(event);
 }
 
+// A client asks to be mapped; give it an AmiWB frame.
 void handle_map_request(XMapRequestEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) {
@@ -263,6 +322,7 @@ void handle_map_request(XMapRequestEvent *event) {
     }
 }
 
+// Client wants to move/resize; let intuition translate to frame ops.
 void handle_configure_request(XConfigureRequestEvent *event) {
 
     Canvas *canvas = find_canvas_by_client(event->window);
@@ -282,6 +342,7 @@ void handle_configure_request(XConfigureRequestEvent *event) {
 }
 
 // Dispatch property notify
+// WM hints, protocols, and netwm properties changes.
 void handle_property_notify(XPropertyEvent *event) {
     intuition_handle_property_notify(event);
 }
@@ -346,6 +407,7 @@ void handle_motion_notify(XMotionEvent *event) {
     }
 }
 
+// Geometry of a managed frame changed; update caches.
 void handle_configure_notify(XConfigureEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (canvas && canvas->type == WINDOW) {
@@ -353,6 +415,7 @@ void handle_configure_notify(XConfigureEvent *event) {
     }
 }
 
+// A window died; let intuition tear down the associated canvas.
 void handle_destroy_notify(XDestroyWindowEvent *event) {    
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) {

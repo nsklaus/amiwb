@@ -18,6 +18,8 @@
 #define RESOURCE_DIR_USER ".config/amiwb"  
 
 // Static menu resources
+// Menu font and state are global so both menubar and popups share
+// metrics and selection state without passing through every call.
 static XftFont *font = NULL;
 static XftColor text_color;
 static Menu *active_menu = NULL;    // Current dropdown menu (top-level or current)
@@ -32,6 +34,7 @@ static char **full_menu_items = NULL;
 static int full_menu_item_count = 0;
 static Menu **full_submenus = NULL;
 
+// Resolve menu resources from user config first, then system dir.
 static char *get_resource_path(const char *rel_path) {
     char *home = getenv("HOME");
     char user_path[1024];
@@ -43,6 +46,8 @@ static char *get_resource_path(const char *rel_path) {
 }
 
 // Initialize menu resources
+// Loads font and builds menubar tree with submenus. The menubar is a
+// Canvas so it can be redrawn like any other window.
 void init_menus(void) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
@@ -89,6 +94,7 @@ void init_menus(void) {
     memset(menubar->submenus, 0, menubar->item_count * sizeof(Menu*));
 
     // Workbench submenu (index 0)
+    // Basic actions for the environment and global app state.
     Menu *wb_submenu = malloc(sizeof(Menu));
     wb_submenu->item_count = 5;
     wb_submenu->items = malloc(wb_submenu->item_count * sizeof(char*));
@@ -105,6 +111,7 @@ void init_menus(void) {
     menubar->submenus[0] = wb_submenu;
 
     // Window submenu (index 1)
+    // Window management and content view controls.
     Menu *win_submenu = malloc(sizeof(Menu));
     win_submenu->item_count = 7;
     win_submenu->items = malloc(win_submenu->item_count * sizeof(char*));
@@ -121,6 +128,7 @@ void init_menus(void) {
     win_submenu->submenus = calloc(win_submenu->item_count, sizeof(Menu*));
     win_submenu->canvas = NULL;
     // Create nested submenu for "Show Hidden" (index 5)
+    // Simple Yes/No toggle nested under Window menu.
     Menu *show_hidden_sub = malloc(sizeof(Menu));
     show_hidden_sub->item_count = 2;
     show_hidden_sub->items = malloc(show_hidden_sub->item_count * sizeof(char*));
@@ -133,6 +141,7 @@ void init_menus(void) {
     show_hidden_sub->canvas = NULL;
     win_submenu->submenus[5] = show_hidden_sub;
     // Create nested submenu for "View By .." (index 6)
+    // Switch listing mode between icon and name views.
     Menu *view_by_sub = malloc(sizeof(Menu));
     view_by_sub->item_count = 2;
     view_by_sub->items = malloc(view_by_sub->item_count * sizeof(char*));
@@ -147,6 +156,7 @@ void init_menus(void) {
     menubar->submenus[1] = win_submenu;
 
     // Icons submenu (index 2)
+    // Per-icon actions; entries are placeholders to be wired later.
     Menu *icons_submenu = malloc(sizeof(Menu));
     icons_submenu->item_count = 5;
     icons_submenu->items = malloc(icons_submenu->item_count * sizeof(char*));
@@ -163,14 +173,16 @@ void init_menus(void) {
     menubar->submenus[2] = icons_submenu;
 
     // Tools submenu (index 3)
+    // Quick launchers for external apps; editable in config later.
     Menu *tools_submenu = malloc(sizeof(Menu));
-    tools_submenu->item_count = 5;
+    tools_submenu->item_count = 6;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("XCalc");
     tools_submenu->items[1] = strdup("PavuControl");
     tools_submenu->items[2] = strdup("Brave Browser");
     tools_submenu->items[3] = strdup("Sublime Text");
     tools_submenu->items[4] = strdup("Shell");
+    tools_submenu->items[5] = strdup("Debug Console");
     tools_submenu->selected_item = -1;
     tools_submenu->parent_menu = menubar;
     tools_submenu->parent_index = 3;
@@ -179,6 +191,7 @@ void init_menus(void) {
     menubar->submenus[3] = tools_submenu;
 
     // Setup mode-specific arrays
+    // Menubar can display a single logo item or full menu items.
     logo_items = malloc(logo_item_count * sizeof(char*));
     logo_items[0] = strdup("AmiWB");
 
@@ -187,6 +200,7 @@ void init_menus(void) {
     full_submenus = menubar->submenus;
 
     // Initial default mode: logo
+    // Start minimal; switch to full menu on user toggle.
     menubar->items = logo_items;
     menubar->item_count = logo_item_count;
     menubar->submenus = NULL;
@@ -198,6 +212,7 @@ void cleanup_menus(void) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
 
+    // Release font/color and destroy any menu canvases.
     if (font) XftFontClose(ctx->dpy, font);
     if (text_color.pixel) XftColorFree(ctx->dpy, DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)), DefaultColormap(ctx->dpy, DefaultScreen(ctx->dpy)), &text_color);
     if (active_menu) {
@@ -223,6 +238,7 @@ void cleanup_menus(void) {
         free(logo_items);
         free(menubar);
     }
+    // Last trace to confirm teardown order during shutdown.
     printf("Called cleanup_menus()\n");
 }
 
@@ -232,6 +248,8 @@ bool get_show_menus_state(void) {
 }
 
 // Toggle menubar state
+// Switch between logo mode and full menus.
+// Also closes any open dropdowns safely.
 void toggle_menubar_state(void) {
     show_menus = !show_menus;
     if (show_menus) {
@@ -245,15 +263,23 @@ void toggle_menubar_state(void) {
         menubar->item_count = logo_item_count;
         menubar->submenus = NULL;
         menubar->selected_item = -1;
-        if (active_menu) {  // Close any open submenu
+        if (active_menu && active_menu->canvas) {  // Close any open submenu
             RenderContext *ctx = get_render_context();
-            if (ctx) XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+            XSync(ctx->dpy, False);  // Complete pending operations
+            if (ctx && active_menu->canvas->win != None) {
+                XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                XSync(ctx->dpy, False);  // Wait for unmap
+            }
             destroy_canvas(active_menu->canvas);
             active_menu = NULL;
         }
-        if (nested_menu) {
+        if (nested_menu && nested_menu->canvas) {
             RenderContext *ctx = get_render_context();
-            if (ctx) XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            XSync(ctx->dpy, False);  // Complete pending operations
+            if (ctx && nested_menu->canvas->win != None) {
+                XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+                XSync(ctx->dpy, False);  // Wait for unmap
+            }
             destroy_canvas(nested_menu->canvas);
             nested_menu = NULL;
         }
@@ -263,16 +289,19 @@ void toggle_menubar_state(void) {
 }
 
 // Get global menubar canvas
+// Get the menubar canvas (or NULL if not initialized).
 Canvas *get_menubar(void) {
     return menubar ? menubar->canvas : NULL;
 }
 
 // Get the menubar Menu struct
+// Access the menubar Menu struct for selection state.
 Menu *get_menubar_menu(void) {
     return menubar;
 }
 
 // Get Menu for a canvas
+// Resolve which Menu owns a given canvas.
 Menu *get_menu_by_canvas(Canvas *canvas) {
     if (canvas == get_menubar()) return get_menubar_menu();
     if (active_menu && active_menu->canvas == canvas) return active_menu;
@@ -281,6 +310,8 @@ Menu *get_menu_by_canvas(Canvas *canvas) {
 }
 
 // Handle motion for menubar
+// Update hover selection across top-level items as the mouse moves.
+// Opens the corresponding dropdown when the hovered item changes.
 void menu_handle_menubar_motion(XMotionEvent *event) {
     if (!show_menus) return;
 
@@ -303,13 +334,22 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
         x_pos += item_width;
     }
     if (menubar->selected_item != prev_selected) {
-        if (active_menu) {
-            XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+        // Safe menu cleanup with validation
+        if (active_menu && active_menu->canvas) {
+            XSync(ctx->dpy, False);  // Ensure pending operations complete
+            if (active_menu->canvas->win != None) {
+                XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                XSync(ctx->dpy, False);  // Wait for unmap to complete
+            }
             destroy_canvas(active_menu->canvas);
             active_menu = NULL;
         }
-        if (nested_menu) {
-            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+        if (nested_menu && nested_menu->canvas) {
+            XSync(ctx->dpy, False);  // Ensure pending operations complete
+            if (nested_menu->canvas->win != None) {
+                XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+                XSync(ctx->dpy, False);  // Wait for unmap to complete
+            }
             destroy_canvas(nested_menu->canvas);
             nested_menu = NULL;
         }
@@ -329,15 +369,22 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
     }        
 }
 
+// Close the currently open nested submenu, if any.
 static void close_nested_if_any(void) {
     RenderContext *ctx = get_render_context();
-    if (nested_menu) {
-        if (ctx) XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+    if (nested_menu && nested_menu->canvas) {
+        XSync(ctx->dpy, False);  // Complete pending operations
+        if (ctx && nested_menu->canvas->win != None) {
+            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            XSync(ctx->dpy, False);  // Wait for unmap
+        }
         destroy_canvas(nested_menu->canvas);
         nested_menu = NULL;
     }
 }
 
+// Handle clicks inside a dropdown or nested submenu.
+// Dispatches selection and closes menus afterwards.
 void menu_handle_button_press(XButtonEvent *event) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
@@ -351,14 +398,22 @@ void menu_handle_button_press(XButtonEvent *event) {
     if (item >= 0 && item < target_menu->item_count) {
         handle_menu_selection(target_menu, item);
     }
-    // Close dropped-down menus after selection
-    if (nested_menu) {
-        XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+    // Close dropped-down menus after selection with safe validation
+    if (nested_menu && nested_menu->canvas) {
+        XSync(ctx->dpy, False);  // Complete pending operations
+        if (nested_menu->canvas->win != None) {
+            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            XSync(ctx->dpy, False);  // Wait for unmap
+        }
         destroy_canvas(nested_menu->canvas);
         nested_menu = NULL;
     }
-    if (active_menu) {  
-        XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+    if (active_menu && active_menu->canvas) {  
+        XSync(ctx->dpy, False);  // Complete pending operations
+        if (active_menu->canvas->win != None) {
+            XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+            XSync(ctx->dpy, False);  // Wait for unmap
+        }
         destroy_canvas(active_menu->canvas);
         active_menu = NULL;
     }
@@ -370,12 +425,14 @@ void menu_handle_button_press(XButtonEvent *event) {
     }
 }
 
+// Button release inside menus is unused for now.
 void menu_handle_button_release(XButtonEvent *event) {
 
     //XUngrabPointer(get_display(), CurrentTime);
 }
 
 // Handle button press on menubar
+// Right-click toggles logo vs menus on the menubar.
 void menu_handle_menubar_press(XButtonEvent *event) {
     if (event->button == Button3) {
         toggle_menubar_state();
@@ -383,6 +440,7 @@ void menu_handle_menubar_press(XButtonEvent *event) {
 }
 
 // Handle motion on dropdown
+// If the highlighted item in the dropdown has a submenu, open it.
 static void maybe_open_nested_for_selection(void) {
     if (!active_menu) return;
     // Only open nested if the selected item has a submenu
@@ -396,8 +454,12 @@ static void maybe_open_nested_for_selection(void) {
         // If already open for the same selection, do nothing
         if (nested_menu && nested_menu == child) return;
         // Close previous nested if any
-        if (nested_menu) {
-            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+        if (nested_menu && nested_menu->canvas) {
+            XSync(ctx->dpy, False);  // Complete pending operations
+            if (nested_menu->canvas->win != None) {
+                XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+                XSync(ctx->dpy, False);  // Wait for unmap
+            }
             destroy_canvas(nested_menu->canvas);
             nested_menu = NULL;
         }
@@ -420,6 +482,7 @@ static void maybe_open_nested_for_selection(void) {
     }
 }
 
+// Track hover within dropdowns and nested menus; redraw on change.
 void menu_handle_motion_notify(XMotionEvent *event) {
     
     RenderContext *ctx = get_render_context();
@@ -454,11 +517,13 @@ void menu_handle_motion_notify(XMotionEvent *event) {
 }
 
 // Handle key press for menu navigation
+// Keyboard navigation placeholder for menus.
 void menu_handle_key_press(XKeyEvent *event) {
     printf("menu bar registered key press event\n");
 }
 
 // Show dropdown menu 
+// Create and show a dropdown for the given menubar item at x,y.
 void show_dropdown_menu(Menu *menu, int index, int x, int y) {
     
     if (!menu || index < 0 || index >= menu->item_count || 
@@ -467,8 +532,13 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
     }
 
     // Close any nested submenu from a previous active dropdown
-    if (nested_menu) {
-        XUnmapWindow(get_render_context()->dpy, nested_menu->canvas->win);
+    if (nested_menu && nested_menu->canvas) {
+        RenderContext *ctx = get_render_context();
+        XSync(ctx->dpy, False);  // Complete pending operations
+        if (ctx && nested_menu->canvas->win != None) {
+            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            XSync(ctx->dpy, False);  // Wait for unmap
+        }
         destroy_canvas(nested_menu->canvas);
         nested_menu = NULL;
     }
@@ -486,6 +556,8 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
 }
 
 // Process menu item selection
+// Execute action for a selected menu item.
+// Handles nested Window submenu toggles inline.
 void handle_menu_selection(Menu *menu, int item_index) {
     const char *item = menu->items[item_index];
     // If this is a nested submenu under Window, handle here
@@ -556,6 +628,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
             } else if (strcmp(item, "Clean Up") == 0) {
                 Canvas *aw = get_active_window();
                 if (aw) { icon_cleanup(aw); compute_max_scroll(aw); redraw_canvas(aw); }
+                else { Canvas *desk = get_desktop_canvas(); if (desk) { icon_cleanup(desk); compute_max_scroll(desk); redraw_canvas(desk); } }
             } else if (strcmp(item, "Show") == 0) {
                 // TODO: toggle hidden items
             } else if (strcmp(item, "View Icons") == 0) {
@@ -600,6 +673,17 @@ void handle_menu_selection(Menu *menu, int item_index) {
             } else if (strcmp(item, "Brave Browser") == 0) {
                 //printf("launching brave\n");
                 system("brave-browser &");
+            } else if (strcmp(item, "Debug Console") == 0) {
+                // Open a terminal that tails the configured log file live.
+                // Uses config.h LOG_FILE_PATH and kitty.
+                #if LOGGING_ENABLED
+                // Embed LOG_FILE_PATH into the shell; $HOME in the macro will expand in sh -lc
+                system("sh -lc 'exec kitty -e sh -lc "
+                       "\"tail -f \\\"" LOG_FILE_PATH "\\\"\"' &");
+                #else
+                system("sh -lc 'exec kitty -e sh -lc "
+                       "\"echo Logging is disabled in config.h; echo Enable LOGGING_ENABLED and rebuild.; echo; read -p '""'Press Enter to close'""' \"\"\"' &");
+                #endif
             }
 
             break;
@@ -614,11 +698,13 @@ void handle_menu_selection(Menu *menu, int item_index) {
 }
 
 // Get active menu
+// Current open dropdown (not menubar).
 Menu *get_active_menu(void) {
     return active_menu;
 }
 
 // Get submenu width
+// Measure widest label to size the dropdown width.
 int get_submenu_width(Menu *menu) {
     if (!menu || !font) return 80;
     int max_width = 80;
@@ -634,6 +720,7 @@ int get_submenu_width(Menu *menu) {
 }
 
 // Set app menu
+// Placeholder: application-provided menu integration.
 void set_app_menu(Menu *app_menu) {
     // TODO
 }

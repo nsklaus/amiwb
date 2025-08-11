@@ -14,13 +14,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Static Xft resources
+// Global font and UI colors. Centralize text style so all drawing
+// uses the same metrics and palette. Font may be NULL early.
 static XftFont *font = NULL;
 static XftColor text_color_black;
 static XftColor  text_color_white;
 #define RESOURCE_DIR_SYSTEM "/usr/local/share/amiwb"  
 #define RESOURCE_DIR_USER ".config/amiwb"  
 
+// Resolve a resource path, preferring per-user config then system dir.
 static char *get_resource_path(const char *rel_path) {
     char *home = getenv("HOME");
     char user_path[1024];
@@ -33,11 +35,66 @@ static char *get_resource_path(const char *rel_path) {
     return strdup(sys_path);
 }
 
-// Initialize rendering resources
+// ---- Wallpaper helpers ----
+// Load image with Imlib2 into a full-screen Pixmap; tile if requested.
+static Pixmap load_wallpaper_to_pixmap(Display *dpy, int screen_num, const char *path, bool tile) {
+    if (!path || strlen(path) == 0) return None;
+    Imlib_Image img = imlib_load_image(path);
+    if (!img) {
+        fprintf(stderr, "Failed to load wallpaper: %s\n", path);
+        return None;
+    }
+    imlib_context_set_image(img);
+    int img_width = imlib_image_get_width();
+    int img_height = imlib_image_get_height();
+
+    int screen_width = DisplayWidth(dpy, screen_num);
+    int screen_height = DisplayHeight(dpy, screen_num);
+
+    Pixmap pixmap = XCreatePixmap(dpy, RootWindow(dpy, screen_num), screen_width, screen_height, DefaultDepth(dpy, screen_num));
+
+    imlib_context_set_drawable(pixmap);
+    if (!tile) {
+        imlib_render_image_on_drawable_at_size(0, 0, screen_width, screen_height);
+    } else {
+        for (int y = 0; y < screen_height; y += img_height) {
+            for (int x = 0; x < screen_width; x += img_width) {
+                imlib_render_image_on_drawable(x, y);
+            }
+        }
+    }
+
+    imlib_free_image();
+    return pixmap;
+}
+
+// Public API: (re)load wallpapers into RenderContext so background
+// draws fast without re-scaling images each frame.
+void render_load_wallpapers(void) {
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return;
+    Display *dpy = ctx->dpy;
+    int scr = DefaultScreen(dpy);
+
+    // Free previous pixmaps if any
+    if (ctx->desk_img != None) { XFreePixmap(dpy, ctx->desk_img); ctx->desk_img = None; }
+    if (ctx->wind_img != None) { XFreePixmap(dpy, ctx->wind_img); ctx->wind_img = None; }
+
+    if (strlen(DESKPICT) > 0) {
+        ctx->desk_img = load_wallpaper_to_pixmap(dpy, scr, DESKPICT, DESKTILE);
+    }
+    if (strlen(WINDPICT) > 0) {
+        ctx->wind_img = load_wallpaper_to_pixmap(dpy, scr, WINDPICT, WINDTILE);
+    }
+}
+
+// Initialize rendering resources. Requires RenderContext from
+// init_intuition(). If font is not ready yet, callers should guard
+// text drawing (redraw_canvas() already does).
 void init_render(void) {
     RenderContext *ctx = get_render_context();
     if (!ctx) { 
-        printf("Failled to get render_context\n");
+        printf("Failed to get render_context (call init_intuition first)\n");
         return; 
     }
 
@@ -66,6 +123,11 @@ void init_render(void) {
         return;
     }
     free(font_path);
+
+    // Now that we have a render context and font, load wallpapers and refresh desktop
+    render_load_wallpapers();
+    Canvas *desk = get_desktop_canvas();
+    if (desk) redraw_canvas(desk);
 
     // Initialize colors
     text_color_black.color = BLACK;
@@ -111,10 +173,12 @@ void cleanup_render(void) {
 void render_icon(FileIcon *icon, Canvas *canvas) {
     //printf("render_icon called\n");
     if (!icon || icon->display_window == None || !icon->current_picture) {
-        printf("render_icon: Invalid icon (icon=%p, canvas=%p, picture=%p)\n", 
+        printf( "render_icon: Invalid icon "
+                "(icon=%p, canvas=%p, picture=%p, filename=%s )\n", 
             (void*)icon, 
             (void*)icon->display_window, 
-            (void*)icon->current_picture);
+            (void*)icon->current_picture,
+            (icon && icon->label) ? icon->label : "(null)");
         return;
     }
 
@@ -173,20 +237,25 @@ static void draw_checkerboard(Display *dpy, Picture dest, int x, int y, int w, i
     }
 }
 
-// Redraw entire canvas and its icons
+// Redraw the entire canvas and its icons. Skips work if surfaces or
+// context are missing, which can occur during early init or teardown.
 void redraw_canvas(Canvas *canvas) {
-    //if (!canvas) return;
     if (!canvas || canvas->width <= 0 || canvas->height <= 0 || 
         canvas->canvas_render == None || canvas->window_render == None) {
         return;
     }
-    if (!canvas || canvas->canvas_render == None || 
-        canvas->window_render == None) {
-        /* skip rendering if resources are invalid */
-        return;
-    }
+    
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
+    
+    // Validate window still exists before any drawing operations
+    if (canvas->win != None) {
+        XWindowAttributes attrs;
+        if (XGetWindowAttributes(ctx->dpy, canvas->win, &attrs) != True) {
+            // Window is invalid, skip rendering
+            return;
+        }
+    }
 
     // If canvas is WINDOW type with a client window, 
     // dest is window_render; otherwise, canvas_render.
@@ -353,9 +422,10 @@ void redraw_canvas(Canvas *canvas) {
         XRenderColor fg_color;
         if (is_menubar) {
             // Horizontal: highlight only if selected and has submenus (skips logo)
-            bg_color = (i == selected && menu->submenus) ? (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF} : canvas->bg_color;
-            fg_color = (i == selected && menu->submenus) ? (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF} : (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF};
+            bg_color = (i == selected && menu->submenus) ? BLACK : canvas->bg_color;
+            fg_color = (i == selected && menu->submenus) ? WHITE : BLACK;
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &bg_color, x, 0, item_width, MENU_ITEM_HEIGHT);
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, MENU_ITEM_HEIGHT - 1, canvas->width, 1);
             XftColor item_fg;
             XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &fg_color, &item_fg);
             XftDrawStringUtf8(draw, &item_fg, font, x + 10, y_base, (FcChar8 *)label, strlen(label));
@@ -363,10 +433,15 @@ void redraw_canvas(Canvas *canvas) {
             x += item_width;
         } else {
             // Vertical (submenu): highlight if selected, regardless of submenus
-            bg_color = (i == selected) ? (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF} : canvas->bg_color;
-            fg_color = (i == selected) ? (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF} : (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF};
+            bg_color = (i == selected) ? BLACK : canvas->bg_color;
+            fg_color = (i == selected) ? WHITE : BLACK;
             int item_y = i * MENU_ITEM_HEIGHT;
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &bg_color, 0, item_y, canvas->width, MENU_ITEM_HEIGHT);
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, canvas->height - 1, canvas->width, 1);
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, 0, canvas->width, 1);
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, 0, 1, canvas->height);
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, canvas->width -1, 0, 1, canvas->height);
+            
             XftColor item_fg;
             XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &fg_color, &item_fg);
             XftDrawStringUtf8(draw, &item_fg, font, 10, item_y + y_base, (FcChar8 *)label, strlen(label));
@@ -381,7 +456,7 @@ void redraw_canvas(Canvas *canvas) {
         if (!get_show_menus_state()){
  
             // menu right side, lower button 
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &GRAY, canvas->width -28, 0 , 26, 20);
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &GRAY, canvas->width -28, 0 , 26, 19);
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &WHITE, canvas->width -28, 0 , 26, 1);
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, canvas->width -2, 0 , 1, 20);
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, canvas->width -30, 0 , 1, 20);
@@ -394,8 +469,8 @@ void redraw_canvas(Canvas *canvas) {
          }
     }
 
-    // Draw frame for WINDOW types
-    if (canvas->type == WINDOW ) {
+    // Draw frame for WINDOW types (skip when fullscreen)
+    if (canvas->type == WINDOW && !canvas->fullscreen) {
         XRenderColor frame_color = canvas->active ? BLUE : GRAY;
 
         // top border   
@@ -520,7 +595,7 @@ void redraw_canvas(Canvas *canvas) {
         }
 
         // ==================
-        // draw windows title
+        // draw windows title (skip when fullscreen)
         // ==================
         if (canvas->title ) {
 
@@ -531,18 +606,20 @@ void redraw_canvas(Canvas *canvas) {
                 text_col.color = BLACK; 
             }
             // case for workbench windows
-            if (canvas->client_win == None) {
-                XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer, canvas->visual, canvas->colormap);
-                int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
-                XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
-                XftDrawDestroy(draw);
-            }
-            // case for client windows
-            if (canvas->client_win != None){
-                XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->win, canvas->visual, canvas->colormap);
-                int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
-                XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
-                XftDrawDestroy(draw);
+            if (font) {
+                if (canvas->client_win == None) {
+                    XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer, canvas->visual, canvas->colormap);
+                    int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
+                    XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
+                    XftDrawDestroy(draw);
+                }
+                // case for client windows
+                if (canvas->client_win != None){
+                    XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->win, canvas->visual, canvas->colormap);
+                    int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
+                    XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
+                    XftDrawDestroy(draw);
+                }
             }
         }
         // =============
@@ -616,6 +693,10 @@ void render_destroy_canvas_surfaces(Canvas *canvas) {
     if (!canvas) return;
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
+    
+    // Ensure all pending operations complete before cleanup
+    XSync(ctx->dpy, False);
+    
     if (canvas->canvas_render != None) {
         XRenderFreePicture(ctx->dpy, canvas->canvas_render);
         canvas->canvas_render = None;
@@ -628,6 +709,9 @@ void render_destroy_canvas_surfaces(Canvas *canvas) {
         XFreePixmap(ctx->dpy, canvas->canvas_buffer);
         canvas->canvas_buffer = None;
     }
+    
+    // Final sync to ensure cleanup is complete
+    XSync(ctx->dpy, False);
 }
 
 // Recreate pixmap and XRender Pictures based on current canvas size/visual

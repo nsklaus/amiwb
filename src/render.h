@@ -1,4 +1,7 @@
 // File: render.h
+// Rendering helpers for canvases and icons.
+// Uses XRender for compositing and Xft for text.
+// Keeps a single global font and wallpaper data in RenderContext.
 #ifndef RENDER_H
 #define RENDER_H
 
@@ -6,19 +9,23 @@
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
 #include "intuition.h"
-#include "workbench.h"
+#include "icons.h"
 
-void init_render(void); 			// initialize rendering resources
-void cleanup_render(void);			// clean up rendering resources
-void redraw_canvas(Canvas *canvas); // redraw entire canvas and its icons
-void redraw_menu(Canvas *canvas);	// redraw a menu
-void render_icon(FileIcon *icon, Canvas *canvas); 	// render a single icon
-int get_text_width(const char *text);  // Compute pixel width of text from font
-XftFont *get_font(void);               // Accessor for the global UI font
+void init_render(void);               // Initialize render ctx, fonts, wallpapers
+void cleanup_render(void);            // Free render resources safely
+void redraw_canvas(Canvas *canvas);   // Redraw full canvas contents
+void redraw_menu(Canvas *canvas);     // Redraw a menu canvas
+void render_icon(FileIcon *icon, Canvas *canvas); // Draw one icon
+int get_text_width(const char *text); // Width in pixels of a UTF-8 string
+XftFont *get_font(void);              // Access the global UI font
 
-// Deduplicated helpers to manage XRender/Xlib resources for a canvas
-// Recreate pixmap and Pictures matching current canvas size/visual
+// Canvas surface lifecycle
+// Recreate pixmap and Pictures for current size/visual.
 void render_recreate_canvas_surfaces(Canvas *canvas);
-// Destroy pixmap and Pictures (safe to call if already NULL)
+// Destroy pixmap and Pictures (safe if already NULL).
 void render_destroy_canvas_surfaces(Canvas *canvas);
+
+// Load or reload wallpapers (desktop/window) into RenderContext.
+// Uses screen size and config (DESKPICT/WINDPICT, tiling flags).
+void render_load_wallpapers(void);
 #endif

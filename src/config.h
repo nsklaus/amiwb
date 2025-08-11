@@ -1,9 +1,3 @@
-/* 
-Configuration header: Defines constants like colors, thresholds, and types for the project. 
-Used to centralize tunable parameters. TODO: figure some sort of file based settings storage.
-a dot file .amiwbrc or many dedicated setting files like on amiga env:archives/ ...
-*/
-
 #ifndef CONFIG_H
 #define CONFIG_H
 
@@ -12,8 +6,8 @@ a dot file .amiwbrc or many dedicated setting files like on amiga env:archives/ 
 // TODO: remove old colors (replaced by global colors below)
 //#define BG_COLOR_DESKTOP (XRenderColor){0x5555, 0x5555, 0x5555, 0xFFFF} // Desktop background
 //#define BG_COLOR_FOLDER (XRenderColor){0xAAAA, 0xAAAA, 0xAAAA, 0xFFFF} // Folder background 
-#define BLUE_FRAME (XRenderColor){0x0000, 0x0000, 0xFFFF, 0xFFFF} // Active frame (blue).
-#define GRAY_FRAME (XRenderColor){0x8888, 0x8888, 0x8888, 0xFFFF} // Inactive frame (gray).
+//#define BLUE_FRAME (XRenderColor){0x0000, 0x0000, 0xFFFF, 0xFFFF} // Active frame (blue).
+//#define GRAY_FRAME (XRenderColor){0x8888, 0x8888, 0x8888, 0xFFFF} // Inactive frame (gray).
 
 // global colors
 #define BLACK (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}
@@ -53,8 +47,6 @@ a dot file .amiwbrc or many dedicated setting files like on amiga env:archives/ 
 #define MENUBAR_HEIGHT 20 		// Height of menubar.
 #define MENU_ITEM_HEIGHT 20 	// Height of menu item.
 
-//extern char *def_tool_path;  // Default icons path
-//extern char *def_drawer_path;
 extern char *iconify_path;
 
 //#define SYSFONT "fonts/SourceCodePro-Semibold.otf"
@@ -68,11 +60,18 @@ extern char *iconify_path;
 #define MIN_KNOB_SIZE 10  	// Minimum size for scrollbar knobs in pixels
 
 // desktop and windows backgrounds, with tile option 0/1
-// "/home/klaus/Pictures/backgrounds/1164147.png"
-// "/home/klaus/Sources/amiwb/patterns/pattern7.png"
-
 #define DESKPICT "/home/klaus/Pictures/backgrounds/1164147.png"
 #define DESKTILE 0
 #define WINDPICT "/home/klaus/Sources/amiwb/patterns/pattern8.png"
 #define WINDTILE 1
+
+// Logging configuration
+// When LOGGING_ENABLED is 1, AmiWB redirects stdout/stderr to LOG_FILE_PATH,
+// truncating the file at startup and printing a timestamp header.
+// If LOG_CAP_ENABLED is 1, the event loop enforces a size cap (LOG_CAP_BYTES)
+// by truncating the file when it grows beyond the cap.
+#define LOGGING_ENABLED 1
+#define LOG_FILE_PATH "$HOME/.config/amiwb/amiwb.log"
+#define LOG_CAP_ENABLED 0
+#define LOG_CAP_BYTES (5 * 1024 * 1024)
 #endif

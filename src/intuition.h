@@ -1,4 +1,6 @@
 // File: intuition.h
+// Core window/canvas management for AmiWB. Provides the `Canvas` type,
+// render context, and the event-facing API used by the dispatcher.
 #ifndef INTUITION_H
 #define INTUITION_H
 
@@ -9,6 +11,7 @@
 #include <stdbool.h>
 #include <Imlib2.h>
 
+// UI metrics (frame and menubar sizes). Keep short to match Amiga style.
 #define MENUBAR_HEIGHT 20
 #define BORDER_WIDTH_LEFT 8
 #define BORDER_WIDTH_RIGHT 20
@@ -22,6 +25,8 @@ typedef enum { VIEW_ICONS = 0, VIEW_NAMES = 1 } ViewMode;
 
 typedef enum CanvasType { DESKTOP, WINDOW, MENU } CanvasType;
 
+// Global render context shared by renderer and UI subsystems.
+// Holds Display, XRender format, and wallpaper pixmaps.
 typedef struct {
     Display *dpy;                 // X11 display connection
     XRenderPictFormat *fmt;       // XRender visual format
@@ -32,9 +37,8 @@ typedef struct {
     
 } RenderContext;
 
-// ================
-// intuition struct
-// ================
+// Canvas describes any drawable AmiWB surface:
+// DESKTOP root, WINDOW frames, and MENU popups/menubar.
 typedef struct {
     CanvasType type;                    // Canvas type: DESKTOP, WINDOW, MENU
     Window win;                         // X11 window
@@ -57,30 +61,35 @@ typedef struct {
     Colormap colormap;                  // Colormap for the canvas
     bool scanning;                      // True while directory scan is in progress
     bool show_hidden;                   // Show dotfiles in directory views
+    // Fullscreen support
+    bool fullscreen;                    // EWMH fullscreen active
+    int saved_x, saved_y;               // Saved frame pos before fullscreen
+    int saved_w, saved_h;               // Saved frame size before fullscreen
+    bool close_armed;                    // Close gadget pressed (until release)
 } Canvas;
 
 extern int randr_event_base;
 
 // Function prototypes
-RenderContext *get_render_context(void);    // getter for render_context
+RenderContext *get_render_context(void);    // Getter for global RenderContext
 
-Display *get_display(void);                 // getter for dpy
-Canvas  *init_intuition(void);              // Initialize X11 display, canvas array
+Display *get_display(void);                 // Getter for X Display
+Canvas  *init_intuition(void);              // Init Display, visuals, desktop canvas
 Canvas  *get_desktop_canvas(void);          // Get desktop canvas
-Canvas  *find_canvas(Window win);           // Find canvas by window
+Canvas  *find_canvas(Window win);           // Find canvas by its frame window
 Canvas  *create_canvas(const char *path, int x, int y, int width, int height, CanvasType type); 
-Canvas  *get_active_window(void);
-Canvas  *find_canvas_by_client(Window client_win); // Find canvas by client window
-Canvas  *find_window_by_path(const char *path);   // Find an existing workbench window by path
+Canvas  *get_active_window(void);           // Currently active WINDOW canvas
+Canvas  *find_canvas_by_client(Window client_win); // Lookup by client window
+Canvas  *find_window_by_path(const char *path);   // Find WINDOW by directory path
 
-void destroy_canvas(Canvas *canvas); 
-void cleanup_intuition(void);               // Clean up intuition resources
-void set_active_window(Canvas *canvas);     // activate one, deactivate the others
+void destroy_canvas(Canvas *canvas);        // Destroy canvas and free X resources
+void cleanup_intuition(void);               // Free visuals, desktop, Display
+void set_active_window(Canvas *canvas);     // Activate one, deactivate others
 // Temporarily suppress desktop deactivation on empty clicks (used after restore)
 void suppress_desktop_deactivate_for_ms(int ms);
 
-// Add prototype for compute_max_scroll
-void compute_max_scroll(Canvas *canvas);    // Compute max scroll limits and clamp current scroll
+// Compute scroll limits from content and clamp current scroll.
+void compute_max_scroll(Canvas *canvas);
 
 // Iconify a workbench canvas window (hide window and create desktop icon)
 void iconify_canvas(Canvas *canvas);
@@ -88,15 +97,17 @@ void iconify_canvas(Canvas *canvas);
 // Enter global shutdown mode (suppress X errors during teardown)
 void begin_shutdown(void);
 
+// Install the X error handler early; respects AMIWB_DEBUG_XERRORS for verbose suppression logs
+void install_error_handler(void);
+
 // Query helpers for event routing
-bool intuition_last_press_consumed(void);   // True if last frame press consumed (scrollbar/title/resize)
+bool intuition_last_press_consumed(void);   // Last press handled by frame widgets
 bool intuition_is_scrolling_active(void);   // True while dragging a scrollbar knob
 
 
 
-// ========
-// events
-// ========
+// Event handlers called by central dispatcher
+// (workbench/events.c forwards here for frame-related actions)
 void intuition_handle_expose(XExposeEvent *event);                
 void intuition_handle_button_press(XButtonEvent *event);          
 void intuition_handle_button_release(XButtonEvent *event);
@@ -110,6 +121,11 @@ void intuition_handle_motion_notify(XMotionEvent *event);
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event); 
 void intuition_handle_configure_notify(XConfigureEvent *event);   // for resizing
 void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event);
+void intuition_handle_client_message(XClientMessageEvent *event);
+
+// Fullscreen helpers
+void intuition_enter_fullscreen(Canvas *c);
+void intuition_exit_fullscreen(Canvas *c);
 
 // Use indices for pointers
 /*extern int active_window_index;     // -1 for none

@@ -38,9 +38,20 @@ static int g_composite_event_base = 0, g_composite_error_base = 0;
 
 static void free_win(Display *dpy, CompWin *cw) {
     if (!cw) return;
-    if (cw->pict) XRenderFreePicture(dpy, cw->pict);
-    if (cw->pm) XFreePixmap(dpy, cw->pm);
-    if (cw->damage) XDamageDestroy(dpy, cw->damage);
+    // Sync before cleanup to avoid operating on invalid resources
+    XSync(dpy, False);
+    if (cw->pict) {
+        XRenderFreePicture(dpy, cw->pict);
+        cw->pict = 0;
+    }
+    if (cw->pm) {
+        XFreePixmap(dpy, cw->pm);
+        cw->pm = 0;
+    }
+    if (cw->damage) {
+        XDamageDestroy(dpy, cw->damage);
+        cw->damage = 0;
+    }
 }
 
 // Forward decl for internal debug dumper
@@ -381,7 +392,13 @@ void shutdown_compositor(Display *dpy) {
     if (g_back_pm) { XFreePixmap(dpy, g_back_pm); g_back_pm = 0; }
     if (g_overlay_pict) { XRenderFreePicture(dpy, g_overlay_pict); g_overlay_pict = 0; }
     if (g_overlay) { XCompositeReleaseOverlayWindow(dpy, g_root); g_overlay = None; }
-    if (g_owner) { XDestroyWindow(dpy, g_owner); g_owner = None; }
+    if (g_owner) {
+        XWindowAttributes wa;
+        if (XGetWindowAttributes(dpy, g_owner, &wa)) {
+            XDestroyWindow(dpy, g_owner);
+        }
+        g_owner = None;
+    }
     g_sel = None; g_root = None;
     g_active = false;
 }
@@ -427,8 +444,12 @@ void compositor_handle_event(Display *dpy, XEvent *ev) {
     if (type == g_damage_event_base + XDamageNotify) {
         XDamageNotifyEvent *de = (XDamageNotifyEvent*)ev;
         for (CompWin *it = g_list; it; it = it->next) {
-            if (it->damage == de->damage) {
-                XDamageSubtract(dpy, it->damage, None, None);
+            if (it->damage == de->damage && it->damage != 0) {
+                // Only validate window exists before damage subtract
+                XWindowAttributes attrs;
+                if (XGetWindowAttributes(dpy, it->win, &attrs) == True) {
+                    XDamageSubtract(dpy, it->damage, None, None);
+                }
                 break;
             }
         }

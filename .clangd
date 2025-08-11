@@ -8,6 +8,8 @@ CompileFlags:
     - -std=c11
     - -g
     - -Wno-int-conversion
+    - -x
+    - c
   Compiler: gcc
 InlayHints:
   Enabled: No

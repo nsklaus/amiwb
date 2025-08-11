@@ -1,6 +1,6 @@
 // File: icons.c
-#include "workbench.h"
 #include "intuition.h"
+#include "icons.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <stdio.h>
@@ -8,11 +8,14 @@
 #include <string.h>
 #include <stdint.h>
 
+// Icon parsing constants. We render into a 32-bit pixmap so XRender
+// can alpha-composite icons consistently across visuals.
 #define ICON_HEADER_SIZE 20
 #define GLOBAL_DEPTH 32 // Match global depth
 
-static char *def_tool_path = "/usr/local/share/amiwb/icons/def_tool.info";
-static char *def_drawer_path = "/usr/local/share/amiwb/icons/def_drawer.info";
+// TODO: refactor the file to use def_dir and def_foo
+static char *def_tool_path = "/usr/local/share/amiwb/icons/def_icons/def_foo.info";
+static char *def_drawer_path = "/usr/local/share/amiwb/icons/def_icons/def_dir.info";
 
 static uint16_t read_be16(const uint8_t *p) {
     return (p[0] << 8) | p[1];
@@ -22,6 +25,7 @@ static uint32_t read_be32(const uint8_t *p) {
     return (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
 }
 
+// Load entire .info file into memory so we can parse planes quickly.
 static int load_icon_file(const char *name, uint8_t **data, long *size) {
     FILE *fp = fopen(name, "rb");
     if (!fp) return 1;
@@ -38,6 +42,8 @@ static int load_icon_file(const char *name, uint8_t **data, long *size) {
     return 0;
 }
 
+// Read the bitmap header after the icon drawer/tool metadata. Sanity
+// checks width/height/depth so we don't overrun buffers.
 static int parse_icon_header(const uint8_t *header, long size, uint16_t *width, uint16_t *height, uint16_t *depth) {
     if (size < ICON_HEADER_SIZE) return 1;
     *width = read_be16(header + 4);
@@ -47,6 +53,8 @@ static int parse_icon_header(const uint8_t *header, long size, uint16_t *width, 
     return 0;
 }
 
+// Convert Amiga planar icon data to an ARGB pixmap the server can use.
+// Colors are basic and can be refined later; keep it fast and simple.
 static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth) {
     XVisualInfo vinfo;
     if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), GLOBAL_DEPTH, TrueColor, &vinfo)) {
@@ -63,8 +71,9 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
     }
     memset(image->data, 0, width * height * 4);
 
-    // Icons use true alpha; index 0 is fully transparent
-    //unsigned long colors[8] = {0x00000000UL, 0xFF000000UL, 0xFFFFFFFFUL, 0xFF6666BBUL, 0xFF999999UL, 0xFFBBBBBBUL, 0xFFBBAA99UL, 0xFFFFAA22UL};
+    // Icons can use true alpha; index 0 would be transparent. We use a
+    // gray fill for now to match classic look; adjust when alpha lands.
+    // unsigned long colors[8] = {0x00000000UL, 0xFF000000UL, 0xFFFFFFFFUL, 0xFF6666BBUL, 0xFF999999UL, 0xFFBBBBBBUL, 0xFFBBAA99UL, 0xFFFFAA22UL};
 
     // icons use gray fill instead of transparency
     unsigned long colors[8] = {0xFFA0A2A0UL, 0xFF000000, 0xFFFFFFFF, 0xFF6666BB, 0xFF999999, 0xFFBBBBBB, 0xFFBBAA99, 0xFFFFAA22};
@@ -91,6 +100,8 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
     return 0;
 }
 
+// Build XRender Pictures for normal/selected from a .info source. If
+// the given path is not a .info, fall back to drawer/tool defaults.
 void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     if (!icon || !ctx) return;
 
