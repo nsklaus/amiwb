@@ -19,6 +19,8 @@ FileIcon *find_icon(Window win, int x, int y);              // Hit-test an icon 
 void move_icon(FileIcon *icon, int x, int y);               // Move icon to new position
 int get_icon_count(void);                                   // Total icons across canvases
 FileIcon **get_icon_array(void);                            // Raw icon array (for drawing)
+FileIcon *get_selected_icon(void);                             // Get currently selected icon (or NULL)
+FileIcon *get_selected_icon_from_canvas(Canvas *canvas);       // Get selected icon from specific canvas
 
 // Event hooks used by central dispatcher
 void workbench_handle_button_press(XButtonEvent *event);    // Icon selection/drag start

@@ -5,6 +5,7 @@
 #include "workbench.h"
 #include "config.h"
 #include "menus.h"
+#include "dialogs.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
@@ -34,6 +35,85 @@ static char *get_resource_path(const char *rel_path) {
     char sys_path[1024];
     snprintf(sys_path, sizeof(sys_path), "%s/%s", RESOURCE_DIR_SYSTEM, rel_path);
     return strdup(sys_path);
+}
+
+// Draw up and down arrow controls for vertical scrollbar
+static void draw_vertical_scrollbar_arrows(Display *dpy, Picture dest, int window_width, int window_height) {
+    // Right border arrow separators
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 1, BORDER_WIDTH_RIGHT, 1); 
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 20, BORDER_WIDTH_RIGHT - 2, 1); 
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 21, BORDER_WIDTH_RIGHT - 2, 1); 
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 40, BORDER_WIDTH_RIGHT - 2, 1); 
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 41, BORDER_WIDTH_RIGHT - 2, 1);
+
+    // Down arrow shape
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 10, window_height - BORDER_HEIGHT_BOTTOM - 10, 2, 4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 12, window_height - BORDER_HEIGHT_BOTTOM - 12, 2, 4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 14, window_height - BORDER_HEIGHT_BOTTOM - 14, 2, 4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 8, window_height - BORDER_HEIGHT_BOTTOM - 12, 2, 4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 6, window_height - BORDER_HEIGHT_BOTTOM - 14, 2, 4);
+
+    // Up arrow shape
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 10, window_height - BORDER_HEIGHT_BOTTOM - 35, 2, 4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 12, window_height - BORDER_HEIGHT_BOTTOM - 33, 2, 4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 14, window_height - BORDER_HEIGHT_BOTTOM - 31, 2, 4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 8, window_height - BORDER_HEIGHT_BOTTOM - 33, 2, 4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 6, window_height - BORDER_HEIGHT_BOTTOM - 31, 2, 4);
+}
+
+// Draw left and right arrow controls for horizontal scrollbar
+static void draw_horizontal_scrollbar_arrows(Display *dpy, Picture dest, int window_width, int window_height) {
+    // Bottom border arrow separators
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT - 21, window_height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM - 1); 
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 22, window_height - BORDER_HEIGHT_BOTTOM + 1, 1, BORDER_HEIGHT_BOTTOM - 1);  
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT - 41, window_height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM - 1); 
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 42, window_height - BORDER_HEIGHT_BOTTOM + 1, 1, BORDER_HEIGHT_BOTTOM - 1);  
+
+    // Right arrow shape
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 8, window_height - BORDER_HEIGHT_BOTTOM + 10, 4, 2);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 10, window_height - BORDER_HEIGHT_BOTTOM + 8, 4, 2);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 12, window_height - BORDER_HEIGHT_BOTTOM + 6, 4, 2);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 10, window_height - BORDER_HEIGHT_BOTTOM + 12, 4, 2);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 12, window_height - BORDER_HEIGHT_BOTTOM + 14, 4, 2);
+
+    // Left arrow shape
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 40 - 16, window_height - BORDER_HEIGHT_BOTTOM + 10, 4, 2);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 40 - 14, window_height - BORDER_HEIGHT_BOTTOM + 8, 4, 2);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 40 - 12, window_height - BORDER_HEIGHT_BOTTOM + 6, 4, 2);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 40 - 14, window_height - BORDER_HEIGHT_BOTTOM + 12, 4, 2);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 40 - 12, window_height - BORDER_HEIGHT_BOTTOM + 14, 4, 2);
+}
+
+// Draw the resize handle/grip in the bottom-right corner of window frame
+static void draw_resize_button(Display *dpy, Picture dest, int window_width, int window_height) {
+    // Border edges of resize button
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM - 1); 
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 1, window_height - BORDER_HEIGHT_BOTTOM + 1, 1, BORDER_HEIGHT_BOTTOM - 1); 
+    
+    // Main grip lines - black outlines
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT + 5, window_height - 5, 11, 1);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 5, window_height - 15, 1, 10);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT + 5, window_height - 7, 1, 3);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 7, window_height - 15, 2, 1);
+    
+    // Diagonal black grip pattern 
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 8, window_height - 14, 1, 1);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 9, window_height - 13, 1, 1);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 10, window_height - 12, 1, 1);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 11, window_height - 11, 1, 1);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 12, window_height - 10, 1, 1);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 13, window_height - 9, 1, 1);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 14, window_height - 8, 1, 1);
+    
+    // White highlight for 3D effect
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 7, window_height - 14, 2, 9);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 8, window_height - 13, 1, 8);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 9, window_height - 12, 1, 7);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 10, window_height - 11, 1, 6);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 11, window_height - 10, 1, 5);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 12, window_height - 9, 1, 4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 13, window_height - 8, 1, 3);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 14, window_height - 7, 1, 2);
 }
 
 // ---- Wallpaper helpers ----
@@ -283,33 +363,22 @@ void redraw_canvas(Canvas *canvas) {
         int render_height = canvas->resizing_interactive ? canvas->buffer_height : canvas->height;
         
 
+        // Apply wallpaper background for desktop and icon view windows
+        Pixmap wallpaper_source = None;
         if (canvas->type == DESKTOP && ctx->desk_img != None) {
-
+            wallpaper_source = ctx->desk_img;
+        } else if (canvas->type == WINDOW && canvas->view_mode == VIEW_ICONS && ctx->wind_img != None) {
+            wallpaper_source = ctx->wind_img;
+        }
+        
+        if (wallpaper_source != None) {
             Display *dpy = ctx->dpy;
             Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
-            // Create Picture from bg_pixmap
             XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, visual);
-            Picture bg_picture = XRenderCreatePicture(dpy, ctx->desk_img, fmt, 0, NULL);
-            // Composite (blend) onto canvas; 
-            // use PictOpSrc for direct copy or adjust for transparency
-            XRenderComposite(dpy, PictOpSrc, bg_picture, None, canvas->canvas_render, 
+            Picture wallpaper_picture = XRenderCreatePicture(dpy, wallpaper_source, fmt, 0, NULL);
+            XRenderComposite(dpy, PictOpSrc, wallpaper_picture, None, canvas->canvas_render, 
                 0, 0, 0, 0, 0, 0, render_width, render_height);
-            XRenderFreePicture(dpy, bg_picture);
-            has_bg_image = true;
-        } /*else {
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color, 
-                0, 0, render_width, render_height);
-        }*/
-
-        // For WINDOWS: only show wallpaper in icon view; names view stays gray
-        if (canvas->type == WINDOW && canvas->view_mode == VIEW_ICONS && ctx->wind_img != None) {
-            Display *dpy = ctx->dpy;
-            Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
-            XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, visual);
-            Picture bg_picture = XRenderCreatePicture(dpy, ctx->wind_img, fmt, 0, NULL);
-            XRenderComposite(dpy, PictOpSrc, bg_picture, None, canvas->canvas_render,
-                             0, 0, 0, 0, 0, 0, render_width, render_height);
-            XRenderFreePicture(dpy, bg_picture);
+            XRenderFreePicture(dpy, wallpaper_picture);
             has_bg_image = true;
         }
 
@@ -484,9 +553,16 @@ void redraw_canvas(Canvas *canvas) {
         
          }
     }
+    
+    // ===========
+    // render dialog
+    // ===========
+    if (canvas->type == DIALOG) {
+        render_dialog_content(canvas);
+    }
 
-    // Draw frame for WINDOW types (skip when fullscreen)
-    if (canvas->type == WINDOW && !canvas->fullscreen) {
+    // Draw frame for WINDOW and DIALOG types (skip when fullscreen)
+    if ((canvas->type == WINDOW || canvas->type == DIALOG) && !canvas->fullscreen) {
         XRenderColor frame_color = canvas->active ? BLUE : GRAY;
 
         // top border   
@@ -539,75 +615,17 @@ void redraw_canvas(Canvas *canvas) {
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -82, 10, 6, 5 );
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -82, 11, 5, 3 );
         
-        // don't draw scroll bar arrows on clients frame
-        if (canvas->type == WINDOW && canvas->client_win == None) {
-            // right border, arrows separators
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 1, BORDER_WIDTH_RIGHT, 1); 
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 20, BORDER_WIDTH_RIGHT-2, 1); 
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 21, BORDER_WIDTH_RIGHT-2, 1); 
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 40, BORDER_WIDTH_RIGHT-2, 1); 
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT +1, canvas->height - BORDER_HEIGHT_BOTTOM - 41, BORDER_WIDTH_RIGHT-2, 1);
-
-            // down arrow
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -10, canvas->height - BORDER_HEIGHT_BOTTOM-10, 2,4);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -12, canvas->height - BORDER_HEIGHT_BOTTOM-12, 2,4);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -14, canvas->height - BORDER_HEIGHT_BOTTOM-14, 2,4);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -8, canvas->height - BORDER_HEIGHT_BOTTOM-12, 2,4);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -6, canvas->height - BORDER_HEIGHT_BOTTOM-14, 2,4);
-
-            // up arrow
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -10, canvas->height - BORDER_HEIGHT_BOTTOM-35, 2,4);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -12, canvas->height - BORDER_HEIGHT_BOTTOM-33, 2,4);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -14, canvas->height - BORDER_HEIGHT_BOTTOM-31, 2,4);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -8, canvas->height - BORDER_HEIGHT_BOTTOM-33, 2,4);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -6, canvas->height - BORDER_HEIGHT_BOTTOM-31, 2,4);
+        // Draw scrollbar arrows for workbench windows only (skip for dialogs)
+        if (canvas->type == WINDOW && canvas->client_win == None && !canvas->disable_scrollbars) {
+            draw_vertical_scrollbar_arrows(ctx->dpy, dest, canvas->width, canvas->height);
         }
 
-        // resize button
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width - BORDER_WIDTH_RIGHT, canvas->height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM -1); 
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT -1, canvas->height - BORDER_HEIGHT_BOTTOM +1, 1, BORDER_HEIGHT_BOTTOM -1); 
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT + 5, canvas->height - 5, 11, 1);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -5, canvas->height - 15, 1, 10);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT + 5, canvas->height - 7, 1, 3);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -7, canvas->height - 15, 2, 1);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -8, canvas->height - 14, 1, 1);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -9, canvas->height - 13, 1, 1);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -10, canvas->height - 12, 1, 1);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -11, canvas->height - 11, 1, 1);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -12, canvas->height - 10, 1, 1);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -13, canvas->height - 9, 1, 1);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -14, canvas->height - 8, 1, 1);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -7, canvas->height - 14, 2, 9);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -8, canvas->height - 13, 1, 8);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -9, canvas->height - 12, 1, 7);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -10, canvas->height - 11, 1, 6);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -11, canvas->height - 10, 1, 5);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -12, canvas->height - 9, 1, 4);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -13, canvas->height - 8, 1, 3);
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -14, canvas->height - 7, 1, 2);
+        // Draw resize button/handle in bottom-right corner
+        draw_resize_button(ctx->dpy, dest, canvas->width, canvas->height);
 
-        // don't draw scroll bar arrows on clients frame
-        if (canvas->type == WINDOW && canvas->client_win == None) {
-            // bottom border arrows separators
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width - BORDER_WIDTH_RIGHT -21, canvas->height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM -1); 
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT -22, canvas->height - BORDER_HEIGHT_BOTTOM +1, 1, BORDER_HEIGHT_BOTTOM -1);  
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width - BORDER_WIDTH_RIGHT -41, canvas->height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM -1); 
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT -42, canvas->height - BORDER_HEIGHT_BOTTOM +1, 1, BORDER_HEIGHT_BOTTOM -1);  
-
-            // right arrow
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT-8, canvas->height - BORDER_HEIGHT_BOTTOM+10, 4,2);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT-10, canvas->height - BORDER_HEIGHT_BOTTOM+8, 4,2);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT-12, canvas->height - BORDER_HEIGHT_BOTTOM+6, 4,2);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT-10, canvas->height - BORDER_HEIGHT_BOTTOM+12, 4,2);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - BORDER_WIDTH_RIGHT-12, canvas->height - BORDER_HEIGHT_BOTTOM+14, 4,2);
-
-            // left arrow
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - 40-16, canvas->height - BORDER_HEIGHT_BOTTOM+10, 4,2);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - 40-14, canvas->height - BORDER_HEIGHT_BOTTOM+8, 4,2);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - 40-12, canvas->height - BORDER_HEIGHT_BOTTOM+6, 4,2);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - 40-14, canvas->height - BORDER_HEIGHT_BOTTOM+12, 4,2);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width - 40-12, canvas->height - BORDER_HEIGHT_BOTTOM+14, 4,2);
-
+        // Draw horizontal scrollbar arrows for workbench windows only (skip for dialogs)
+        if (canvas->type == WINDOW && canvas->client_win == None && !canvas->disable_scrollbars) {
+            draw_horizontal_scrollbar_arrows(ctx->dpy, dest, canvas->width, canvas->height);
         }
 
         // ==================

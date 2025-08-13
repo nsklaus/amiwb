@@ -83,6 +83,7 @@ static void create_initial_resize_buffers(Canvas *canvas, int start_width, int s
 void resize_begin(Canvas *canvas, int mouse_x, int mouse_y) {
     if (!canvas) return;
     
+    printf("DEBUG: resize_begin called for canvas type=%d\n", canvas->type);
     
     // Simple state setup
     g_resize.canvas = canvas;

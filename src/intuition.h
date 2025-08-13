@@ -23,7 +23,7 @@
 // View mode for workbench windows
 typedef enum { VIEW_ICONS = 0, VIEW_NAMES = 1 } ViewMode;
 
-typedef enum CanvasType { DESKTOP, WINDOW, MENU } CanvasType;
+typedef enum CanvasType { DESKTOP, WINDOW, MENU, DIALOG } CanvasType;
 
 // Global render context shared by renderer and UI subsystems.
 // Holds Display, XRender format, and wallpaper pixmaps.
@@ -72,6 +72,7 @@ typedef struct {
     Window transient_for;                // Parent window for transient windows
     bool close_request_sent;             // True if WM_DELETE_WINDOW was sent (for single-click close)
     int consecutive_unmaps;              // Count of unmaps without remap (for zombie detection)
+    bool disable_scrollbars;             // True to disable scrollbar rendering (for dialogs)
 } Canvas;
 
 extern int randr_event_base;

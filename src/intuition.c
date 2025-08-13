@@ -26,6 +26,9 @@
 // Forward declarations
 static bool should_skip_framing(Window win, XWindowAttributes *attrs);
 static bool is_window_valid(Display *dpy, Window win);
+static bool get_window_attributes_safely(Window win, XWindowAttributes *attrs);
+static void calculate_content_area_inside_frame(const Canvas *canvas, int *content_width, int *content_height);
+static void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height);
 static inline void move_and_resize_frame(Canvas *c, int x, int y, int w, int h);
 
 // Global state for intuition
@@ -50,65 +53,74 @@ static long long now_ms(void) {
 }
 
 
-// Helper to request client to close via WM_DELETE, with fallback to XKillClient
+// Send close request to client window (WM_DELETE_WINDOW or XKillClient)
+static bool send_close_request_to_client(Window client_window) {
+    if (!is_window_valid(display, client_window)) return false;
+    
+    Atom wm_protocols = XInternAtom(display, "WM_PROTOCOLS", False);
+    Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    Atom *protocols = NULL; 
+    int protocol_count = 0;
+    bool supports_delete = false;
+    
+    if (XGetWMProtocols(display, client_window, &protocols, &protocol_count)) {
+        for (int i = 0; i < protocol_count; i++) {
+            if (protocols[i] == wm_delete) { 
+                supports_delete = true; 
+                break; 
+            }
+        }
+        XFree(protocols);
+    }
+    
+    if (supports_delete) {
+        XClientMessageEvent close_event = {0};
+        close_event.type = ClientMessage;
+        close_event.window = client_window;
+        close_event.message_type = wm_protocols;
+        close_event.format = 32;
+        close_event.data.l[0] = wm_delete;
+        close_event.data.l[1] = CurrentTime;
+        XSendEvent(display, client_window, False, NoEventMask, (XEvent *)&close_event);
+        XFlush(display);
+        return true;
+    } else {
+        XKillClient(display, client_window);
+        return true;
+    }
+}
+
+// Handle close request for canvas (special logic for transient windows)
 static void request_client_close(Canvas *canvas) {
     if (!canvas) return;
-    Display *dpy = display;
            
-    if (canvas->client_win && is_window_valid(dpy, canvas->client_win)) {
-        // For transient windows that already had a close request, destroy completely (STAKE IN DRACULA!)
+    if (canvas->client_win && is_window_valid(display, canvas->client_win)) {
+        // For transient windows that already had a close request, destroy completely
         if (canvas->is_transient && canvas->close_request_sent) {
             destroy_canvas(canvas);
             return;
         }
         
-        // Quick responsiveness test for transient windows - if client can't respond to property query, it's dead
+        // Quick responsiveness test for transient windows
         if (canvas->is_transient) {
-            Atom wm_name = XInternAtom(dpy, "WM_NAME", False);
-            Atom actual_type;
-            int actual_format;
-            unsigned long nitems, bytes_after;
+            Atom wm_name = XInternAtom(display, "WM_NAME", False);
+            Atom actual_type; int actual_format; unsigned long nitems, bytes_after;
             unsigned char *prop_return = NULL;
             
-            // Try to read window title - this will fail if client process is dead
-            int result = XGetWindowProperty(dpy, canvas->client_win, wm_name, 0, 0, False, AnyPropertyType,
+            int result = XGetWindowProperty(display, canvas->client_win, wm_name, 0, 0, False, AnyPropertyType,
                                            &actual_type, &actual_format, &nitems, &bytes_after, &prop_return);
             if (prop_return) XFree(prop_return);
             
             if (result != Success) {
-                // Client is unresponsive - destroy completely (STAKE IN DRACULA!)
-                destroy_canvas(canvas);
+                destroy_canvas(canvas); // Client is dead
                 return;
             }
         }
         
-        Atom wm_protocols = XInternAtom(dpy, "WM_PROTOCOLS", False);
-        Atom wm_delete    = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
-        Atom *protocols = NULL; int n = 0;
-        bool supports_delete = false;
-        if (XGetWMProtocols(dpy, canvas->client_win, &protocols, &n)) {
-            for (int i = 0; i < n; i++) if (protocols[i] == wm_delete) { supports_delete = true; break; }
-            if (protocols) XFree(protocols);
-        }
-        if (supports_delete) {
-            XClientMessageEvent ev = {0};
-            ev.type = ClientMessage;
-            ev.window = canvas->client_win;
-            ev.message_type = wm_protocols;
-            ev.format = 32;
-            ev.data.l[0] = wm_delete;
-            ev.data.l[1] = CurrentTime;
-            XSendEvent(dpy, canvas->client_win, False, NoEventMask, (XEvent *)&ev);
-            XFlush(dpy);
-            // Mark transient windows as having had a close request
-            if (canvas->is_transient) {
-                canvas->close_request_sent = true;
-            }
-        } else {
-            XKillClient(dpy, canvas->client_win);
+        if (send_close_request_to_client(canvas->client_win) && canvas->is_transient) {
+            canvas->close_request_sent = true;
         }
     } else {
-        // No client: just destroy our frame
         destroy_canvas(canvas);
     }
 }
@@ -117,12 +129,10 @@ static void request_client_close(Canvas *canvas) {
 
  
 
-// True if the window's parent is the root (it is a toplevel client).
-// We only frame toplevels; children are left to their parents.
+// Check if window is a top-level window (direct child of root window)
 static bool is_toplevel_under_root(Window w) {
-    // Validate 'w' before querying its ancestry to avoid BadWindow
     XWindowAttributes attrs;
-    if (!XGetWindowAttributes(display, w, &attrs)) return false;
+    if (!get_window_attributes_safely(w, &attrs)) return false;
     Window root_return, parent_return, *children = NULL; unsigned int n = 0;
     bool ok = XQueryTree(display, w, &root_return, &parent_return, &children, &n);
     if (children) XFree(children);
@@ -139,11 +149,22 @@ static unsigned long unmanaged_safe_mask(const XConfigureRequestEvent *ev, const
     return mask;
 }
 
-// Validate a window is still valid before issuing X calls to it.
+// Check if a window exists and can be safely accessed
 static bool is_window_valid(Display *dpy, Window win) {
     if (win == None) return false;
     XWindowAttributes attrs;
     return XGetWindowAttributes(dpy, win, &attrs) == True;
+}
+
+// Get window attributes with validation - returns false if window is invalid
+static bool get_window_attributes_safely(Window win, XWindowAttributes *attrs) {
+    if (win == None || !attrs) return false;
+    return XGetWindowAttributes(display, win, attrs) == True;
+}
+
+// Send X command and ensure it completes immediately 
+static void send_x_command_and_sync(void) {
+    XSync(display, False);
 }
 
 
@@ -158,23 +179,28 @@ static inline void move_and_resize_frame(Canvas *c, int x, int y, int w, int h) 
     apply_resize_and_redraw(c, w, h);
 }
 
-// Compute frame size from client size by adding border thickness.
-static inline void frame_sizes_from_client(int cw, int ch, int *fw, int *fh) {
-    if (fw) *fw = max(1, cw) + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
-    if (fh) *fh = max(1, ch) + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+// Calculate frame window size needed to contain client area with borders
+static inline void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height) {
+    if (frame_width) *frame_width = max(1, client_width) + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+    if (frame_height) *frame_height = max(1, client_height) + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
 }
 
-// Visible content area inside the frame; excludes borders so layout
-// math elsewhere can rely on drawable width/height.
-static inline void content_rect(const Canvas *c, int *vw, int *vh) {
-    if (!c) { if (vw) *vw = 0; if (vh) *vh = 0; return; }
-    if (c->fullscreen) {
-        if (vw) *vw = max(1, c->width);
-        if (vh) *vh = max(1, c->height);
+// Calculate usable content area inside window frame (excluding borders)
+static inline void calculate_content_area_inside_frame(const Canvas *canvas, int *content_width, int *content_height) {
+    if (!canvas) { 
+        if (content_width) *content_width = 0; 
+        if (content_height) *content_height = 0; 
+        return; 
+    }
+    
+    if (canvas->fullscreen) {
+        if (content_width) *content_width = max(1, canvas->width);
+        if (content_height) *content_height = max(1, canvas->height);
         return;
     }
-    if (vw) *vw = max(1, c->width  - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT);
-    if (vh) *vh = max(1, c->height - BORDER_HEIGHT_TOP  - BORDER_HEIGHT_BOTTOM);
+    
+    if (content_width) *content_width = max(1, canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT);
+    if (content_height) *content_height = max(1, canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);
 }
 
 // True if attrs indicate a normal manageable client; skip override
@@ -212,13 +238,13 @@ static void activate_window_behind(Canvas *current) {
     if (idx >= 0) {
         for (int j = idx - 1; j >= 0; --j) {
             Canvas *c = find_canvas(children[j]);
-            if (c && c->type == WINDOW && c != current) { set_active_window(c); if (children) XFree(children); return; }
+            if (c && (c->type == WINDOW || c->type == DIALOG) && c != current) { set_active_window(c); if (children) XFree(children); return; }
         }
     }
     // Fallback: topmost window excluding current
     for (int i = (int)n - 1; i >= 0; --i) {
         Canvas *c = find_canvas(children[i]);
-        if (c && c->type == WINDOW && c != current) { set_active_window(c); break; }
+        if (c && (c->type == WINDOW || c->type == DIALOG) && c != current) { set_active_window(c); break; }
     }
     if (children) XFree(children);
 }
@@ -291,54 +317,53 @@ static void menubar_apply_fullscreen(bool fullscreen) {
     apply_resize_and_redraw(menubar, width, MENUBAR_HEIGHT);
 }
 
-// Load attributes; if unavailable, provide reasonable defaults for framing
-static void load_window_attrs_or_defaults(Window win, XWindowAttributes *attrs, bool *valid_out) {
-    bool ok = XGetWindowAttributes(display, win, attrs);
-    if (!ok) {
-        attrs->x = 200;
-        attrs->y = 200;
-        attrs->width = 400;
-        attrs->height = 300;
-        attrs->override_redirect = False;
-        attrs->class = InputOutput;
-        attrs->border_width = 0;
-    }
-    if (valid_out) *valid_out = ok;
+// Get window attributes or provide safe defaults if window is invalid
+static bool get_window_attrs_with_defaults(Window win, XWindowAttributes *attrs) {
+    if (get_window_attributes_safely(win, attrs)) return true;
+    
+    // Provide safe defaults for invalid windows
+    *attrs = (XWindowAttributes){
+        .x = 200, .y = 200, .width = 400, .height = 300,
+        .override_redirect = False, .class = InputOutput, .border_width = 0
+    };
+    return false;
 }
 
-static Canvas *add_canvas(void) {
+// Add new canvas to the global array, expanding if needed
+static Canvas *add_new_canvas_to_array(void) {
+    // Expand array if needed
     if (canvas_count >= canvas_array_size) {
-        canvas_array_size = canvas_array_size ? 
-            canvas_array_size * 2 : INITIAL_CANVAS_CAPACITY;
-
-        Canvas **new_canvases = realloc(canvas_array, 
-            canvas_array_size * sizeof(Canvas *));
-        if (!new_canvases) 
-            return NULL;
-        canvas_array = new_canvases;
+        int new_size = canvas_array_size ? canvas_array_size * 2 : INITIAL_CANVAS_CAPACITY;
+        Canvas **expanded_array = realloc(canvas_array, new_size * sizeof(Canvas *));
+        if (!expanded_array) return NULL;
+        canvas_array = expanded_array;
+        canvas_array_size = new_size;
     }
+    
+    // Allocate new canvas
     Canvas *new_canvas = malloc(sizeof(Canvas));
-    if (!new_canvas) 
-        return NULL;
-
+    if (!new_canvas) return NULL;
+    
     canvas_array[canvas_count++] = new_canvas;
     return new_canvas;
 }
 
-static void remove_canvas(Canvas *canvas_to_remove) {
+// Remove canvas from global array and compact the array
+static void remove_canvas_from_array(Canvas *target_canvas) {
     for (int i = 0; i < canvas_count; i++) {
-        if (canvas_array[i] == canvas_to_remove) {
-            memmove(&canvas_array[i], &canvas_array[i + 1],
-                    (canvas_count - i - 1) * sizeof(Canvas *));
+        if (canvas_array[i] == target_canvas) {
+            // Shift remaining canvases down to fill the gap
+            memmove(&canvas_array[i], &canvas_array[i + 1], (canvas_count - i - 1) * sizeof(Canvas *));
             canvas_count--;
             break;
         }
     }
 }
 
-Canvas *manage_canvases(bool add, Canvas *canvas_to_remove) {
-    if (add) return add_canvas();
-    if (canvas_to_remove) remove_canvas(canvas_to_remove);
+// Manage canvas array - either add new canvas or remove existing one
+Canvas *manage_canvases(bool should_add_canvas, Canvas *canvas_to_remove) {
+    if (should_add_canvas) return add_new_canvas_to_array();
+    if (canvas_to_remove) remove_canvas_from_array(canvas_to_remove);
     return NULL;
 }
 
@@ -383,23 +408,34 @@ static bool init_display_and_root(void) {
     return true;
 }
 
-// Small utility helpers for clarity and fewer repeated lines
-static void choose_visual(CanvasType t, XVisualInfo *out) {
-    if (t == DESKTOP) { out->visual = DefaultVisual(display, screen); out->depth = DefaultDepth(display, screen); }
-    else if (!XMatchVisualInfo(display, screen, GLOBAL_DEPTH, TrueColor, out)) { out->visual = DefaultVisual(display, screen); out->depth = DefaultDepth(display, screen); }
-    XMatchVisualInfo(display, screen, out->depth, TrueColor, out);
+// Choose appropriate visual and depth for different canvas types
+static void choose_visual_for_canvas_type(CanvasType canvas_type, XVisualInfo *visual_info) {
+    if (canvas_type == DESKTOP) { 
+        visual_info->visual = DefaultVisual(display, screen); 
+        visual_info->depth = DefaultDepth(display, screen); 
+    } else if (!XMatchVisualInfo(display, screen, GLOBAL_DEPTH, TrueColor, visual_info)) { 
+        visual_info->visual = DefaultVisual(display, screen); 
+        visual_info->depth = DefaultDepth(display, screen); 
+    }
+    XMatchVisualInfo(display, screen, visual_info->depth, TrueColor, visual_info);
 }
 
-static long event_mask_for(CanvasType t) {
-    long em = ExposureMask | ButtonPressMask | PointerMotionMask | ButtonReleaseMask | KeyPressMask;
-    if (t == DESKTOP) em |= SubstructureRedirectMask | SubstructureNotifyMask;
-    if (t == WINDOW)  em |= StructureNotifyMask | SubstructureNotifyMask | EnterWindowMask | FocusChangeMask;
-    if (t == MENU)    em |= PointerMotionMask | ButtonPressMask | ButtonReleaseMask;
-    return em;
+// Get X11 event mask appropriate for each canvas type
+static long get_event_mask_for_canvas_type(CanvasType canvas_type) {
+    long base_events = ExposureMask | ButtonPressMask | PointerMotionMask | ButtonReleaseMask | KeyPressMask;
+    
+    if (canvas_type == DESKTOP) 
+        return base_events | SubstructureRedirectMask | SubstructureNotifyMask;
+    if (canvas_type == WINDOW)  
+        return base_events | StructureNotifyMask | SubstructureNotifyMask | EnterWindowMask | FocusChangeMask;
+    if (canvas_type == MENU)    
+        return base_events | PointerMotionMask | ButtonPressMask | ButtonReleaseMask;
+    
+    return base_events;
 }
 
 static bool should_frame_window(Window w, XWindowAttributes *a) {
-    if (!XGetWindowAttributes(display, w, a)) return false;
+    if (!get_window_attributes_safely(w, a)) return false;
     if (a->map_state != IsViewable || a->class == InputOnly) return false;
     if (should_skip_framing(w, a)) return false;
     return true;
@@ -421,8 +457,10 @@ static void apply_resize_and_redraw(Canvas *c, int nw, int nh) {
         render_recreate_canvas_surfaces(c);
     }
     
-    if (c->client_win != None) { int vw, vh; content_rect(c, &vw, &vh);
-        XWindowChanges ch = { .width = vw, .height = vh };
+    if (c->client_win != None) { 
+        int client_width, client_height; 
+        calculate_content_area_inside_frame(c, &client_width, &client_height);
+        XWindowChanges ch = { .width = client_width, .height = client_height };
         XConfigureWindow(display, c->client_win, CWWidth | CWHeight, &ch);
     } else if (c->type == WINDOW) compute_max_scroll(c);
     
@@ -442,7 +480,7 @@ static bool is_fullscreen_active(Window win) {
 
 static void deactivate_all_windows(void) {
     for (int i = 0; i < canvas_count; i++) { Canvas *c = canvas_array[i];
-        if (c->type == WINDOW) { c->active = false; redraw_canvas(c); } }
+        if (c->type == WINDOW || c->type == DIALOG) { c->active = false; redraw_canvas(c); } }
     active_window = NULL;
 }
 
@@ -465,7 +503,7 @@ static Bool setup_visual_and_window(Canvas *c, CanvasType t,
     if (!ctx) return False;
 
     // Choose a visual/depth suitable for the canvas type
-    XVisualInfo vinfo; choose_visual(t, &vinfo);
+    XVisualInfo vinfo; choose_visual_for_canvas_type(t, &vinfo);
     c->visual = vinfo.visual;
     c->depth  = vinfo.depth;
 
@@ -490,7 +528,7 @@ static Bool setup_visual_and_window(Canvas *c, CanvasType t,
     // No internal tagging
 
     // Select input events
-    XSelectInput(ctx->dpy, c->win, event_mask_for(t));
+    XSelectInput(ctx->dpy, c->win, get_event_mask_for_canvas_type(t));
 
     // Backing pixmap for offscreen rendering
     c->canvas_buffer = XCreatePixmap(ctx->dpy, c->win, w, h, vinfo.depth);
@@ -509,8 +547,8 @@ static Bool init_render_pictures(Canvas *c, CanvasType t) {
 static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
     if (!attrs) return NULL;
     int fx = max(attrs->x, 200), fy = max(attrs->y, MENUBAR_HEIGHT + 100);
-    int fw = attrs->width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
-    int fh = attrs->height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+    int fw, fh;
+    calculate_frame_size_from_client_size(attrs->width, attrs->height, &fw, &fh);
     Canvas *frame = create_canvas(NULL, fx, fy, fw, fh, WINDOW); if (!frame) return NULL;
     
     // Check if this is a transient window (modal dialog) and mark it
@@ -545,30 +583,61 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
     if (frame->client_win != None) {
         XClassHint ch; if (XGetClassHint(display, frame->client_win, &ch) && ch.res_name) frame->title = ch.res_name; else frame->title = "NoNameApp";
     }
-    XAddToSaveSet(display, client); return frame;
+    XAddToSaveSet(display, client); 
+    return frame;
+}
+
+// Frame all existing client windows that need management
+static void frame_existing_client_windows(void) {
+    Window root_window, parent_window, *child_windows = NULL; 
+    unsigned int child_count = 0;
+    
+    if (!XQueryTree(display, root, &root_window, &parent_window, &child_windows, &child_count)) return;
+    
+    for (unsigned int i = 0; i < child_count; i++) {
+        Window client_window = child_windows[i];
+        
+        // Skip windows we already manage
+        bool already_managed = false;
+        for (int j = 0; j < canvas_count; j++) {
+            if (canvas_array[j]->win == client_window || canvas_array[j]->client_win == client_window) {
+                already_managed = true; 
+                break;
+            }
+        }
+        if (already_managed) continue;
+        
+        // Frame this window if it needs management
+        XWindowAttributes window_attrs;
+        if (!should_frame_window(client_window, &window_attrs)) continue;
+        
+        Canvas *new_frame = frame_client_window(client_window, &window_attrs);
+        if (new_frame) {
+            raise_window(new_frame);
+            redraw_canvas(new_frame);
+        }
+    }
+    
+    if (child_windows) XFree(child_windows);
 }
 
 Canvas *init_intuition(void) {
     if (!init_display_and_root() || !init_render_context()) return NULL;
+    
     Canvas *desktop = create_canvas(getenv("HOME"), 0, 20, width, height, DESKTOP);
     if (!desktop) return NULL;
+    
+    // Setup Imlib2 for image loading
     imlib_context_set_display(display);
     imlib_context_set_visual(desktop->visual);
     imlib_context_set_colormap(desktop->colormap);
     imlib_set_cache_size(0);
     render_load_wallpapers();
-    Window rt, pt, *kids = NULL; unsigned int nk = 0;
-    if (XQueryTree(display, root, &rt, &pt, &kids, &nk)) {
-        for (unsigned int i = 0; i < nk; i++) {
-            Window w = kids[i];
-            bool own = false; for (int j = 0; j < canvas_count; j++) if (canvas_array[j]->win == w || canvas_array[j]->client_win == w) { own = true; break; }
-            if (own) continue; XWindowAttributes a;
-            if (!should_frame_window(w, &a)) continue;
-            Canvas *f = frame_client_window(w, &a); if (!f) continue; raise_window(f); redraw_canvas(f);
-        }
-        if (kids) XFree(kids);
-    }
-    XSync(display, False); 
+    
+    // Frame any existing client windows
+    frame_existing_client_windows();
+    
+    send_x_command_and_sync(); 
     redraw_canvas(desktop); 
     return desktop;
 }
@@ -577,7 +646,7 @@ static void init_scroll(Canvas *canvas) {
     if (!canvas || canvas->type != WINDOW) return;
     canvas->scroll_x = 0;
     canvas->scroll_y = 0;
-    content_rect(canvas, &canvas->content_width, &canvas->content_height);
+    calculate_content_area_inside_frame(canvas, &canvas->content_width, &canvas->content_height);
     compute_max_scroll(canvas);
 }
 
@@ -586,25 +655,29 @@ Canvas *get_desktop_canvas(void) {
     return canvas_count > 0 ? canvas_array[0] : NULL;
 }
 
-Canvas *find_canvas(Window win) {
+// Find canvas by either frame window or client window
+static Canvas *find_canvas_by_any_window(Window search_window, bool check_client_windows) {
     for (int i = 0; i < canvas_count; i++) {
-        if (canvas_array[i]->win == win) return canvas_array[i];
+        Canvas *canvas = canvas_array[i];
+        if (canvas->win == search_window) return canvas;
+        if (check_client_windows && canvas->client_win == search_window) return canvas;
     }
     return NULL;
 }
 
-Canvas *find_canvas_by_client(Window cw) {
-    for (int i = 0; i < canvas_count; i++) {
-        if (canvas_array[i]->client_win == cw) return canvas_array[i];
-    }
-    return NULL;
+Canvas *find_canvas(Window frame_window) {
+    return find_canvas_by_any_window(frame_window, false);
+}
+
+Canvas *find_canvas_by_client(Window client_window) {
+    return find_canvas_by_any_window(client_window, true);
 }
 
 void set_active_window(Canvas *c) {
-    if (!c || c->type != WINDOW) return;
+    if (!c || (c->type != WINDOW && c->type != DIALOG)) return;
     for (int i = 0; i < canvas_count; i++) {
         Canvas *o = canvas_array[i];
-        if (o->type == WINDOW && o != c) {
+        if ((o->type == WINDOW || o->type == DIALOG) && o != c) {
             o->active = false;
             redraw_canvas(o);
         }
@@ -625,10 +698,10 @@ Canvas *get_active_window(void) {
 
 void compute_max_scroll(Canvas *c) {
     if (!c) return;
-    int vw, vh;
-    content_rect(c, &vw, &vh);
-    c->max_scroll_x = max(0, c->content_width - vw);
-    c->max_scroll_y = max(0, c->content_height - vh);
+    int content_width, content_height;
+    calculate_content_area_inside_frame(c, &content_width, &content_height);
+    c->max_scroll_x = max(0, c->content_width - content_width);
+    c->max_scroll_y = max(0, c->content_height - content_height);
     c->scroll_x = min(c->scroll_x, c->max_scroll_x);
     c->scroll_y = min(c->scroll_y, c->max_scroll_y);
 }
@@ -758,7 +831,7 @@ void iconify_canvas(Canvas *c) {
     create_icon(icon_path, desk, nx, ny);
     FileIcon **ia = get_icon_array(); FileIcon *ni = ia[get_icon_count() - 1];
     ni->type = TYPE_ICONIFIED; free(ni->label); ni->label = label; free(ni->path); ni->path = NULL; ni->iconified_canvas = c;
-    XUnmapWindow(display, c->win); if (active_window == c) active_window = NULL; redraw_canvas(desk); XSync(display, False);
+    XUnmapWindow(display, c->win); if (active_window == c) active_window = NULL; redraw_canvas(desk); send_x_command_and_sync();
 }
 
 // Create new window
@@ -776,6 +849,7 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
     canvas->transient_for = None;
     canvas->close_request_sent = false;
     canvas->consecutive_unmaps = 0;
+    canvas->disable_scrollbars = false;
 
     if (!setup_visual_and_window(canvas, type, x, y, width, height)) {
         destroy_canvas(canvas);
@@ -885,137 +959,165 @@ static inline Bool begin_frame_resize(Canvas *c, XButtonEvent *e) {
 
 enum { SCROLL_STEP = 20, ARROW_SIZE = 20, TRACK_MARGIN = 10, TRACK_RESERVED = 54 };
 
-// -------- Scrollbar utilities 
-static inline void vscroll_geom(Canvas *c, int *x, int *y, int *w, int *h) {
-    *x = c->width - BORDER_WIDTH_RIGHT;
-    *y = BORDER_HEIGHT_TOP + TRACK_MARGIN;
-    *w = BORDER_WIDTH_RIGHT;
-    *h = (c->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM) - TRACK_RESERVED - TRACK_MARGIN;
+// Keep values within reasonable bounds
+static inline int clamp_value_between(int value, int minimum, int maximum) {
+    if (value < minimum) return minimum; 
+    if (value > maximum) return maximum; 
+    return value;
 }
 
-static inline void hscroll_geom(Canvas *c, int *x, int *y, int *w, int *h) {
-    *x = BORDER_WIDTH_LEFT + TRACK_MARGIN;
-    *y = c->height - BORDER_HEIGHT_BOTTOM;
-    *w = (c->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) - TRACK_RESERVED - TRACK_MARGIN;
-    *h = BORDER_HEIGHT_BOTTOM;
+// Calculate scrollbar track area (where the draggable knob moves)
+static inline void get_scrollbar_track_area(Canvas *canvas, bool is_vertical, int *x, int *y, int *width, int *height) {
+    if (is_vertical) {
+        *x = canvas->width - BORDER_WIDTH_RIGHT;
+        *y = BORDER_HEIGHT_TOP + TRACK_MARGIN;
+        *width = BORDER_WIDTH_RIGHT;
+        *height = (canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM) - TRACK_RESERVED - TRACK_MARGIN;
+    } else {
+        *x = BORDER_WIDTH_LEFT + TRACK_MARGIN;
+        *y = canvas->height - BORDER_HEIGHT_BOTTOM;
+        *width = (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) - TRACK_RESERVED - TRACK_MARGIN;
+        *height = BORDER_HEIGHT_BOTTOM;
+    }
 }
 
-static inline int clamp_int(int v, int lo, int hi) {
-    if (v < lo) return lo; if (v > hi) return hi; return v;
+// Calculate size of draggable knob based on content-to-track ratio
+static inline int calculate_scrollbar_knob_size(int track_length, int content_length) {
+    float size_ratio = (float)track_length / (float)content_length;
+    int knob_size = (int)(size_ratio * track_length);
+    if (knob_size < MIN_KNOB_SIZE) knob_size = MIN_KNOB_SIZE;
+    if (knob_size > track_length) knob_size = track_length;
+    return knob_size;
 }
 
-static inline int knob_size(int track_len, int content_len) {
-    float ratio = (float)track_len / (float)content_len;
-    int size = (int)(ratio * track_len);
-    if (size < MIN_KNOB_SIZE) size = MIN_KNOB_SIZE;
-    if (size > track_len) size = track_len;
-    return size;
-}
-
-static inline int knob_pos_from_scroll(int track_len, int knob_len, int scroll, int max_scroll) {
+// Convert scroll position to knob position within track
+static inline int calculate_knob_position_from_scroll(int track_length, int knob_length, int scroll_amount, int max_scroll) {
     if (max_scroll <= 0) return 0;
-    float pos_ratio = (float)scroll / (float)max_scroll;
-    int free_len = track_len - knob_len;
-    if (free_len <= 0) return 0;
-    return (int)(pos_ratio * free_len);
+    float position_ratio = (float)scroll_amount / (float)max_scroll;
+    int available_space = track_length - knob_length;
+    if (available_space <= 0) return 0;
+    return (int)(position_ratio * available_space);
 }
 
-static inline int scroll_from_click(int track_off, int track_len, int max_scroll, int click_pos) {
-    float click_ratio = (float)(click_pos - track_off) / (float)track_len;
-    int val = (int)(click_ratio * (float)max_scroll);
-    return clamp_int(val, 0, max_scroll);
+// Convert mouse click position to scroll amount
+static inline int calculate_scroll_from_mouse_click(int track_start, int track_length, int max_scroll, int click_position) {
+    float click_ratio = (float)(click_position - track_start) / (float)track_length;
+    int scroll_value = (int)(click_ratio * (float)max_scroll);
+    return clamp_value_between(scroll_value, 0, max_scroll);
 }
 
-static inline void begin_scroll(Canvas *c, bool vertical, int initial, int start_root) {
-    scrolling_canvas = c; scrolling_vertical = vertical;
-    initial_scroll = initial; scroll_start_pos = start_root;
+// Start scrollbar dragging operation
+static inline void start_scrollbar_dragging(Canvas *canvas, bool is_vertical, int initial_scroll, int mouse_start_pos) {
+    scrolling_canvas = canvas; 
+    scrolling_vertical = is_vertical;
+    initial_scroll = initial_scroll; 
+    scroll_start_pos = mouse_start_pos;
+}
+
+// Handle mouse wheel scrolling with shift key support
+static Bool handle_mouse_wheel_scrolling(Canvas *canvas, XButtonEvent *event) {
+    if (event->button != 4 && event->button != 5) return False;
+    if (canvas->max_scroll_y <= 0 && canvas->max_scroll_x <= 0) return False;
+    
+    bool scroll_up = (event->button == 4);
+    bool has_shift_key = (event->state & ShiftMask);
+    
+    if (has_shift_key && canvas->max_scroll_x > 0) {
+        // Shift + wheel = horizontal scroll
+        int new_scroll_x = canvas->scroll_x + (scroll_up ? -SCROLL_STEP : SCROLL_STEP);
+        canvas->scroll_x = clamp_value_between(new_scroll_x, 0, canvas->max_scroll_x);
+    } else if (canvas->max_scroll_y > 0) {
+        // Normal wheel = vertical scroll
+        int new_scroll_y = canvas->scroll_y + (scroll_up ? -SCROLL_STEP : SCROLL_STEP);
+        canvas->scroll_y = clamp_value_between(new_scroll_y, 0, canvas->max_scroll_y);
+    }
+    return True;
+}
+
+// Handle mouse clicks on scrollbar (either knob drag or track click)
+static Bool handle_scrollbar_click(Canvas *canvas, XButtonEvent *event, bool is_vertical) {
+    if (event->button != Button1) return False;
+    
+    int track_x, track_y, track_width, track_height;
+    get_scrollbar_track_area(canvas, is_vertical, &track_x, &track_y, &track_width, &track_height);
+    
+    // Check if click is within track area
+    bool click_in_track = (event->x >= track_x && event->x < track_x + track_width &&
+                          event->y >= track_y && event->y < track_y + track_height);
+    if (!click_in_track) return False;
+    
+    int track_length = is_vertical ? track_height : track_width;
+    int content_length = is_vertical ? canvas->content_height : canvas->content_width;
+    int current_scroll = is_vertical ? canvas->scroll_y : canvas->scroll_x;
+    int max_scroll = is_vertical ? canvas->max_scroll_y : canvas->max_scroll_x;
+    
+    int knob_length = calculate_scrollbar_knob_size(track_length, content_length);
+    int knob_position = (is_vertical ? track_y : track_x) + 
+                       calculate_knob_position_from_scroll(track_length, knob_length, current_scroll, max_scroll);
+    
+    int click_coordinate = is_vertical ? event->y : event->x;
+    bool click_on_knob = (click_coordinate >= knob_position && click_coordinate < knob_position + knob_length);
+    
+    if (click_on_knob) {
+        // Start dragging the knob
+        int root_coordinate = is_vertical ? event->y_root : event->x_root;
+        start_scrollbar_dragging(canvas, is_vertical, current_scroll, root_coordinate);
+    } else {
+        // Click on track - jump to that position
+        int track_start = is_vertical ? track_y : track_x;
+        int new_scroll = calculate_scroll_from_mouse_click(track_start, track_length, max_scroll, click_coordinate);
+        if (is_vertical) canvas->scroll_y = new_scroll;
+        else canvas->scroll_x = new_scroll;
+        redraw_canvas(canvas);
+    }
+    return True;
 }
 
 static Bool handle_scrollbars(Canvas *canvas, XButtonEvent *event) {
     if (canvas->client_win != None) return False; // no scrollbars on client windows
 
-    // mouse wheel 
-    if (event->button == 4 || event->button == 5) {
-        if (canvas->max_scroll_y <= 0 && canvas->max_scroll_x <= 0) return False;
-        
-        bool scroll_up = (event->button == 4);
-        bool has_shift = (event->state & ShiftMask);
-        
-        if (has_shift && canvas->max_scroll_x > 0) {
-            // Shift + wheel = horizontal scroll
-            int new_x = canvas->scroll_x + (scroll_up ? -SCROLL_STEP : SCROLL_STEP);
-            canvas->scroll_x = clamp_int(new_x, 0, canvas->max_scroll_x);
-        } else if (canvas->max_scroll_y > 0) {
-            // Normal wheel = vertical scroll
-            int new_y = canvas->scroll_y + (scroll_up ? -SCROLL_STEP : SCROLL_STEP);
-            canvas->scroll_y = clamp_int(new_y, 0, canvas->max_scroll_y);
-        }
+    // Handle mouse wheel first
+    if (handle_mouse_wheel_scrolling(canvas, event)) {
+        redraw_canvas(canvas);
+        return True;
     }
     
-    int sb_x, sb_y, sb_w, sb_h; vscroll_geom(canvas, &sb_x, &sb_y, &sb_w, &sb_h);
-
-    if (event->x >= sb_x && event->x < sb_x + sb_w &&
-        event->y >= sb_y && event->y < sb_y + sb_h &&
-        event->button == Button1) {
-        int track_len = sb_h;
-        int content_len = canvas->content_height;
-        int knob_len = knob_size(track_len, content_len);
-        int knob_y = sb_y + knob_pos_from_scroll(track_len, knob_len, canvas->scroll_y, canvas->max_scroll_y);
-        if (event->y >= knob_y && event->y < knob_y + knob_len) {
-            begin_scroll(canvas, true, canvas->scroll_y, event->y_root);
-            return True;
-        } else {
-            int new_sy = scroll_from_click(sb_y, track_len, canvas->max_scroll_y, event->y);
-            canvas->scroll_y = new_sy; redraw_canvas(canvas); return True;
-        }
-    }
-    if (event->x >= sb_x && event->x < sb_x + sb_w && event->button == Button1) {
-        if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM - (2 * ARROW_SIZE)) &&
-            event->y < (canvas->height - BORDER_HEIGHT_BOTTOM - ARROW_SIZE)) {
-            canvas->scroll_y = max(0, canvas->scroll_y - SCROLL_STEP); redraw_canvas(canvas); return True;
-        } else if (event->y >= (canvas->height - BORDER_HEIGHT_BOTTOM - ARROW_SIZE) &&
-                   event->y < (canvas->height - BORDER_HEIGHT_BOTTOM)) {
-            canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + SCROLL_STEP); redraw_canvas(canvas); return True;
-        }
-    }
-
-    int hb_x, hb_y, hb_w, hb_h; hscroll_geom(canvas, &hb_x, &hb_y, &hb_w, &hb_h);
-    if (event->x >= hb_x && event->x < hb_x + hb_w &&
-        event->y >= hb_y && event->y < hb_y + hb_h &&
-        event->button == Button1) {
-        int track_len = hb_w;
-        int content_len = canvas->content_width;
-        int knob_len = knob_size(track_len, content_len);
-        int knob_x = hb_x + knob_pos_from_scroll(track_len, knob_len, canvas->scroll_x, canvas->max_scroll_x);
-        if (event->x >= knob_x && event->x < knob_x + knob_len) {
-            begin_scroll(canvas, false, canvas->scroll_x, event->x_root); return True;
-        } else {
-            int new_sx = scroll_from_click(hb_x, track_len, canvas->max_scroll_x, event->x);
-            canvas->scroll_x = new_sx; redraw_canvas(canvas); return True;
-        }
-    }
-    if (event->y >= hb_y && event->y < hb_y + hb_h && event->button == Button1) {
-        if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT - (2 * ARROW_SIZE)) &&
-            event->x < (canvas->width - BORDER_WIDTH_RIGHT - ARROW_SIZE)) {
-            canvas->scroll_x = max(0, canvas->scroll_x - SCROLL_STEP); redraw_canvas(canvas); return True;
-        } else if (event->x >= (canvas->width - BORDER_WIDTH_RIGHT - ARROW_SIZE) &&
-                   event->x < (canvas->width - BORDER_WIDTH_RIGHT)) {
-            canvas->scroll_x = min(canvas->max_scroll_x, canvas->scroll_x + SCROLL_STEP); redraw_canvas(canvas); return True;
-        }
-    }
+    // Handle vertical scrollbar clicks
+    if (handle_scrollbar_click(canvas, event, true)) return True;
+    
+    // Handle horizontal scrollbar clicks  
+    if (handle_scrollbar_click(canvas, event, false)) return True;
+    
     return False;
 }
 
-static void scroll_update_from_motion(Canvas *c, bool vertical, int initial, int start_root, int current_root) {
-    int delta = vertical ? (current_root - start_root) : (current_root - start_root);
-    int track_len = vertical ? (c->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM) - TRACK_RESERVED - TRACK_MARGIN : (c->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) - TRACK_RESERVED - TRACK_MARGIN;
-    int knob_len = knob_size(track_len, vertical ? c->content_height : c->content_width);
-    int track = max(1, track_len - knob_len);
-    float knob0 = (vertical ? c->max_scroll_y : c->max_scroll_x > 0) ? ((float)initial / (float)(vertical ? c->max_scroll_y : c->max_scroll_x)) * track : 0.0f;
-    float knob = min((float)track, max(0.0f, knob0 + (float)delta));
-    int new_scroll = (vertical ? c->max_scroll_y : c->max_scroll_x > 0) ? (int)roundf((knob / (float)track) * (float)(vertical ? c->max_scroll_y : c->max_scroll_x)) : 0;
-    if (vertical) c->scroll_y = new_scroll; else c->scroll_x = new_scroll;
-    redraw_canvas(c);
+// Update scrollbar position during mouse drag motion
+static void update_scroll_from_mouse_drag(Canvas *canvas, bool is_vertical, int initial_scroll, int drag_start_pos, int current_mouse_pos) {
+    int mouse_movement = current_mouse_pos - drag_start_pos;
+    
+    int track_x, track_y, track_width, track_height;
+    get_scrollbar_track_area(canvas, is_vertical, &track_x, &track_y, &track_width, &track_height);
+    
+    int track_length = is_vertical ? track_height : track_width;
+    int content_length = is_vertical ? canvas->content_height : canvas->content_width;
+    int max_scroll = is_vertical ? canvas->max_scroll_y : canvas->max_scroll_x;
+    
+    int knob_length = calculate_scrollbar_knob_size(track_length, content_length);
+    int available_track_space = max(1, track_length - knob_length);
+    
+    // Calculate initial knob position as ratio of track
+    float initial_knob_ratio = (max_scroll > 0) ? ((float)initial_scroll / (float)max_scroll) : 0.0f;
+    float initial_knob_pos = initial_knob_ratio * available_track_space;
+    
+    // Add mouse movement and clamp to track bounds
+    float new_knob_pos = max(0.0f, min((float)available_track_space, initial_knob_pos + (float)mouse_movement));
+    
+    // Convert back to scroll value
+    int new_scroll = (max_scroll > 0) ? (int)roundf((new_knob_pos / (float)available_track_space) * (float)max_scroll) : 0;
+    
+    if (is_vertical) canvas->scroll_y = new_scroll; 
+    else canvas->scroll_x = new_scroll;
+    redraw_canvas(canvas);
 }
 
 
@@ -1049,26 +1151,34 @@ static inline void toggle_menubar_and_redraw(void) {
     if (mb) { XMapWindow(display, mb->win); redraw_canvas(mb); }
 }
 
-// Button press helpers
+// Check if mouse click is on any desktop icon
+static bool mouse_click_is_on_desktop_icon(Canvas *canvas, XButtonEvent *event) {
+    FileIcon **icon_array = get_icon_array();
+    int icon_count = get_icon_count();
+    
+    for (int i = 0; i < icon_count; i++) {
+        FileIcon *icon = icon_array[i];
+        if (icon->display_window == canvas->win &&
+            event->x >= icon->x && event->x < icon->x + icon->width &&
+            event->y >= icon->y && event->y < icon->y + icon->height) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Handle mouse clicks on desktop background
 static void handle_desktop_button(Canvas *canvas, XButtonEvent *event) {
     if (event->button == Button3) {
         toggle_menubar_and_redraw();
+        return;
     }
+    
     if (event->button == Button1) {
-        if (now_ms() < g_deactivate_suppress_until_ms) {
-            return;
+        if (now_ms() < g_deactivate_suppress_until_ms) return;
+        if (!mouse_click_is_on_desktop_icon(canvas, event)) {
+            deactivate_all_windows();
         }
-        bool on_icon = false;
-        FileIcon **icon_array = get_icon_array();
-        int icon_count = get_icon_count();
-        for (int i = 0; i < icon_count; i++) {
-            if (icon_array[i]->display_window == canvas->win &&
-                event->x >= icon_array[i]->x &&
-                event->x < icon_array[i]->x + icon_array[i]->width &&
-                event->y >= icon_array[i]->y &&
-                event->y < icon_array[i]->y + icon_array[i]->height) { on_icon = true; break; }
-        }
-        if (!on_icon) deactivate_all_windows();
     }
 }
 
@@ -1134,7 +1244,7 @@ void intuition_handle_button_press(XButtonEvent *event) {
         return;
     }
 
-    if (canvas->type != WINDOW) 
+    if (canvas->type != WINDOW && canvas->type != DIALOG) 
         return;
 
     set_active_window(canvas);
@@ -1168,11 +1278,8 @@ static Bool handle_resize_motion(XMotionEvent *event) {
 
 static Bool handle_scroll_motion(XMotionEvent *event) {
     if (scrolling_canvas) {
-        if (scrolling_vertical)
-            scroll_update_from_motion(scrolling_canvas, true, initial_scroll, scroll_start_pos, event->y_root);
-        else
-            scroll_update_from_motion(scrolling_canvas, false, initial_scroll, scroll_start_pos, event->x_root);
-        redraw_canvas(scrolling_canvas);
+        int current_mouse_pos = scrolling_vertical ? event->y_root : event->x_root;
+        update_scroll_from_mouse_drag(scrolling_canvas, scrolling_vertical, initial_scroll, scroll_start_pos, current_mouse_pos);
         return True;
     }
     return False;
@@ -1208,26 +1315,6 @@ void intuition_handle_button_release(XButtonEvent *event) {
         TitlebarHit hit = hit_test(canvas, event->x, event->y);
         canvas->close_armed = false;
         if (hit == HIT_CLOSE) {
-            // Diagnostic output to understand the file picker issue
-            printf("[DIAGNOSTIC] Close button clicked on window:\n");
-            printf("  client_win=0x%lx\n", canvas->client_win);
-            printf("  is_transient=%s\n", canvas->is_transient ? "YES" : "NO");
-            printf("  close_request_sent=%s\n", canvas->close_request_sent ? "YES" : "NO");
-            printf("  title=%s\n", canvas->title ? canvas->title : "NULL");
-            
-            // Check if window is actually valid
-            XWindowAttributes attrs;
-            bool window_valid = XGetWindowAttributes(display, canvas->client_win, &attrs);
-            printf("  window_valid=%s\n", window_valid ? "YES" : "NO");
-            
-            if (window_valid) {
-                printf("  window_class=%s\n", attrs.class == InputOutput ? "InputOutput" : "InputOnly");
-                printf("  map_state=%s\n", 
-                       attrs.map_state == IsUnmapped ? "Unmapped" :
-                       attrs.map_state == IsUnviewable ? "Unviewable" :
-                       attrs.map_state == IsViewable ? "Viewable" : "Unknown");
-            }
-            
             request_client_close(canvas);
             return;
         }
@@ -1249,12 +1336,12 @@ static void frame_and_activate(Window client, XWindowAttributes *attrs, bool map
 }
 
 void intuition_handle_map_request(XMapRequestEvent *event) {
-    XWindowAttributes attrs; bool attrs_valid;
-    load_window_attrs_or_defaults(event->window, &attrs, &attrs_valid);
+    XWindowAttributes attrs;
+    get_window_attrs_with_defaults(event->window, &attrs);
 
     if (should_skip_framing(event->window, &attrs)) {
         XMapWindow(display, event->window);
-        XSync(display, False);
+        send_x_command_and_sync();
         return;
     }
     frame_and_activate(event->window, &attrs, true);
@@ -1268,21 +1355,17 @@ void intuition_handle_map_notify(XMapEvent *event) {
     }
 
     // Ensure it's a toplevel, viewable, input-output window and not override-redirect
-    XWindowAttributes attrs; bool attrs_valid;
-    load_window_attrs_or_defaults(event->window, &attrs, &attrs_valid);
-    if (!is_viewable_client(&attrs)) return;
-    if (!is_toplevel_under_root(event->window)) return;
-
-    if (should_skip_framing(event->window, &attrs)) {
-        return;
-    }
+    XWindowAttributes attrs;
+    get_window_attrs_with_defaults(event->window, &attrs);
+    if (!is_viewable_client(&attrs) || !is_toplevel_under_root(event->window)) return;
+    if (should_skip_framing(event->window, &attrs)) return;
 
     frame_and_activate(event->window, &attrs, true);
 }
 
 static void handle_configure_unmanaged(XConfigureRequestEvent *event) {
-    XWindowAttributes attrs; bool attrs_valid;
-    load_window_attrs_or_defaults(event->window, &attrs, &attrs_valid);
+    XWindowAttributes attrs;
+    bool attrs_valid = get_window_attrs_with_defaults(event->window, &attrs);
     unsigned long safe_mask = unmanaged_safe_mask(event, &attrs, attrs_valid);
 
     XWindowChanges changes = (XWindowChanges){0};
@@ -1297,8 +1380,10 @@ static void handle_configure_unmanaged(XConfigureRequestEvent *event) {
         if (attrs_valid && attrs.border_width != 0) need_set_border = true;
         if (need_set_border) { changes.border_width = 0; safe_mask |= CWBorderWidth; }
     }
-    if (safe_mask) XConfigureWindow(display, event->window, safe_mask, &changes);
-    XSync(display, False);
+    if (safe_mask) {
+        XConfigureWindow(display, event->window, safe_mask, &changes);
+        send_x_command_and_sync();
+    }
 }
 
 static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *event) {
@@ -1306,7 +1391,7 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
     unsigned long frame_mask = 0;
 
     if (event->value_mask & (CWWidth | CWHeight)) {
-        frame_sizes_from_client(event->width, event->height, &frame_changes.width, &frame_changes.height);
+        calculate_frame_size_from_client_size(event->width, event->height, &frame_changes.width, &frame_changes.height);
         frame_mask |= (event->value_mask & CWWidth) ? CWWidth : 0;
         frame_mask |= (event->value_mask & CWHeight) ? CWHeight : 0;
     }
@@ -1324,14 +1409,14 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
     }
     if (frame_mask) XConfigureWindow(display, canvas->win, frame_mask, &frame_changes);
 
-    XWindowChanges client_changes = (XWindowChanges){0};
-    unsigned long client_mask = 0;
+    // Configure client window within frame borders
+    XWindowChanges client_changes = { .x = BORDER_WIDTH_LEFT, .y = BORDER_HEIGHT_TOP };
+    unsigned long client_mask = CWX | CWY;
     if (event->value_mask & CWWidth) { client_changes.width = max(1, event->width); client_mask |= CWWidth; }
     if (event->value_mask & CWHeight) { client_changes.height = max(1, event->height); client_mask |= CWHeight; }
     if (event->value_mask & CWBorderWidth) { client_changes.border_width = 0; client_mask |= CWBorderWidth; }
-    client_changes.x = BORDER_WIDTH_LEFT; client_changes.y = BORDER_HEIGHT_TOP; client_mask |= CWX | CWY;
-    if (client_mask) XConfigureWindow(display, event->window, client_mask, &client_changes);
-    XSync(display, False);
+    XConfigureWindow(display, event->window, client_mask, &client_changes);
+    send_x_command_and_sync();
 }
 
 void intuition_handle_configure_request(XConfigureRequestEvent *event) {
@@ -1377,38 +1462,15 @@ void destroy_canvas(Canvas *canvas) {
 
     // If this canvas frames a client, request it to close first
     if (canvas->client_win != None) {
-        XWindowAttributes attrs;
-        if (XGetWindowAttributes(dpy, canvas->client_win, &attrs)) {
-            XGrabServer(dpy);
-            Atom wm_protocols = XInternAtom(dpy, "WM_PROTOCOLS", False);
-            Atom wm_delete    = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
-            Atom *protocols = NULL; int num = 0; bool supports_delete = false;
-            if (XGetWMProtocols(dpy, canvas->client_win, &protocols, &num)) {
-                for (int i = 0; i < num; i++) { if (protocols[i] == wm_delete) { supports_delete = true; break; } }
-                XFree(protocols);
-            }
-            if (supports_delete) {
-                XEvent ev = { .type = ClientMessage };
-                ev.xclient.window = canvas->client_win;
-                ev.xclient.message_type = wm_protocols;
-                ev.xclient.format = 32;
-                ev.xclient.data.l[0] = wm_delete;
-                ev.xclient.data.l[1] = CurrentTime;
-                XSendEvent(dpy, canvas->client_win, False, NoEventMask, &ev);
-                XSync(dpy, False);
-            } else {
-                XKillClient(dpy, canvas->client_win);
-            }
-            XUngrabServer(dpy);
+        XGrabServer(dpy);
+        send_close_request_to_client(canvas->client_win);
+        XUngrabServer(dpy);
+        
+        // Unmap the frame; proceed with full teardown
+        if (canvas->win != None && is_window_valid(dpy, canvas->win)) {
+            XUnmapWindow(dpy, canvas->win);
         }
-        // Unmap the frame; proceed with full teardown (no early return)
-        if (canvas->win != None) {
-            XWindowAttributes fa;
-            if (XGetWindowAttributes(dpy, canvas->win, &fa)) {
-                XUnmapWindow(dpy, canvas->win);
-            }
-        }
-        XSync(dpy, False);
+        send_x_command_and_sync();
         canvas->client_win = None;
     }
 
@@ -1417,29 +1479,18 @@ void destroy_canvas(Canvas *canvas) {
         select_next_window(canvas);
     }
 
-    // Free resources in safe order
-    XSync(dpy, False);
-    if (canvas->window_render != None) {
-        XRenderFreePicture(dpy, canvas->window_render);
-        canvas->window_render = None;
-    }
-    if (canvas->canvas_render != None) {
-        XRenderFreePicture(dpy, canvas->canvas_render);
-        canvas->canvas_render = None;
-    }
-    if (canvas->canvas_buffer != None) {
-        XFreePixmap(dpy, canvas->canvas_buffer);
-        canvas->canvas_buffer = None;
-    }
-    if (canvas->colormap != None) {
-        XFreeColormap(dpy, canvas->colormap);
-        canvas->colormap = None;
-    }
-    if (canvas->win != None) {
-        XWindowAttributes fa2;
-        if (XGetWindowAttributes(dpy, canvas->win, &fa2)) {
-            XDestroyWindow(dpy, canvas->win);
-        }
+    // Free X11 resources in safe order
+    send_x_command_and_sync();
+    
+    // Free render resources
+    if (canvas->window_render != None) { XRenderFreePicture(dpy, canvas->window_render); canvas->window_render = None; }
+    if (canvas->canvas_render != None) { XRenderFreePicture(dpy, canvas->canvas_render); canvas->canvas_render = None; }
+    if (canvas->canvas_buffer != None) { XFreePixmap(dpy, canvas->canvas_buffer); canvas->canvas_buffer = None; }
+    if (canvas->colormap != None) { XFreeColormap(dpy, canvas->colormap); canvas->colormap = None; }
+    
+    // Destroy window
+    if (canvas->win != None && is_window_valid(dpy, canvas->win)) {
+        XDestroyWindow(dpy, canvas->win);
         canvas->win = None;
     }
 

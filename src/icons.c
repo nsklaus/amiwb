@@ -25,6 +25,45 @@ static uint32_t read_be32(const uint8_t *p) {
     return (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
 }
 
+// Helper function to calculate icon plane dimensions
+static void calculate_icon_plane_dimensions(uint16_t width, uint16_t height, uint16_t depth, 
+                                          int *row_bytes, long *plane_size, long *total_data_size) {
+    *row_bytes = ((width + 15) / 16) * 2;
+    *plane_size = (*row_bytes) * height;
+    *total_data_size = (*plane_size) * depth;
+}
+
+// Helper function to create pixmap and render context picture
+static Picture create_icon_picture(Display *dpy, Pixmap pixmap, XRenderPictFormat *fmt) {
+    Picture picture = XRenderCreatePicture(dpy, pixmap, fmt, 0, NULL);
+    XFreePixmap(dpy, pixmap);
+    return picture;
+}
+
+// Helper function to clean up partially loaded icon
+static void cleanup_partial_icon(Display *dpy, FileIcon *icon, Pixmap normal_pixmap) {
+    if (icon->normal_picture) {
+        XRenderFreePicture(dpy, icon->normal_picture);
+        icon->normal_picture = None;
+    }
+    if (normal_pixmap) {
+        XFreePixmap(dpy, normal_pixmap);
+    }
+}
+
+// Helper function to get default icon color palette
+static void get_icon_color_palette(unsigned long colors[8]) {
+    // Icons use gray fill instead of transparency  
+    colors[0] = 0xFFA0A2A0UL; // Background gray
+    colors[1] = 0xFF000000;   // Black
+    colors[2] = 0xFFFFFFFF;   // White
+    colors[3] = 0xFF6666BB;   // Blue
+    colors[4] = 0xFF999999;   // Gray
+    colors[5] = 0xFFBBBBBB;   // Light gray
+    colors[6] = 0xFFBBAA99;   // Brown
+    colors[7] = 0xFFFFAA22;   // Orange
+}
+
 // Load entire .info file into memory so we can parse planes quickly.
 static int load_icon_file(const char *name, uint8_t **data, long *size) {
     FILE *fp = fopen(name, "rb");
@@ -75,10 +114,12 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
     // gray fill for now to match classic look; adjust when alpha lands.
     // unsigned long colors[8] = {0x00000000UL, 0xFF000000UL, 0xFFFFFFFFUL, 0xFF6666BBUL, 0xFF999999UL, 0xFFBBBBBBUL, 0xFFBBAA99UL, 0xFFFFAA22UL};
 
-    // icons use gray fill instead of transparency
-    unsigned long colors[8] = {0xFFA0A2A0UL, 0xFF000000, 0xFFFFFFFF, 0xFF6666BB, 0xFF999999, 0xFFBBBBBB, 0xFFBBAA99, 0xFFFFAA22};
-    int row_bytes = ((width + 15) / 16) * 2;
-    long plane_size = row_bytes * height;
+    // Get standard icon color palette
+    unsigned long colors[8];
+    get_icon_color_palette(colors);
+    int row_bytes;
+    long plane_size, total_data_size;
+    calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &total_data_size);
     const uint8_t *planes = data;
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
@@ -143,23 +184,19 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
     uint32_t has_selected = read_be32(data + 0x1A);
     if (has_selected) {
-        int row_bytes = ((width + 15) / 16) * 2;
-        long plane_size = row_bytes * height;
-        long first_data_size = plane_size * depth;
+        int row_bytes;
+        long plane_size, first_data_size;
+        calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &first_data_size);
         int second_header_offset = header_offset + ICON_HEADER_SIZE + first_data_size;
         if (second_header_offset + ICON_HEADER_SIZE > size) {
-            XRenderFreePicture(ctx->dpy, icon->normal_picture);
-            icon->normal_picture = None;
-            XFreePixmap(ctx->dpy, normal_pixmap);  
+            cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
             free(data);
             return;
         }
 
         uint16_t sel_width, sel_height, sel_depth;
         if (parse_icon_header(data + second_header_offset, size - second_header_offset, &sel_width, &sel_height, &sel_depth)) {
-            XRenderFreePicture(ctx->dpy, icon->normal_picture);
-            icon->normal_picture = None;
-            XFreePixmap(ctx->dpy, normal_pixmap);  
+            cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
             free(data);
             return;
         }
@@ -169,14 +206,11 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         } else {
             Pixmap selected_pixmap;
             if (render_icon(ctx->dpy, &selected_pixmap, data + second_header_offset + ICON_HEADER_SIZE, sel_width, sel_height, sel_depth)) {
-                XRenderFreePicture(ctx->dpy, icon->normal_picture);
-                icon->normal_picture = None;
-                XFreePixmap(ctx->dpy, normal_pixmap); 
+                cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
                 free(data);
                 return;
             }
-            icon->selected_picture = XRenderCreatePicture(ctx->dpy, selected_pixmap, ctx->fmt, 0, NULL);
-            XFreePixmap(ctx->dpy, selected_pixmap);
+            icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
         }
     } else {
         icon->selected_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);

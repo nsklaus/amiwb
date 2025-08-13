@@ -1,6 +1,7 @@
 // File: main.c
 #include "intuition.h"
 #include "menus.h"
+#include "dialogs.h"
 #include "workbench.h"
 #include "events.h"
 #include "compositor.h"
@@ -73,6 +74,10 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Calling init_menus\n");
     init_menus();
     
+    // Initialize dialogs
+    fprintf(stderr, "Calling init_dialogs\n");
+    init_dialogs();
+    
     // Initialize workbench
     fprintf(stderr, "Calling init_workbench\n");
     init_workbench();
@@ -99,6 +104,7 @@ int main(int argc, char *argv[]) {
     shutdown_compositor(get_display());
     // Then tear down UI modules
     cleanup_menus();
+    cleanup_dialogs();
     cleanup_workbench();
     // Finally close Display and render resources
     cleanup_intuition();

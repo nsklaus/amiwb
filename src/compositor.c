@@ -36,18 +36,64 @@ static CompWin *g_list = NULL;
 static int g_damage_event_base = 0, g_damage_error_base = 0;
 static int g_composite_event_base = 0, g_composite_error_base = 0;
 
+// Helper function to safely free X11 resources with sync
+static void safe_sync_and_free_picture(Display *dpy, Picture *pict) {
+    if (pict && *pict) {
+        XSync(dpy, False);
+        XRenderFreePicture(dpy, *pict);
+        *pict = 0;
+    }
+}
+
+static void safe_sync_and_free_pixmap(Display *dpy, Pixmap *pm) {
+    if (pm && *pm) {
+        XSync(dpy, False);
+        XFreePixmap(dpy, *pm);
+        *pm = 0;
+    }
+}
+
+// Forward declaration
+static XRenderPictFormat *fmt_for_depth(Display *dpy, int depth);
+
+// Helper function to create picture from pixmap with standard format
+static Picture create_picture_from_pixmap(Display *dpy, Pixmap pm, int depth) {
+    XRenderPictFormat *fmt = fmt_for_depth(dpy, depth);
+    if (!fmt) return None;
+    
+    XRenderPictureAttributes pa;
+    memset(&pa, 0, sizeof(pa));
+    Picture pict = XRenderCreatePicture(dpy, pm, fmt, 0, &pa);
+    
+    // Include child windows when sampling this picture
+    XRenderPictureAttributes change;
+    memset(&change, 0, sizeof(change));
+    change.subwindow_mode = IncludeInferiors;
+    XRenderChangePicture(dpy, pict, CPSubwindowMode, &change);
+    
+    return pict;
+}
+
+// Helper function to get screen dimensions
+static void get_screen_dimensions(Display *dpy, Window win, unsigned int *width, unsigned int *height) {
+    XWindowAttributes wa;
+    XGetWindowAttributes(dpy, win, &wa);
+    *width = (unsigned int)wa.width;
+    *height = (unsigned int)wa.height;
+}
+
+// Helper function to composite a source picture to destination
+static void composite_picture_full_screen(Display *dpy, Picture src, Picture dest, unsigned int width, unsigned int height) {
+    XRenderComposite(dpy, PictOpSrc, src, None, dest,
+                     0, 0, 0, 0,
+                     0, 0,
+                     width, height);
+}
+
 static void free_win(Display *dpy, CompWin *cw) {
     if (!cw) return;
-    // Sync before cleanup to avoid operating on invalid resources
-    XSync(dpy, False);
-    if (cw->pict) {
-        XRenderFreePicture(dpy, cw->pict);
-        cw->pict = 0;
-    }
-    if (cw->pm) {
-        XFreePixmap(dpy, cw->pm);
-        cw->pm = 0;
-    }
+    safe_sync_and_free_picture(dpy, &cw->pict);
+    safe_sync_and_free_pixmap(dpy, &cw->pm);
     if (cw->damage) {
         XDamageDestroy(dpy, cw->damage);
         cw->damage = 0;
@@ -172,14 +218,8 @@ static void build_win_list(Display *dpy) {
         // Pick format by depth
         XWindowAttributes dwa; XGetWindowAttributes(dpy, w, &dwa);
         int depth = dwa.depth;
-        XRenderPictFormat *fmt = fmt_for_depth(dpy, depth);
-        if (!fmt) { XFreePixmap(dpy, pm); continue; }
-        XRenderPictureAttributes pa; memset(&pa, 0, sizeof(pa));
-        Picture pict = XRenderCreatePicture(dpy, pm, fmt, 0, &pa);
-        // Include child (inferior) windows when sampling this picture
-        XRenderPictureAttributes change; memset(&change, 0, sizeof(change));
-        change.subwindow_mode = IncludeInferiors;
-        XRenderChangePicture(dpy, pict, CPSubwindowMode, &change);
+        Picture pict = create_picture_from_pixmap(dpy, pm, depth);
+        if (!pict) { XFreePixmap(dpy, pm); continue; }
         Damage dmg = XDamageCreate(dpy, w, XDamageReportNonEmpty);
 
         CompWin *cw = (CompWin*)calloc(1, sizeof(CompWin));
@@ -195,8 +235,8 @@ static void build_win_list(Display *dpy) {
 static void repaint(Display *dpy) {
     if (!g_overlay_pict) return;
     // Ensure back buffer exists and matches screen size
-    XWindowAttributes wa; XGetWindowAttributes(dpy, g_overlay, &wa);
-    unsigned int sw = (unsigned int)wa.width, sh = (unsigned int)wa.height;
+    unsigned int sw, sh;
+    get_screen_dimensions(dpy, g_overlay, &sw, &sh);
     if (!g_back_pm) {
         g_back_pm = XCreatePixmap(dpy, g_root, sw, sh, 32);
         XRenderPictFormat *bf = XRenderFindStandardFormat(dpy, PictStandardARGB32);
@@ -236,22 +276,14 @@ static void repaint(Display *dpy) {
         }
     }
     if (g_wall_pict) {
-        XWindowAttributes rwa; XGetWindowAttributes(dpy, g_root, &rwa);
-        unsigned int rw = (unsigned int)rwa.width;
-        unsigned int rh = (unsigned int)rwa.height;
-        XRenderComposite(dpy, PictOpSrc, g_wall_pict, None, g_back_pict,
-                         0, 0, 0, 0,
-                         0, 0,
-                         rw, rh);
+        unsigned int rw, rh;
+        get_screen_dimensions(dpy, g_root, &rw, &rh);
+        composite_picture_full_screen(dpy, g_wall_pict, g_back_pict, rw, rh);
     } else if (g_root_pict) {
         // Fallback: copy whatever the root currently has
-        XWindowAttributes rwa; XGetWindowAttributes(dpy, g_root, &rwa);
-        unsigned int rw = (unsigned int)rwa.width;
-        unsigned int rh = (unsigned int)rwa.height;
-        XRenderComposite(dpy, PictOpSrc, g_root_pict, None, g_back_pict,
-                         0, 0, 0, 0,
-                         0, 0,
-                         rw, rh);
+        unsigned int rw, rh;
+        get_screen_dimensions(dpy, g_root, &rw, &rh);
+        composite_picture_full_screen(dpy, g_root_pict, g_back_pict, rw, rh);
     }
 
     // No compositor order dump here; prints only around press/release
@@ -295,10 +327,7 @@ static void repaint(Display *dpy) {
         count++;
     }
     // Single blit from back buffer to overlay
-    XRenderComposite(dpy, PictOpSrc, g_back_pict, None, g_overlay_pict,
-                     0, 0, 0, 0,
-                     0, 0,
-                     sw, sh);
+    composite_picture_full_screen(dpy, g_back_pict, g_overlay_pict, sw, sh);
     // fprintf(stderr, "[comp] repaint windows=%u\n", count);
     XFlush(dpy);
 }

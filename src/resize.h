@@ -1,10 +1,9 @@
 /*
- * Simple, efficient window resize system for amiwb
+ *  window resize system for amiwb
  * 
  * This module handles window resizing with these optimizations:
  * - Motion event compression (max 60 FPS)
  * - Smart buffer management (minimal XRender recreations)
- * - Clean separation of concerns
  */
 
 #ifndef RESIZE_H

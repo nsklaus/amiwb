@@ -6,6 +6,7 @@
 #include "workbench.h"
 #include "render.h"
 #include "compositor.h"
+#include "dialogs.h"
 #include "events.h"
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
@@ -13,6 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
+#include <limits.h>
 
 #define RESOURCE_DIR_SYSTEM "/usr/local/share/amiwb"  
 #define RESOURCE_DIR_USER ".config/amiwb"  
@@ -26,6 +29,13 @@ static Menu *active_menu = NULL;    // Current dropdown menu (top-level or curre
 static Menu *nested_menu = NULL;    // Currently open nested submenu (child of active_menu)
 static Menu *menubar = NULL;        // Global menubar
 static bool show_menus = false;     // State: false for logo, true for menus
+
+// Forward declarations for rename callbacks
+static void rename_file_ok_callback(const char *new_name);
+static void rename_file_cancel_callback(void);
+
+// Global variable to store the icon being renamed
+static FileIcon *g_rename_icon = NULL;
 
 // Mode-specific arrays
 static char **logo_items = NULL;
@@ -43,6 +53,75 @@ static char *get_resource_path(const char *rel_path) {
     char sys_path[1024];
     snprintf(sys_path, sizeof(sys_path), "%s/%s", RESOURCE_DIR_SYSTEM, rel_path);
     return strdup(sys_path);
+}
+
+// Static callback functions for rename dialog (avoid nested function trampolines)
+static void rename_file_ok_callback(const char *new_name) {
+    // Use the global icon that was set when dialog was shown
+    FileIcon *icon = g_rename_icon;
+    
+    printf("DEBUG: rename_file_ok_callback - icon=%p, path='%s', label='%s'\n", 
+           (void*)icon, icon ? icon->path : "NULL", icon ? icon->label : "NULL");
+    
+    if (!icon || !new_name || strlen(new_name) == 0) {
+        printf("Rename failed: invalid parameters\n");
+        return;
+    }
+    
+    // Additional validation - check if icon is still valid
+    bool icon_valid = false;
+    for (int i = 0; i < get_icon_count(); i++) {
+        if (get_icon_array()[i] == icon) {
+            icon_valid = true;
+            break;
+        }
+    }
+    if (!icon_valid) {
+        printf("Rename failed: icon no longer valid\n");
+        return;
+    }
+    
+    // Construct paths
+    char old_path[PATH_MAX];
+    char new_path[PATH_MAX]; 
+    char *dir_path = strdup(icon->path);
+    char *filename = strrchr(dir_path, '/');
+    if (filename) *filename = '\0';  // Remove filename, keep directory
+    
+    snprintf(old_path, sizeof(old_path), "%s", icon->path);
+    snprintf(new_path, sizeof(new_path), "%s/%s", dir_path, new_name);
+    
+    // Attempt rename with safety checks
+    if (access(new_path, F_OK) == 0) {
+        printf("Rename failed: file '%s' already exists\n", new_name);
+    } else if (rename(old_path, new_path) == 0) {
+        // Success: update icon
+        free(icon->label);
+        icon->label = strdup(new_name);
+        free(icon->path);
+        icon->path = strdup(new_path);
+        
+        // Refresh display - reload directory to show renamed file in correct position
+        Canvas *canvas = find_canvas(icon->display_window);
+        if (canvas && canvas->path) {
+            refresh_canvas_from_directory(canvas, canvas->path);
+            icon_cleanup(canvas);  // Use icon_cleanup to properly re-grid icons after refresh
+            compute_max_scroll(canvas);
+            redraw_canvas(canvas);
+        }
+        
+        printf("Successfully renamed '%s' to '%s'\n", old_path, new_name);
+    } else {
+        printf("Rename failed: %s\n", strerror(errno));
+    }
+    
+    free(dir_path);
+    g_rename_icon = NULL;  // Clear the global icon reference
+}
+
+static void rename_file_cancel_callback(void) {
+    printf("Rename cancelled\n");
+    g_rename_icon = NULL;  // Clear the global icon reference
 }
 
 // Initialize menu resources
@@ -646,7 +725,37 @@ void handle_menu_selection(Menu *menu, int item_index) {
             } else if (strcmp(item, "Copy") == 0) {
                 // TODO: Copy selected icon
             } else if (strcmp(item, "Rename") == 0) {
-                // TODO: Rename selected icon
+                // CAPTURE CONTEXT BEFORE CREATING DIALOG
+                Canvas *active_window = get_active_window();
+                FileIcon *selected = NULL;
+                
+                printf("DEBUG: Active window: %p (type=%d)\n", (void*)active_window, 
+                       active_window ? active_window->type : -1);
+                
+                // First try to get selected icon from the active window
+                if (active_window && active_window->type == WINDOW) {
+                    selected = get_selected_icon_from_canvas(active_window);
+                    printf("DEBUG: get_selected_icon_from_canvas returned: %p\n", (void*)selected);
+                }
+                
+                // If no active window or no selection, fall back to global search
+                if (!selected) {
+                    selected = get_selected_icon();
+                    printf("DEBUG: get_selected_icon (fallback) returned: %p\n", (void*)selected);
+                }
+                
+                if (selected) {
+                    printf("DEBUG: selected->path = '%s'\n", selected->path ? selected->path : "NULL");
+                    printf("DEBUG: selected->label = '%s'\n", selected->label ? selected->label : "NULL");
+                }
+                
+                if (selected && selected->label && selected->path) {
+                    // Store the icon globally so the callback can access it
+                    g_rename_icon = selected;
+                    show_rename_dialog(selected->label, rename_file_ok_callback, rename_file_cancel_callback, selected);
+                } else {
+                    printf("No icon selected for rename\n");
+                }
             } else if (strcmp(item, "Information") == 0) {
                 // TODO: Show icon properties
             } else if (strcmp(item, "delete") == 0) {

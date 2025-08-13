@@ -3,11 +3,6 @@
 
 #include <X11/extensions/Xrender.h>  // XRenderColor
 
-// TODO: remove old colors (replaced by global colors below)
-//#define BG_COLOR_DESKTOP (XRenderColor){0x5555, 0x5555, 0x5555, 0xFFFF} // Desktop background
-//#define BG_COLOR_FOLDER (XRenderColor){0xAAAA, 0xAAAA, 0xAAAA, 0xFFFF} // Folder background 
-//#define BLUE_FRAME (XRenderColor){0x0000, 0x0000, 0xFFFF, 0xFFFF} // Active frame (blue).
-//#define GRAY_FRAME (XRenderColor){0x8888, 0x8888, 0x8888, 0xFFFF} // Inactive frame (gray).
 
 // global colors
 #define BLACK (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}

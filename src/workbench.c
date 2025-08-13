@@ -29,6 +29,12 @@ static bool is_directory(const char *path);
 static int copy_file(const char *src, const char *dst);
 static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas);
 static void refresh_canvas(Canvas *canvas);
+
+// Helper functions for cleaner file operations
+static bool check_if_file_exists(const char *file_path);
+static int determine_file_type_from_path(const char *full_path);
+static void build_info_file_path(const char *base_dir, const char *filename, char *info_path_out, size_t max_size);
+static void move_sidecar_info_file(const char *src_path, const char *dst_dir, const char *dst_path);
 // Forward declarations for functions used before their definitions
 // Refreshes canvas from a given directory, populating it with icons
 void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath);
@@ -126,9 +132,37 @@ static void load_deficons(void) {
     load_one_deficon("def_zip.info",  &def_zip_info);
     load_one_deficon("def_lha.info",  &def_lha_info);
     load_one_deficon("def_mp3.info",  &def_mp3_info);
-    load_one_deficon("def_mp4a.info",  &def_mp4a_info);
+    load_one_deficon("def_mp4a.info", &def_mp4a_info);
     load_one_deficon("def_dir.info",  &def_dir_info);
     load_one_deficon("def_foo.info",  &def_foo_info);
+}
+
+// Forward declaration of helper function
+static inline void set_icon_meta(FileIcon *ic, const char *path, const char *label, int type);
+
+// Get the most recently added icon from the global array
+static FileIcon* get_last_added_icon(void) {
+    return (icon_count > 0) ? icon_array[icon_count - 1] : NULL;
+}
+
+// Advance icon position to next slot with wrapping
+static void advance_icon_position(int *x, int *y, Canvas *canvas, int x_offset) {
+    *x += x_offset;
+    if (*x + 64 > canvas->width) {
+        *x = 10;
+        *y += 80;
+    }
+}
+
+// Create icon and set its metadata in one call
+static FileIcon* create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x, int y,
+                                          const char *full_path, const char *name, int type) {
+    create_icon(icon_path, canvas, x, y);
+    FileIcon *new_icon = get_last_added_icon();
+    if (new_icon) {
+        set_icon_meta(new_icon, full_path, name, type);
+    }
+    return new_icon;
 }
 
 // Choose the appropriate deficon for a file/dir name; returns NULL if none.
@@ -202,11 +236,11 @@ static void add_prime_desktop_icons(Canvas *desktop) {
     if (!desktop) return;
     // System
     create_icon("/usr/local/share/amiwb/icons/harddisk.info", desktop, 20, 40);
-    FileIcon *system_icon = icon_array[icon_count - 1];
+    FileIcon *system_icon = get_last_added_icon();
     set_icon_meta(system_icon, "/", "System", TYPE_DRAWER);
     // Home
     create_icon("/usr/local/share/amiwb/icons/harddisk.info", desktop, 20, 120);
-    FileIcon *home_icon = icon_array[icon_count - 1];
+    FileIcon *home_icon = get_last_added_icon();
     const char *home = getenv("HOME");
     set_icon_meta(home_icon, home ? home : ".", "Home", TYPE_DRAWER);
 }
@@ -300,36 +334,8 @@ static void end_drag_icon(Canvas *canvas) {
             destroy_icon(dragged_icon);
             dragged_icon = NULL;
 
-            // Move sidecar .info if present to keep custom icon with the file
-            {
-                char src_info[2048];
-                snprintf(src_info, sizeof(src_info), "%s.info", src_path_abs);
-                struct stat st_sidecar;
-                if (stat(src_info, &st_sidecar) == 0) {
-                    const char *base = strrchr(dst_path, '/');
-                    const char *name_only = base ? base + 1 : dst_path;
-                    char dst_info[2048];
-                    snprintf(dst_info, sizeof(dst_info), "%s/%s.info", dst_dir, name_only);
-                    // Overwrite semantics: if same FS, rename will replace. If EXDEV, copy+unlink with forced overwrite.
-                    if (rename(src_info, dst_info) != 0) {
-                        if (errno == EXDEV) {
-                            // Cross-FS: force overwrite by unlinking destination first, then copy and remove source
-                            unlink(dst_info);
-                            if (copy_file(src_info, dst_info) != 0) {
-                                perror("[amiwb] copy sidecar failed");
-                            } else {
-                                if (unlink(src_info) != 0) perror("[amiwb] unlink sidecar source after copy failed");
-                            }
-                        } else {
-                            // Try overwrite by unlinking then rename again
-                            unlink(dst_info);
-                            if (rename(src_info, dst_info) != 0) {
-                                perror("[amiwb] rename sidecar failed");
-                            }
-                        }
-                    }
-                }
-            }
+            // Move sidecar .info file if present to keep custom icon with the file
+            move_sidecar_info_file(src_path_abs, dst_dir, dst_path);
 
             // 2) Create a new icon on target at drop position
             // Determine pointer position relative to target content area
@@ -367,7 +373,7 @@ static void end_drag_icon(Canvas *canvas) {
             }
             create_icon(img_path, target, place_x, place_y);
             // Fix the icon's real file path and label
-            FileIcon *new_icon = icon_array[get_icon_count() - 1];
+            FileIcon *new_icon = get_last_added_icon();
             replace_string(&new_icon->path, dst_path);
             const char *base = strrchr(dst_path, '/');
             replace_string(&new_icon->label, base ? base + 1 : dst_path);
@@ -595,6 +601,61 @@ static bool is_directory(const char *path) {
     return S_ISDIR(st.st_mode);
 }
 
+// Check if a file exists on the filesystem
+static bool check_if_file_exists(const char *file_path) {
+    if (!file_path || !*file_path) return false;
+    struct stat st;
+    return stat(file_path, &st) == 0;
+}
+
+// Determine file type (TYPE_DRAWER or TYPE_FILE) from filesystem
+static int determine_file_type_from_path(const char *full_path) {
+    if (!full_path) return TYPE_FILE;
+    struct stat st;
+    if (stat(full_path, &st) != 0) return TYPE_FILE;
+    return S_ISDIR(st.st_mode) ? TYPE_DRAWER : TYPE_FILE;
+}
+
+// Build path to .info sidecar file for a given filename in a directory
+static void build_info_file_path(const char *base_dir, const char *filename, char *info_path_out, size_t max_size) {
+    if (!base_dir || !filename || !info_path_out || max_size == 0) return;
+    snprintf(info_path_out, max_size, "%s/%s.info", base_dir, filename);
+}
+
+// Move sidecar .info file from source to destination directory with overwrite handling
+static void move_sidecar_info_file(const char *src_path, const char *dst_dir, const char *dst_path) {
+    if (!src_path || !dst_dir || !dst_path) return;
+    
+    char src_info[2048];
+    snprintf(src_info, sizeof(src_info), "%s.info", src_path);
+    
+    if (!check_if_file_exists(src_info)) return; // No sidecar to move
+    
+    const char *base = strrchr(dst_path, '/');
+    const char *name_only = base ? base + 1 : dst_path;
+    char dst_info[2048];
+    snprintf(dst_info, sizeof(dst_info), "%s/%s.info", dst_dir, name_only);
+    
+    // Try to rename (move) the sidecar file
+    if (rename(src_info, dst_info) != 0) {
+        if (errno == EXDEV) {
+            // Cross-filesystem: copy then delete source
+            unlink(dst_info); // Remove destination if it exists
+            if (copy_file(src_info, dst_info) == 0) {
+                unlink(src_info); // Remove source after successful copy
+            } else {
+                perror("[amiwb] copy sidecar failed");
+            }
+        } else {
+            // Same filesystem but target exists: remove target and try again
+            unlink(dst_info);
+            if (rename(src_info, dst_info) != 0) {
+                perror("[amiwb] rename sidecar failed");
+            }
+        }
+    }
+}
+
 // Copy a regular file from src to dst. Overwrites dst if it exists only when
 // the caller has already unlinked it. Returns 0 on success.
 static int copy_file(const char *src, const char *dst) {
@@ -685,6 +746,34 @@ static FileIcon *manage_icons(bool add, FileIcon *icon_to_remove) {
 
 int get_icon_count(void) { return icon_count; }
 FileIcon **get_icon_array(void) { return icon_array; }
+
+FileIcon *get_selected_icon(void) {
+    for (int i = 0; i < icon_count; i++) {
+        if (icon_array[i] && icon_array[i]->selected) {
+            printf("DEBUG: Found selected icon - path='%s', label='%s'\n", 
+                   icon_array[i]->path ? icon_array[i]->path : "NULL",
+                   icon_array[i]->label ? icon_array[i]->label : "NULL");
+            return icon_array[i];
+        }
+    }
+    return NULL;
+}
+
+// Get selected icon from a specific canvas window
+FileIcon *get_selected_icon_from_canvas(Canvas *canvas) {
+    if (!canvas) return NULL;
+    
+    for (int i = 0; i < icon_count; i++) {
+        if (icon_array[i] && icon_array[i]->selected && 
+            icon_array[i]->display_window == canvas->win) {
+            printf("DEBUG: Found selected icon from canvas - path='%s', label='%s'\n", 
+                   icon_array[i]->path ? icon_array[i]->path : "NULL",
+                   icon_array[i]->label ? icon_array[i]->label : "NULL");
+            return icon_array[i];
+        }
+    }
+    return NULL;
+}
 
 // Collect icons displayed on a given canvas into a newly allocated array; returns count via out param
 static FileIcon **icons_for_canvas(Canvas *canvas, int *out_count) {
@@ -803,26 +892,39 @@ void icon_cleanup(Canvas *canvas) {
     int start_x = (canvas->type == DESKTOP) ? 20 : 10; int start_y = (canvas->type == DESKTOP) ? 40 : 10;
 
     if (canvas->type == DESKTOP) {
-        // Calculate correct start position: Home icon top + 80px gap
-        int first_iconified_y = 120 + 80;  // Home icon y + 80px gap (same as System->Home)
-        int step_x = 110;
-        //int x = start_x, y = first_iconified_y;
-        // First, reorder regular desktop icons (System, Home, etc.)
-        int x = start_x, y = start_y;
-        //int x = start_x, y = start_y;
+        // Desktop uses vertical column layout
+        int step_x = 110;  // Column width
+        int step_y = 80;   // Row height
+        int first_slot_y = 200;  // Start below Home icon (120 + 80)
+        
+        // Current position for placing icons
+        int x = start_x;
+        int y = first_slot_y;
+        
+        // Place all icons using column layout
         for (int i2 = 0; i2 < count; ++i2) {
-            FileIcon *ic = list[i2]; 
-            if (ic->type == TYPE_ICONIFIED) continue;  // Skip iconified for now
+            FileIcon *ic = list[i2];
             
-            // Keep System and Home at fixed positions
+            // System and Home get fixed positions
             if (strcmp(ic->label, "System") == 0) {
-                ic->x = x; ic->y = 40;  // Always at y=40
+                ic->x = 20; 
+                ic->y = 40;
             } else if (strcmp(ic->label, "Home") == 0) {
-                ic->x = x; ic->y = 120; // Always at y=120
+                ic->x = 20; 
+                ic->y = 120;
             } else {
-                // Other regular icons go below Home
-                ic->x = x; ic->y = y; 
-                y += 80;
+                // All other icons (regular AND iconified) use column layout
+                ic->x = x;
+                ic->y = y;
+                
+                // Move to next slot vertically
+                y += step_y;
+                
+                // If we've reached bottom of screen, move to next column
+                if (y + 64 > canvas->height) {
+                    x += step_x;
+                    y = first_slot_y;
+                }
             }
         }
         free(list);
@@ -956,18 +1058,16 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
                 char base_path[1024]; snprintf(base_path, sizeof(base_path), "%s/%s", dir, base);
                 struct stat st; if (stat(base_path, &st) != 0) {
                     // Orphan .info
-                    create_icon(full_path, canvas, x, y);
-                    FileIcon *new_icon = icon_array[icon_count - 1];
-                    new_icon->type = TYPE_FILE;
-                    x += x_offset; if (x + 64 > canvas->width) { x = 10; y += 80; }
+                    create_icon_with_metadata(full_path, canvas, x, y, full_path, entry->d_name, TYPE_FILE);
+                    advance_icon_position(&x, &y, canvas, x_offset);
                 }
             } else {
-                // Determine file type early
-                struct stat st_file; int t = TYPE_FILE; if (stat(full_path, &st_file) == 0) t = S_ISDIR(st_file.st_mode) ? TYPE_DRAWER : TYPE_FILE;
-                // Check for sidecar .info first
-                char info_name[256]; snprintf(info_name, sizeof(info_name), "%s.info", entry->d_name);
-                char info_path[1024]; snprintf(info_path, sizeof(info_path), "%s/%s", dir, info_name);
-                struct stat st_info; int has_sidecar = (stat(info_path, &st_info) == 0);
+                    // Determine file type using helper function
+                int t = determine_file_type_from_path(full_path);
+                // Check for sidecar .info using helper function
+                char info_path[1024];
+                build_info_file_path(dir, entry->d_name, info_path, sizeof(info_path));
+                int has_sidecar = check_if_file_exists(info_path);
                 // Choose icon path: sidecar .info, else deficon by type/suffix (drawer or file), else the file itself
                 const char *fallback_def = (!has_sidecar) ? definfo_for_file(entry->d_name, (t == TYPE_DRAWER)) : NULL;
                 const char *icon_path = has_sidecar ? info_path : (fallback_def ? fallback_def : full_path);
@@ -980,10 +1080,8 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
                        fallback_def ? fallback_def : "(none)",
                        icon_path);
                 */
-                create_icon(icon_path, canvas, x, y);
-                FileIcon *new_icon = icon_array[icon_count - 1];
-                set_icon_meta(new_icon, full_path, entry->d_name, t);
-                x += x_offset; if (x + 64 > canvas->width) { x = 10; y += 80; }
+                create_icon_with_metadata(icon_path, canvas, x, y, full_path, entry->d_name, t);
+                advance_icon_position(&x, &y, canvas, x_offset);
             }
         }
         closedir(dirp);

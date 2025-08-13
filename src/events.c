@@ -6,6 +6,7 @@
 #include "compositor.h"
 #include "intuition.h"
 #include "workbench.h"
+#include "dialogs.h"
 #include "config.h"
 #include <X11/extensions/Xrandr.h>
 
@@ -25,6 +26,58 @@ bool running = true;
 
 // Gated debug helper (wire to env later if needed)
 static inline int wb_dbg(void) { return 0; }
+
+// Helper function to create event copy with translated coordinates
+static XButtonEvent create_translated_button_event(XButtonEvent *original, Window target_window, int new_x, int new_y) {
+    XButtonEvent ev = *original;
+    ev.window = target_window;
+    ev.x = new_x;
+    ev.y = new_y;
+    return ev;
+}
+
+// Helper function to create motion event copy with translated coordinates
+static XMotionEvent create_translated_motion_event(XMotionEvent *original, Window target_window, int new_x, int new_y) {
+    XMotionEvent ev = *original;
+    ev.window = target_window;
+    ev.x = new_x;
+    ev.y = new_y;
+    return ev;
+}
+
+// Helper function to handle menubar vs regular menu routing
+static void handle_menu_canvas_press(Canvas *canvas, XButtonEvent *event, int cx, int cy) {
+    if (canvas == get_menubar()) {
+        XButtonEvent ev = create_translated_button_event(event, canvas->win, cx, cy);
+        menu_handle_menubar_press(&ev);
+    } else {
+        XButtonEvent ev = create_translated_button_event(event, canvas->win, cx, cy);
+        menu_handle_button_press(&ev);
+    }
+}
+
+// Helper function to handle menubar vs regular menu motion
+static void handle_menu_canvas_motion(Canvas *canvas, XMotionEvent *event, int cx, int cy) {
+    if (canvas == get_menubar()) {
+        menu_handle_menubar_motion(event);
+    } else {
+        menu_handle_motion_notify(event);
+    }
+}
+
+// Helper function for debug output (controlled by wb_dbg)
+static void debug_event_info(const char *event_type, Window window, int x, int y, unsigned int state) {
+    if (wb_dbg()) {
+        fprintf(stderr, "[WB] %s win=0x%lx x,y=(%d,%d) state=0x%x\n", event_type, window, x, y, state);
+    }
+}
+
+// Helper function for debug canvas resolution info
+static void debug_canvas_resolved(Canvas *canvas, int tx, int ty, const char *context) {
+    if (wb_dbg()) {
+        fprintf(stderr, "[WB]  %s resolved: canvas=0x%lx type=%d tx,ty=(%d,%d)\n", context, canvas->win, canvas->type, tx, ty);
+    }
+}
 
 // Initialize event handling
 // Initialize event subsystem (reserved for future setup).
@@ -105,7 +158,10 @@ void handle_events(void) {
                 break;
             }
             case KeyPress:
-                handle_key_press(&event.xkey);
+                // Check if dialog system handles the key first
+                if (!dialogs_handle_key_press(&event.xkey)) {
+                    handle_key_press(&event.xkey);
+                }
                 break;
             case Expose:
                 handle_expose(&event.xexpose);
@@ -222,7 +278,7 @@ void handle_button_press(XButtonEvent *event) {
             // Children array is bottom-to-top; scan from topmost down.
             for (int i = (int)n - 1; i >= 0; --i) {
                 Canvas *c = find_canvas(children[i]);
-                if (!c || c->type != WINDOW) continue;
+                if (!c || (c->type != WINDOW && c->type != DIALOG)) continue;
                 // Validate the X window is still valid and viewable
                 XWindowAttributes a; 
                 if (!XGetWindowAttributes(dpy, c->win, &a) || a.map_state != IsViewable) continue;
@@ -249,26 +305,30 @@ void handle_button_press(XButtonEvent *event) {
 
     if (canvas->type == MENU) {
         // Menus are handled exclusively by menu subsystem
-        if (canvas == get_menubar()) {
-            XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
-            menu_handle_menubar_press(&ev);
-        } else {
-            XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
-            menu_handle_button_press(&ev);
-        }
+        handle_menu_canvas_press(canvas, event, cx, cy);
         g_press_target = canvas->win; // route motion/release to this menu until release
-    } else if (canvas->type == WINDOW) {
-        // Activate and forward to window frame
+    } else if (canvas->type == WINDOW || canvas->type == DIALOG) {
+        // Activate and forward to window/dialog frame
         set_active_window(canvas);
-        XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
-        intuition_handle_button_press(&ev);
-        if (!intuition_last_press_consumed()) {
-            workbench_handle_button_press(&ev);
+        XButtonEvent ev = create_translated_button_event(event, canvas->win, cx, cy);
+        
+        // For dialogs, try dialog-specific handling first
+        bool dialog_consumed = false;
+        if (canvas->type == DIALOG) {
+            dialog_consumed = dialogs_handle_button_press(&ev);
+        }
+        
+        // If dialog didn't consume the event, handle as normal window
+        if (!dialog_consumed) {
+            intuition_handle_button_press(&ev);
+            if (!intuition_last_press_consumed()) {
+                workbench_handle_button_press(&ev);
+            }
         }
         g_press_target = canvas->win;
     } else {
         // default: forward to specific canvas
-        XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
+        XButtonEvent ev = create_translated_button_event(event, canvas->win, cx, cy);
         workbench_handle_button_press(&ev);
         intuition_handle_button_press(&ev);
     }
@@ -292,8 +352,17 @@ void handle_button_release(XButtonEvent *event) {
         if (tc && tc->type == MENU) {
             menu_handle_button_release(&ev);
         } else {
-            workbench_handle_button_release(&ev);
-            intuition_handle_button_release(&ev);
+            // For dialogs, try dialog-specific handling first
+            bool dialog_consumed = false;
+            if (tc && tc->type == DIALOG) {
+                dialog_consumed = dialogs_handle_button_release(&ev);
+            }
+            
+            // If dialog didn't consume the event, handle as normal window
+            if (!dialog_consumed) {
+                workbench_handle_button_release(&ev);
+                intuition_handle_button_release(&ev);
+            }
         }
         g_press_target = 0; // clear routing lock
         return;
@@ -302,9 +371,19 @@ void handle_button_release(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) canvas = resolve_event_canvas(event->window, event->x, event->y, &cx, &cy);
     if (!canvas) { return; }
-    XButtonEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
-    workbench_handle_button_release(&ev);
-    intuition_handle_button_release(&ev);
+    XButtonEvent ev = create_translated_button_event(event, canvas->win, cx, cy);
+    
+    // For dialogs, try dialog-specific handling first
+    bool dialog_consumed = false;
+    if (canvas->type == DIALOG) {
+        dialog_consumed = dialogs_handle_button_release(&ev);
+    }
+    
+    // If dialog didn't consume the event, handle as normal window
+    if (!dialog_consumed) {
+        workbench_handle_button_release(&ev);
+        intuition_handle_button_release(&ev);
+    }
 }
 
 // Dispatch key press
@@ -372,8 +451,7 @@ void handle_motion_notify(XMotionEvent *event) {
         XMotionEvent ev = *event; ev.window = g_press_target; ev.x = tx; ev.y = ty;
         Canvas *tc = find_canvas(g_press_target);
         if (tc && tc->type == MENU) {
-            if (tc == get_menubar()) menu_handle_menubar_motion(&ev);
-            else menu_handle_motion_notify(&ev);
+            handle_menu_canvas_motion(tc, &ev, tx, ty);
         } else {
             // While scrolling a scrollbar, do not send motion to icons
             if (!(tc && tc->type == WINDOW && intuition_is_scrolling_active())) {
@@ -396,21 +474,10 @@ void handle_motion_notify(XMotionEvent *event) {
         return;
     }
 
-    if (canvas->type == MENU) {
-        //menu_handle_motion_notify(event); 
-        //menu_handle_menubar_motion(event);
-
-        if (canvas == get_menubar()) {
-            menu_handle_menubar_motion(event);
-        } else {
-            menu_handle_motion_notify(event);
-        }
-    } 
-    else if (canvas == get_menubar()) {
-        menu_handle_menubar_motion(event);
-    } 
-    else {
-        XMotionEvent ev = *event; ev.window = canvas->win; ev.x = cx; ev.y = cy;
+    if (canvas->type == MENU || canvas == get_menubar()) {
+        handle_menu_canvas_motion(canvas, event, cx, cy);
+    } else {
+        XMotionEvent ev = create_translated_motion_event(event, canvas->win, cx, cy);
         if (!(canvas->type == WINDOW && intuition_is_scrolling_active())) {
             workbench_handle_motion_notify(&ev);
         }
