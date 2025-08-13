@@ -13,6 +13,7 @@
 #include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
+#include "resize.h"
 
 // Global font and UI colors. Centralize text style so all drawing
 // uses the same metrics and palette. Font may be NULL early.
@@ -242,7 +243,17 @@ static void draw_checkerboard(Display *dpy, Picture dest, int x, int y, int w, i
 void redraw_canvas(Canvas *canvas) {
     if (!canvas || canvas->width <= 0 || canvas->height <= 0 || 
         canvas->canvas_render == None || canvas->window_render == None) {
+        printf("[REDRAW] Early return: canvas=%p, width=%d, height=%d, canvas_render=%lu, window_render=%lu\n",
+               (void*)canvas, canvas ? canvas->width : -1, canvas ? canvas->height : -1, 
+               canvas ? canvas->canvas_render : 0, canvas ? canvas->window_render : 0);
         return;
+    }
+    
+    // PERFORMANCE OPTIMIZATION: During interactive resize, only redraw the canvas being resized
+    // BUT: Always allow icon rendering - just skip buffer updates
+    Canvas *resizing = resize_get_canvas();
+    if (resizing && canvas != resizing) {
+        return; // Skip redrawing non-resizing windows during resize
     }
     
     RenderContext *ctx = get_render_context();
@@ -267,6 +278,11 @@ void redraw_canvas(Canvas *canvas) {
     // set background pictures or fill background for non-client canvas
     // (desktop or empty windows and not clients, not menus)
     if (!is_client_frame) {
+        // During interactive resize, use buffer dimensions to avoid rendering outside buffer bounds
+        int render_width = canvas->resizing_interactive ? canvas->buffer_width : canvas->width;
+        int render_height = canvas->resizing_interactive ? canvas->buffer_height : canvas->height;
+        
+
         if (canvas->type == DESKTOP && ctx->desk_img != None) {
 
             Display *dpy = ctx->dpy;
@@ -277,12 +293,12 @@ void redraw_canvas(Canvas *canvas) {
             // Composite (blend) onto canvas; 
             // use PictOpSrc for direct copy or adjust for transparency
             XRenderComposite(dpy, PictOpSrc, bg_picture, None, canvas->canvas_render, 
-                0, 0, 0, 0, 0, 0, canvas->width, canvas->height);
+                0, 0, 0, 0, 0, 0, render_width, render_height);
             XRenderFreePicture(dpy, bg_picture);
             has_bg_image = true;
         } /*else {
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color, 
-                0, 0, canvas->width, canvas->height);
+                0, 0, render_width, render_height);
         }*/
 
         // For WINDOWS: only show wallpaper in icon view; names view stays gray
@@ -292,14 +308,14 @@ void redraw_canvas(Canvas *canvas) {
             XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, visual);
             Picture bg_picture = XRenderCreatePicture(dpy, ctx->wind_img, fmt, 0, NULL);
             XRenderComposite(dpy, PictOpSrc, bg_picture, None, canvas->canvas_render,
-                             0, 0, 0, 0, 0, 0, canvas->width, canvas->height);
+                             0, 0, 0, 0, 0, 0, render_width, render_height);
             XRenderFreePicture(dpy, bg_picture);
             has_bg_image = true;
         }
 
         if (!has_bg_image) {
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color, 
-                0, 0, canvas->width, canvas->height);
+                0, 0, render_width, render_height);
         }
 
 /*    } else {
@@ -311,7 +327,7 @@ void redraw_canvas(Canvas *canvas) {
     } 
     if (!is_client_frame) {*/
         // =============
-        // Render icons
+        // Render icons (now includes during interactive resize for better UX)
         // =============
         if ((canvas->type == DESKTOP || canvas->type == WINDOW) && !canvas->scanning){
             FileIcon **icon_array = get_icon_array();
@@ -657,16 +673,16 @@ void redraw_canvas(Canvas *canvas) {
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, sb_x+sb_w, knob_y-1, 1, knob_h+2);  // black vertical outline 
             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, sb_x, knob_y+knob_h, sb_w, 1);      // black horizontal outline
 
-            // Horizontal scrollbar track
-            int hb_x = BORDER_WIDTH_LEFT + 10;  // Start at x=10
+            // Horizontal scrollbar track - use actual window dimensions like vertical scrollbar
+            int hb_x = BORDER_WIDTH_LEFT + 10;  // TRACK_MARGIN = 10
             int hb_y = canvas->height - BORDER_HEIGHT_BOTTOM + 4;  // Inside border
-            int hb_w = (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) - 54 - 10;  // stop scroll track before arrows button
+            int hb_w = (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) - 54 - 10;  // TRACK_RESERVED=54, TRACK_MARGIN=10
             int hb_h = BORDER_HEIGHT_BOTTOM - 8;  // Inside border height
             draw_checkerboard(ctx->dpy, dest, hb_x, hb_y+1, hb_w, hb_h, color1, color2);    // Draw checkerboard track
 
-            // Knob on top (use adjusted hb_w for calculation)
-            ratio = (float)hb_w / (canvas->content_width > 0 ? canvas->content_width : hb_w);          // Avoid division by zero
-            int knob_w = (canvas->max_scroll_x > 0) ? max(MIN_KNOB_SIZE, (int)(ratio * hb_w)) : hb_w;  // Full width if no scroll
+            // Knob on top (calculate ratio exactly like vertical scrollbar)
+            float h_ratio = (float)hb_w / (canvas->content_width > 0 ? canvas->content_width : hb_w);  // Avoid division by zero
+            int knob_w = (canvas->max_scroll_x > 0) ? max(MIN_KNOB_SIZE, (int)(h_ratio * hb_w)) : hb_w;  // Full width if no scroll
             pos_ratio = (canvas->max_scroll_x > 0) ? (float)canvas->scroll_x / canvas->max_scroll_x : 0.0f;
             int knob_x = hb_x + (int)(pos_ratio * (hb_w - knob_w));
 
@@ -683,7 +699,11 @@ void redraw_canvas(Canvas *canvas) {
 
     // Composite buffer to window for non-client frames
     if (!is_client_frame) {
-        XRenderComposite(ctx->dpy, PictOpSrc, canvas->canvas_render, None, canvas->window_render, 0, 0, 0, 0, 0, 0, canvas->width, canvas->height);
+        // During interactive resize, use buffer dimensions to avoid copying outside buffer bounds
+        int copy_width = canvas->resizing_interactive ? canvas->buffer_width : canvas->width;
+        int copy_height = canvas->resizing_interactive ? canvas->buffer_height : canvas->height;
+        
+        XRenderComposite(ctx->dpy, PictOpSrc, canvas->canvas_render, None, canvas->window_render, 0, 0, 0, 0, 0, 0, copy_width, copy_height);
     }
     XFlush(ctx->dpy);
 }
@@ -720,14 +740,25 @@ void render_recreate_canvas_surfaces(Canvas *canvas) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
 
+    if (canvas->width <= 0 || canvas->height <= 0) return;
+
+    printf("[BUFFER] Recreating canvas surfaces: %p (%dx%d)\n", 
+           (void*)canvas, canvas->width, canvas->height);
+
     // Free existing resources first
     render_destroy_canvas_surfaces(canvas);
 
-    if (canvas->width <= 0 || canvas->height <= 0) return;
+    // Use buffer dimensions if they're larger (for resize), otherwise use canvas size
+    int buffer_width = (canvas->buffer_width > canvas->width) ? canvas->buffer_width : canvas->width;
+    int buffer_height = (canvas->buffer_height > canvas->height) ? canvas->buffer_height : canvas->height;
+    
+    // Update buffer dimensions (preserve larger dimensions during resize)
+    canvas->buffer_width = buffer_width;
+    canvas->buffer_height = buffer_height;
 
-    // Create offscreen pixmap matching canvas depth
+    // Create offscreen pixmap using buffer dimensions
     canvas->canvas_buffer = XCreatePixmap(ctx->dpy, canvas->win,
-        canvas->width, canvas->height, canvas->depth);
+        buffer_width, buffer_height, canvas->depth);
     if (!canvas->canvas_buffer) return;
 
     // Picture format for the offscreen buffer

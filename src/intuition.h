@@ -9,6 +9,7 @@
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/Xrandr.h>
 #include <stdbool.h>
+#include <time.h>
 #include <Imlib2.h>
 
 // UI metrics (frame and menubar sizes). Keep short to match Amiga style.
@@ -51,6 +52,7 @@ typedef struct {
     char *title;                        // Window/menu title (NULL for desktop)
     int x, y;                           // Position
     int width, height;                  // Dimensions
+    int buffer_width, buffer_height;    // Actual buffer dimensions (may be larger)
     int scroll_x, scroll_y;             // Scroll offsets
     int max_scroll_x, max_scroll_y;     // Max scroll limits
     int content_width, content_height;  // Content dimensions
@@ -66,6 +68,10 @@ typedef struct {
     int saved_x, saved_y;               // Saved frame pos before fullscreen
     int saved_w, saved_h;               // Saved frame size before fullscreen
     bool close_armed;                    // Close gadget pressed (until release)
+    bool resizing_interactive;           // True during interactive resize (no buffer recreation)
+    bool is_transient;                   // True if this is a transient window (modal dialog)
+    Window transient_for;                // Parent window for transient windows
+    long long close_request_time_ms;     // When WM_DELETE_WINDOW was sent in milliseconds (0 = none pending)
 } Canvas;
 
 extern int randr_event_base;
@@ -77,6 +83,10 @@ Display *get_display(void);                 // Getter for X Display
 Canvas  *init_intuition(void);              // Init Display, visuals, desktop canvas
 Canvas  *get_desktop_canvas(void);          // Get desktop canvas
 Canvas  *find_canvas(Window win);           // Find canvas by its frame window
+
+// Canvas array management (for timer loop access)
+extern Canvas **canvas_array;
+extern int canvas_count;
 Canvas  *create_canvas(const char *path, int x, int y, int width, int height, CanvasType type); 
 Canvas  *get_active_window(void);           // Currently active WINDOW canvas
 Canvas  *find_canvas_by_client(Window client_win); // Lookup by client window
@@ -123,6 +133,9 @@ void intuition_handle_configure_notify(XConfigureEvent *event);   // for resizin
 void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event);
 void intuition_handle_client_message(XClientMessageEvent *event);
 
+// Auto-cleanup for unresponsive transient windows
+void check_unresponsive_transients(void);
+
 // Fullscreen helpers
 void intuition_enter_fullscreen(Canvas *c);
 void intuition_exit_fullscreen(Canvas *c);
@@ -131,4 +144,5 @@ void intuition_exit_fullscreen(Canvas *c);
 /*extern int active_window_index;     // -1 for none
 extern int dragging_canvas_index;   // -1 for none
 extern int resizing_canvas_index;   // -1 for none*/
+// Old resize global removed - now using clean resize.c module
 #endif

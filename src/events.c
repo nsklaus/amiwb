@@ -78,6 +78,10 @@ void handle_events(void) {
             }
         }
         #endif
+        
+        // Check for timed-out transient windows (simple auto-cleanup)
+        check_unresponsive_transients();
+        
         // Let the compositor see every event so it can maintain damage/topology
         compositor_handle_event(dpy, &event);
 
@@ -414,6 +418,7 @@ void handle_configure_notify(XConfigureEvent *event) {
         intuition_handle_configure_notify(event);
     }
 }
+
 
 // A window died; let intuition tear down the associated canvas.
 void handle_destroy_notify(XDestroyWindowEvent *event) {    

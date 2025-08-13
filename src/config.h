@@ -71,7 +71,7 @@ extern char *iconify_path;
 // If LOG_CAP_ENABLED is 1, the event loop enforces a size cap (LOG_CAP_BYTES)
 // by truncating the file when it grows beyond the cap.
 #define LOGGING_ENABLED 1
-#define LOG_FILE_PATH "$HOME/.config/amiwb/amiwb.log"
+#define LOG_FILE_PATH "$HOME/Sources/amiwb/amiwb.log" //"$HOME/.config/amiwb/amiwb.log"
 #define LOG_CAP_ENABLED 0
 #define LOG_CAP_BYTES (5 * 1024 * 1024)
 #endif

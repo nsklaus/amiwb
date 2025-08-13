@@ -11,6 +11,7 @@
 #include <X11/cursorfont.h>
 #include <X11/Xatom.h>
 #include <time.h>
+#include <sys/time.h>
 #include <math.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xdamage.h>
@@ -18,6 +19,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include "resize.h"
 
 
 #define INITIAL_CANVAS_CAPACITY 8
@@ -32,8 +34,8 @@ static inline void move_and_resize_frame(Canvas *c, int x, int y, int w, int h);
 // management code can access them without passing through every call.
 static Display *display = NULL;
 static RenderContext *render_context = NULL;
-static Canvas **canvas_array = NULL;
-static int canvas_count = 0;
+Canvas **canvas_array = NULL;
+int canvas_count = 0;
 static int canvas_array_size = 0;
 static Bool fullscreen_active = False;
 static Canvas *active_window = NULL;
@@ -48,11 +50,31 @@ static long long now_ms(void) {
     return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 }
 
+// Get current time in milliseconds (for timer precision)
+static long long get_time_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (long long)tv.tv_sec * 1000LL + tv.tv_usec / 1000LL;
+}
+
 // Helper to request client to close via WM_DELETE, with fallback to XKillClient
 static void request_client_close(Canvas *canvas) {
     if (!canvas) return;
     Display *dpy = display;
+    long long current_time = get_time_ms();
+    printf("[DEBUG] REQUEST_CLOSE: client=0x%lx valid=%s transient=%s close_time=%lld current_time=%lld\n", 
+           canvas->client_win, is_window_valid(dpy, canvas->client_win) ? "YES" : "NO",
+           canvas->is_transient ? "YES" : "NO", canvas->close_request_time_ms, current_time);
+           
     if (canvas->client_win && is_window_valid(dpy, canvas->client_win)) {
+        // For transient windows that already had a close request, destroy directly (STAKE IN DRACULA!)
+        if (canvas->is_transient && canvas->close_request_time_ms > 0) {
+            printf("[DEBUG] TRANSIENT UNRESPONSIVE - STAKE IN DRACULA: client=0x%lx (immediate destruction on 2nd click)\n", canvas->client_win);
+            XDestroyWindow(dpy, canvas->client_win);
+            XFlush(dpy);
+            return;
+        }
+        
         Atom wm_protocols = XInternAtom(dpy, "WM_PROTOCOLS", False);
         Atom wm_delete    = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
         Atom *protocols = NULL; int n = 0;
@@ -62,6 +84,7 @@ static void request_client_close(Canvas *canvas) {
             if (protocols) XFree(protocols);
         }
         if (supports_delete) {
+            printf("[DEBUG] SENDING WM_DELETE_WINDOW to client=0x%lx\n", canvas->client_win);
             XClientMessageEvent ev = {0};
             ev.type = ClientMessage;
             ev.window = canvas->client_win;
@@ -71,12 +94,72 @@ static void request_client_close(Canvas *canvas) {
             ev.data.l[1] = CurrentTime;
             XSendEvent(dpy, canvas->client_win, False, NoEventMask, (XEvent *)&ev);
             XFlush(dpy);
+            // Start the timer for transient windows
+            if (canvas->is_transient) {
+                canvas->close_request_time_ms = get_time_ms();
+                printf("[DEBUG] ***** TIMER STARTED ***** for transient window: client=0x%lx at time=%lld\n", 
+                       canvas->client_win, canvas->close_request_time_ms);
+            }
         } else {
+            printf("[DEBUG] KILLING CLIENT (no WM_DELETE support) client=0x%lx\n", canvas->client_win);
             XKillClient(dpy, canvas->client_win);
         }
     } else {
+        printf("[DEBUG] NO VALID CLIENT - destroying frame directly\n");
         // No client: just destroy our frame
         destroy_canvas(canvas);
+    }
+}
+
+// Timer check for auto-cleanup of unresponsive transient windows + zombie detection
+// Called periodically from event loop - no complex timers needed!
+void check_unresponsive_transients(void) {
+    Display *dpy = display;
+    if (!dpy) return;
+    
+    static int call_count = 0;
+    call_count++;
+    
+    long long now = get_time_ms();
+    
+    // Check all canvases
+    for (int i = 0; i < canvas_count; i++) {
+        Canvas *canvas = canvas_array[i];
+        if (!canvas || !canvas->client_win) continue;
+        
+        // Fast path: Check active timers for transient windows (no X protocol calls)
+        if (canvas->is_transient && canvas->close_request_time_ms > 0) {
+            // First check if window closed itself (became invalid)
+            if (!is_window_valid(dpy, canvas->client_win)) {
+                printf("[DEBUG] WINDOW RESPONDED: Window closed itself, canceling timer for client=0x%lx\n", canvas->client_win);
+                canvas->close_request_time_ms = 0;
+                continue;
+            }
+            
+            long long elapsed = now - canvas->close_request_time_ms;
+            
+            // Check if 0.5+ seconds have passed (500ms) and window is still alive
+            if (elapsed >= 500) {
+                printf("[DEBUG] ***** UNRESPONSIVE TRANSIENT DETECTED! ***** Window did not close after %lld ms, FORCE DESTROYING client=0x%lx\n", elapsed, canvas->client_win);
+                XDestroyWindow(dpy, canvas->client_win);
+                XFlush(dpy);
+                canvas->close_request_time_ms = 0;
+            }
+        }
+        // Slow path: Zombie detection for ALL windows (every 20 calls to avoid X protocol spam)  
+        else if ((call_count % 20) == 0) {
+            // Check if ANY window is a zombie (dead client but visible window)
+            printf("[DEBUG] ZOMBIE CHECK: call=%d checking client=0x%lx (type=%s)\n", 
+                   call_count, canvas->client_win, canvas->is_transient ? "transient" : "normal");
+            if (!is_window_valid(dpy, canvas->client_win)) {
+                printf("[DEBUG] ***** ZOMBIE WINDOW DETECTED! ***** Dead client but visible window, DESTROYING client=0x%lx (type=%s)\n", 
+                       canvas->client_win, canvas->is_transient ? "transient" : "normal");
+                XDestroyWindow(dpy, canvas->client_win);
+                XFlush(dpy);
+            } else {
+                printf("[DEBUG] ZOMBIE CHECK: client=0x%lx is still valid\n", canvas->client_win);
+            }
+        }
     }
 }
 
@@ -111,6 +194,7 @@ static bool is_window_valid(Display *dpy, Window win) {
     XWindowAttributes attrs;
     return XGetWindowAttributes(dpy, win, &attrs) == True;
 }
+
 
 static void apply_resize_and_redraw(Canvas *canvas, int new_w, int new_h);
 
@@ -206,10 +290,7 @@ static int drag_start_x = 0, drag_start_y = 0;
 static int window_start_x = 0, window_start_y = 0;
 int randr_event_base = 0;
 
-// resizing
-static Canvas *resizing_canvas = NULL;
-static int resize_start_x = 0, resize_start_y = 0;
-static int window_start_width = 0, window_start_height = 0;
+// Old resize variables removed - now using clean resize.c module
 
 // Canvas being scrolled
 static Canvas *scrolling_canvas = NULL;
@@ -382,11 +463,19 @@ static bool init_render_context(void) {
 
 static void apply_resize_and_redraw(Canvas *c, int nw, int nh) {
     if (!c) return; if (c->width == nw && c->height == nh) return;
-    c->width = nw; c->height = nh; render_recreate_canvas_surfaces(c);
+    c->width = nw; c->height = nh; 
+    
+    // Skip expensive buffer recreation during interactive resize
+    if (!c->resizing_interactive) {
+        render_recreate_canvas_surfaces(c);
+    }
+    
     if (c->client_win != None) { int vw, vh; content_rect(c, &vw, &vh);
         XWindowChanges ch = { .width = vw, .height = vh };
         XConfigureWindow(display, c->client_win, CWWidth | CWHeight, &ch);
     } else if (c->type == WINDOW) compute_max_scroll(c);
+    
+    // Always redraw to show resize visually
     redraw_canvas(c);
 }
 
@@ -412,7 +501,11 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
     c->title = path ? strdup(strrchr(path, '/') ? strrchr(path, '/') + 1 : path) : NULL;
     if (c->title && strlen(c->title) == 0) c->title = strdup("System");
     c->x = x; c->y = (t == WINDOW) ? max(y, MENUBAR_HEIGHT) : y;
-    c->width = w; c->height = h; c->bg_color = GRAY;
+    c->width = w; c->height = h; 
+    // Set default background color
+    c->bg_color = GRAY;
+    c->buffer_width = w; c->buffer_height = h;  // Initialize to canvas size, may be enlarged later
+    c->resizing_interactive = false;
 }
 
 static Bool setup_visual_and_window(Canvas *c, CanvasType t,
@@ -468,6 +561,19 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
     int fw = attrs->width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
     int fh = attrs->height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
     Canvas *frame = create_canvas(NULL, fx, fy, fw, fh, WINDOW); if (!frame) return NULL;
+    
+    // Check if this is a transient window (modal dialog) and mark it
+    Window transient_for = None;
+    if (XGetTransientForHint(display, client, &transient_for)) {
+        frame->is_transient = true;
+        frame->transient_for = transient_for;
+        printf("[DEBUG] FRAMING TRANSIENT: client=0x%lx parent=0x%lx frame=0x%lx\n", client, transient_for, frame->win);
+    } else {
+        frame->is_transient = false;
+        frame->transient_for = None;
+        printf("[DEBUG] FRAMING NORMAL: client=0x%lx frame=0x%lx\n", client, frame->win);
+    }
+    
     XReparentWindow(display, client, frame->win, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
     XSelectInput(display, client, StructureNotifyMask | PropertyChangeMask);
     // Grab mouse buttons on client so clicks can activate the frame and set focus
@@ -756,7 +862,9 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
 static bool should_skip_framing(Window win, XWindowAttributes *attrs) {
     // Only skip truly unmanaged windows
     if (attrs->override_redirect || attrs->class == InputOnly) return true;
-    // Always frame normal client windows
+    
+    // Frame all normal client windows including transient windows (modal dialogs)
+    // Transient windows will be marked and handled specially in the Canvas structure
     return false;
 }
 
@@ -817,9 +925,8 @@ static inline Bool begin_frame_drag(Canvas *c, XButtonEvent *e) {
 }
 
 static inline Bool begin_frame_resize(Canvas *c, XButtonEvent *e) {
-    resizing_canvas = c;
-    resize_start_x = e->x_root; resize_start_y = e->y_root;
-    window_start_width = c->width; window_start_height = c->height;
+    // Use the new clean resize module
+    resize_begin(c, e->x_root, e->y_root);
     return True;
 }
 
@@ -1098,23 +1205,9 @@ static Bool handle_drag_motion(XMotionEvent *event) {
 }
 
 static Bool handle_resize_motion(XMotionEvent *event) {
-    if (resizing_canvas) {
-        int delta_x = event->x_root - resize_start_x;
-        int delta_y = event->y_root - resize_start_y;
-        int new_width = max(150, window_start_width + delta_x);
-        int new_height = max(150, window_start_height + delta_y);
-        
-        // Only resize if change exceeds a small threshold to avoid micro-adjustments
-        const int resize_threshold = 2;
-        if (abs(new_width - resizing_canvas->width) > resize_threshold ||
-            abs(new_height - resizing_canvas->height) > resize_threshold) {
-            XResizeWindow(display, resizing_canvas->win, new_width, new_height);
-            // Update start positions to current for next delta calculation
-            resize_start_x = event->x_root; 
-            resize_start_y = event->y_root;
-            window_start_width = new_width; 
-            window_start_height = new_height;
-        }
+    // Use the new clean resize module with motion compression
+    if (resize_is_active()) {
+        resize_motion(event->x_root, event->y_root);
         return True;
     }
     return False;
@@ -1140,13 +1233,25 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
 
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
     Canvas *canvas = find_canvas_by_client(event->window) ?: find_canvas(event->window);
-    if (!canvas) return;
+    if (!canvas) {
+        printf("[DEBUG] DESTROY_NOTIFY: window=0x%lx - no canvas found\n", event->window);
+        return;
+    }
+    // Clear any pending timer for this window
+    if (canvas->is_transient && canvas->close_request_time_ms > 0) {
+        printf("[DEBUG] DESTROY_NOTIFY: Clearing timer for transient window=0x%lx\n", canvas->client_win);
+    }
+    canvas->close_request_time_ms = 0;
     destroy_canvas(canvas);
 }
 
 void intuition_handle_button_release(XButtonEvent *event) {
+    // Only end resize if we're actually resizing
+    if (resize_is_active()) {
+        resize_end();
+    }
+    
     dragging_canvas = NULL;
-    resizing_canvas = NULL;
     scrolling_canvas = NULL;
     // Handle deferred close action if any
     Canvas *canvas = find_canvas(event->window);
@@ -1154,6 +1259,18 @@ void intuition_handle_button_release(XButtonEvent *event) {
         TitlebarHit hit = hit_test(canvas, event->x, event->y);
         canvas->close_armed = false;
         if (hit == HIT_CLOSE) {
+            printf("[DEBUG] CLOSE_BUTTON CLICKED - Full Canvas dump:\n");
+            printf("  frame_win=0x%lx\n", canvas->win);
+            printf("  client_win=0x%lx\n", canvas->client_win);
+            printf("  type=%d\n", canvas->type);
+            printf("  is_transient=%s\n", canvas->is_transient ? "YES" : "NO");
+            printf("  transient_for=0x%lx\n", canvas->transient_for);
+            printf("  title=%s\n", canvas->title ? canvas->title : "NULL");
+            printf("  path=%s\n", canvas->path ? canvas->path : "NULL");
+            printf("  pos=(%d,%d) size=(%dx%d)\n", canvas->x, canvas->y, canvas->width, canvas->height);
+            printf("  active=%s\n", canvas->active ? "YES" : "NO");
+            printf("  close_armed=%s\n", canvas->close_armed ? "YES" : "NO");
+            printf("  Client window valid=%s\n", is_window_valid(display, canvas->client_win) ? "YES" : "NO");
             request_client_close(canvas);
             return;
         }
