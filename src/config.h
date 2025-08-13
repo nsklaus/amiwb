@@ -60,9 +60,9 @@ extern char *iconify_path;
 #define MIN_KNOB_SIZE 10  	// Minimum size for scrollbar knobs in pixels
 
 // desktop and windows backgrounds, with tile option 0/1
-#define DESKPICT "/home/klaus/Pictures/backgrounds/1164147.png"
+#define DESKPICT "/usr/local/share/amiwb/patterns/atom_art.png"
 #define DESKTILE 0
-#define WINDPICT "/home/klaus/Sources/amiwb/patterns/pattern8.png"
+#define WINDPICT "/usr/local/share/amiwb/patterns/pattern8.png"
 #define WINDTILE 1
 
 // Logging configuration

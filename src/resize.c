@@ -65,8 +65,8 @@ static void create_initial_resize_buffers(Canvas *canvas, int start_width, int s
     if (buffer_width < start_width + 100) buffer_width = start_width + 100;
     if (buffer_height < start_height + 100) buffer_height = start_height + 100;
     
-    printf("[RESIZE] Creating smart buffers %dx%d (window: %dx%d)\n", 
-           buffer_width, buffer_height, start_width, start_height);
+    // printf("[RESIZE] Creating smart buffers %dx%d (window: %dx%d)\n", 
+    //        buffer_width, buffer_height, start_width, start_height);
     
     // Set buffer dimensions
     canvas->buffer_width = buffer_width;
@@ -83,7 +83,6 @@ static void create_initial_resize_buffers(Canvas *canvas, int start_width, int s
 void resize_begin(Canvas *canvas, int mouse_x, int mouse_y) {
     if (!canvas) return;
     
-    printf("[RESIZE] Starting resize of %dx%d window\n", canvas->width, canvas->height);
     
     // Simple state setup
     g_resize.canvas = canvas;
@@ -135,8 +134,8 @@ void resize_motion(int mouse_x, int mouse_y) {
         if (new_width > g_resize.canvas->buffer_width + 20 || 
             new_height > g_resize.canvas->buffer_height + 20) {
             need_buffer_growth = true;
-            printf("[RESIZE] Buffer growth needed: %dx%d exceeds %dx%d\n", 
-                   new_width, new_height, g_resize.canvas->buffer_width, g_resize.canvas->buffer_height);
+            // printf("[RESIZE] Buffer growth needed: %dx%d exceeds %dx%d\n", 
+            //        new_width, new_height, g_resize.canvas->buffer_width, g_resize.canvas->buffer_height);
             
             // Update buffer dimensions for new larger size
             g_resize.canvas->buffer_width = new_width + 100;  // Add padding
@@ -159,9 +158,9 @@ void resize_motion(int mouse_x, int mouse_y) {
         return;
     }
     
-    printf("[RESIZE] %dx%d -> %dx%d (buffer: %dx%d)\n", 
-           g_resize.canvas->width, g_resize.canvas->height, new_width, new_height,
-           g_resize.canvas->buffer_width, g_resize.canvas->buffer_height);
+    // printf("[RESIZE] %dx%d -> %dx%d (buffer: %dx%d)\n", 
+    //        g_resize.canvas->width, g_resize.canvas->height, new_width, new_height,
+    //        g_resize.canvas->buffer_width, g_resize.canvas->buffer_height);
     
     // Update window size immediately for smooth visual feedback  
     XResizeWindow(get_display(), g_resize.canvas->win, new_width, new_height);
@@ -179,13 +178,12 @@ void resize_motion(int mouse_x, int mouse_y) {
         XWindowChanges client_changes = { .width = client_width, .height = client_height };
         XConfigureWindow(get_display(), g_resize.canvas->client_win, CWWidth | CWHeight, &client_changes);
         
-        printf("[RESIZE] Also resized client window to %dx%d\n", client_width, client_height);
     }
     
     // Recreate buffer if growth is needed (allows unlimited resize)
     if (need_buffer_growth) {
-        printf("[RESIZE] Growing buffer to %dx%d\n", 
-               g_resize.canvas->buffer_width, g_resize.canvas->buffer_height);
+        // printf("[RESIZE] Growing buffer to %dx%d\n", 
+        //        g_resize.canvas->buffer_width, g_resize.canvas->buffer_height);
         render_recreate_canvas_surfaces(g_resize.canvas);
     }
     
@@ -206,8 +204,8 @@ void resize_motion(int mouse_x, int mouse_y) {
 void resize_end(void) {
     if (!g_resize.active || !g_resize.canvas) return;
     
-    printf("[RESIZE] Finished resize at %dx%d\n", 
-           g_resize.canvas->width, g_resize.canvas->height);
+    // printf("[RESIZE] Finished resize at %dx%d\n", 
+    //        g_resize.canvas->width, g_resize.canvas->height);
     
     // Mark resize as complete
     g_resize.canvas->resizing_interactive = false;
@@ -228,7 +226,6 @@ void resize_end(void) {
     g_resize.active = false;
     g_resize.canvas = NULL;
     
-    printf("[RESIZE] Resize complete\n");
 }
 
 /*

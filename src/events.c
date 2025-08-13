@@ -79,8 +79,6 @@ void handle_events(void) {
         }
         #endif
         
-        // Check for timed-out transient windows (simple auto-cleanup)
-        check_unresponsive_transients();
         
         // Let the compositor see every event so it can maintain damage/topology
         compositor_handle_event(dpy, &event);
@@ -115,9 +113,21 @@ void handle_events(void) {
             case MapRequest:
                 handle_map_request(&event.xmaprequest);
                 break;
-            case MapNotify:
+            case MapNotify: {
                 // Catch unmanaged toplevels when SubstructureRedirect was not granted
-                intuition_handle_map_notify(&event.xmap);
+                XMapEvent *map_event = &event.xmap;
+                Canvas *canvas = find_canvas_by_client(map_event->window);
+                if (canvas) {
+                    // Clear consecutive unmap counter - window is healthy again
+                    if (canvas->is_transient && canvas->consecutive_unmaps > 0) {
+                        canvas->consecutive_unmaps = 0;
+                    }
+                }
+                intuition_handle_map_notify(map_event);
+                break;
+            }
+            case UnmapNotify:
+                handle_unmap_notify(&event.xunmap);
                 break;
             case ConfigureRequest:
                 handle_configure_request(&event.xconfigurerequest);
@@ -321,7 +331,6 @@ void handle_expose(XExposeEvent *event) {
 void handle_map_request(XMapRequestEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) {
-        // MapRequest tracing removed
         intuition_handle_map_request(event);
     }
 }
@@ -419,8 +428,21 @@ void handle_configure_notify(XConfigureEvent *event) {
     }
 }
 
+void handle_unmap_notify(XUnmapEvent *event) {
+    Canvas *canvas = find_canvas_by_client(event->window);
+    if (canvas) {
+        // Zombie detection for transient windows
+        if (canvas->is_transient) {
+            canvas->consecutive_unmaps++;
+            
+            // If this is the second consecutive unmap without a remap, it's a zombie
+            if (canvas->consecutive_unmaps >= 2) {
+                destroy_canvas(canvas);
+            }
+        }
+    }
+}
 
-// A window died; let intuition tear down the associated canvas.
 void handle_destroy_notify(XDestroyWindowEvent *event) {    
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) {

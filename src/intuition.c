@@ -11,7 +11,6 @@
 #include <X11/cursorfont.h>
 #include <X11/Xatom.h>
 #include <time.h>
-#include <sys/time.h>
 #include <math.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xdamage.h>
@@ -50,29 +49,37 @@ static long long now_ms(void) {
     return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 }
 
-// Get current time in milliseconds (for timer precision)
-static long long get_time_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (long long)tv.tv_sec * 1000LL + tv.tv_usec / 1000LL;
-}
 
 // Helper to request client to close via WM_DELETE, with fallback to XKillClient
 static void request_client_close(Canvas *canvas) {
     if (!canvas) return;
     Display *dpy = display;
-    long long current_time = get_time_ms();
-    printf("[DEBUG] REQUEST_CLOSE: client=0x%lx valid=%s transient=%s close_time=%lld current_time=%lld\n", 
-           canvas->client_win, is_window_valid(dpy, canvas->client_win) ? "YES" : "NO",
-           canvas->is_transient ? "YES" : "NO", canvas->close_request_time_ms, current_time);
            
     if (canvas->client_win && is_window_valid(dpy, canvas->client_win)) {
-        // For transient windows that already had a close request, destroy directly (STAKE IN DRACULA!)
-        if (canvas->is_transient && canvas->close_request_time_ms > 0) {
-            printf("[DEBUG] TRANSIENT UNRESPONSIVE - STAKE IN DRACULA: client=0x%lx (immediate destruction on 2nd click)\n", canvas->client_win);
-            XDestroyWindow(dpy, canvas->client_win);
-            XFlush(dpy);
+        // For transient windows that already had a close request, destroy completely (STAKE IN DRACULA!)
+        if (canvas->is_transient && canvas->close_request_sent) {
+            destroy_canvas(canvas);
             return;
+        }
+        
+        // Quick responsiveness test for transient windows - if client can't respond to property query, it's dead
+        if (canvas->is_transient) {
+            Atom wm_name = XInternAtom(dpy, "WM_NAME", False);
+            Atom actual_type;
+            int actual_format;
+            unsigned long nitems, bytes_after;
+            unsigned char *prop_return = NULL;
+            
+            // Try to read window title - this will fail if client process is dead
+            int result = XGetWindowProperty(dpy, canvas->client_win, wm_name, 0, 0, False, AnyPropertyType,
+                                           &actual_type, &actual_format, &nitems, &bytes_after, &prop_return);
+            if (prop_return) XFree(prop_return);
+            
+            if (result != Success) {
+                // Client is unresponsive - destroy completely (STAKE IN DRACULA!)
+                destroy_canvas(canvas);
+                return;
+            }
         }
         
         Atom wm_protocols = XInternAtom(dpy, "WM_PROTOCOLS", False);
@@ -84,7 +91,6 @@ static void request_client_close(Canvas *canvas) {
             if (protocols) XFree(protocols);
         }
         if (supports_delete) {
-            printf("[DEBUG] SENDING WM_DELETE_WINDOW to client=0x%lx\n", canvas->client_win);
             XClientMessageEvent ev = {0};
             ev.type = ClientMessage;
             ev.window = canvas->client_win;
@@ -94,74 +100,19 @@ static void request_client_close(Canvas *canvas) {
             ev.data.l[1] = CurrentTime;
             XSendEvent(dpy, canvas->client_win, False, NoEventMask, (XEvent *)&ev);
             XFlush(dpy);
-            // Start the timer for transient windows
+            // Mark transient windows as having had a close request
             if (canvas->is_transient) {
-                canvas->close_request_time_ms = get_time_ms();
-                printf("[DEBUG] ***** TIMER STARTED ***** for transient window: client=0x%lx at time=%lld\n", 
-                       canvas->client_win, canvas->close_request_time_ms);
+                canvas->close_request_sent = true;
             }
         } else {
-            printf("[DEBUG] KILLING CLIENT (no WM_DELETE support) client=0x%lx\n", canvas->client_win);
             XKillClient(dpy, canvas->client_win);
         }
     } else {
-        printf("[DEBUG] NO VALID CLIENT - destroying frame directly\n");
         // No client: just destroy our frame
         destroy_canvas(canvas);
     }
 }
 
-// Timer check for auto-cleanup of unresponsive transient windows + zombie detection
-// Called periodically from event loop - no complex timers needed!
-void check_unresponsive_transients(void) {
-    Display *dpy = display;
-    if (!dpy) return;
-    
-    static int call_count = 0;
-    call_count++;
-    
-    long long now = get_time_ms();
-    
-    // Check all canvases
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *canvas = canvas_array[i];
-        if (!canvas || !canvas->client_win) continue;
-        
-        // Fast path: Check active timers for transient windows (no X protocol calls)
-        if (canvas->is_transient && canvas->close_request_time_ms > 0) {
-            // First check if window closed itself (became invalid)
-            if (!is_window_valid(dpy, canvas->client_win)) {
-                printf("[DEBUG] WINDOW RESPONDED: Window closed itself, canceling timer for client=0x%lx\n", canvas->client_win);
-                canvas->close_request_time_ms = 0;
-                continue;
-            }
-            
-            long long elapsed = now - canvas->close_request_time_ms;
-            
-            // Check if 0.5+ seconds have passed (500ms) and window is still alive
-            if (elapsed >= 500) {
-                printf("[DEBUG] ***** UNRESPONSIVE TRANSIENT DETECTED! ***** Window did not close after %lld ms, FORCE DESTROYING client=0x%lx\n", elapsed, canvas->client_win);
-                XDestroyWindow(dpy, canvas->client_win);
-                XFlush(dpy);
-                canvas->close_request_time_ms = 0;
-            }
-        }
-        // Slow path: Zombie detection for ALL windows (every 20 calls to avoid X protocol spam)  
-        else if ((call_count % 20) == 0) {
-            // Check if ANY window is a zombie (dead client but visible window)
-            printf("[DEBUG] ZOMBIE CHECK: call=%d checking client=0x%lx (type=%s)\n", 
-                   call_count, canvas->client_win, canvas->is_transient ? "transient" : "normal");
-            if (!is_window_valid(dpy, canvas->client_win)) {
-                printf("[DEBUG] ***** ZOMBIE WINDOW DETECTED! ***** Dead client but visible window, DESTROYING client=0x%lx (type=%s)\n", 
-                       canvas->client_win, canvas->is_transient ? "transient" : "normal");
-                XDestroyWindow(dpy, canvas->client_win);
-                XFlush(dpy);
-            } else {
-                printf("[DEBUG] ZOMBIE CHECK: client=0x%lx is still valid\n", canvas->client_win);
-            }
-        }
-    }
-}
 
 
  
@@ -567,11 +518,9 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
     if (XGetTransientForHint(display, client, &transient_for)) {
         frame->is_transient = true;
         frame->transient_for = transient_for;
-        printf("[DEBUG] FRAMING TRANSIENT: client=0x%lx parent=0x%lx frame=0x%lx\n", client, transient_for, frame->win);
     } else {
         frame->is_transient = false;
         frame->transient_for = None;
-        printf("[DEBUG] FRAMING NORMAL: client=0x%lx frame=0x%lx\n", client, frame->win);
     }
     
     XReparentWindow(display, client, frame->win, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
@@ -823,6 +772,10 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
     if (!canvas) return NULL;
     init_canvas_metadata(canvas, path, type, x, y, width, height);
     canvas->close_armed = false;
+    canvas->is_transient = false;
+    canvas->transient_for = None;
+    canvas->close_request_sent = false;
+    canvas->consecutive_unmaps = 0;
 
     if (!setup_visual_and_window(canvas, type, x, y, width, height)) {
         destroy_canvas(canvas);
@@ -1234,14 +1187,10 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
     Canvas *canvas = find_canvas_by_client(event->window) ?: find_canvas(event->window);
     if (!canvas) {
-        printf("[DEBUG] DESTROY_NOTIFY: window=0x%lx - no canvas found\n", event->window);
         return;
     }
-    // Clear any pending timer for this window
-    if (canvas->is_transient && canvas->close_request_time_ms > 0) {
-        printf("[DEBUG] DESTROY_NOTIFY: Clearing timer for transient window=0x%lx\n", canvas->client_win);
-    }
-    canvas->close_request_time_ms = 0;
+    // Clear any pending close request flag
+    canvas->close_request_sent = false;
     destroy_canvas(canvas);
 }
 
@@ -1259,18 +1208,26 @@ void intuition_handle_button_release(XButtonEvent *event) {
         TitlebarHit hit = hit_test(canvas, event->x, event->y);
         canvas->close_armed = false;
         if (hit == HIT_CLOSE) {
-            printf("[DEBUG] CLOSE_BUTTON CLICKED - Full Canvas dump:\n");
-            printf("  frame_win=0x%lx\n", canvas->win);
+            // Diagnostic output to understand the file picker issue
+            printf("[DIAGNOSTIC] Close button clicked on window:\n");
             printf("  client_win=0x%lx\n", canvas->client_win);
-            printf("  type=%d\n", canvas->type);
             printf("  is_transient=%s\n", canvas->is_transient ? "YES" : "NO");
-            printf("  transient_for=0x%lx\n", canvas->transient_for);
+            printf("  close_request_sent=%s\n", canvas->close_request_sent ? "YES" : "NO");
             printf("  title=%s\n", canvas->title ? canvas->title : "NULL");
-            printf("  path=%s\n", canvas->path ? canvas->path : "NULL");
-            printf("  pos=(%d,%d) size=(%dx%d)\n", canvas->x, canvas->y, canvas->width, canvas->height);
-            printf("  active=%s\n", canvas->active ? "YES" : "NO");
-            printf("  close_armed=%s\n", canvas->close_armed ? "YES" : "NO");
-            printf("  Client window valid=%s\n", is_window_valid(display, canvas->client_win) ? "YES" : "NO");
+            
+            // Check if window is actually valid
+            XWindowAttributes attrs;
+            bool window_valid = XGetWindowAttributes(display, canvas->client_win, &attrs);
+            printf("  window_valid=%s\n", window_valid ? "YES" : "NO");
+            
+            if (window_valid) {
+                printf("  window_class=%s\n", attrs.class == InputOutput ? "InputOutput" : "InputOnly");
+                printf("  map_state=%s\n", 
+                       attrs.map_state == IsUnmapped ? "Unmapped" :
+                       attrs.map_state == IsUnviewable ? "Unviewable" :
+                       attrs.map_state == IsViewable ? "Viewable" : "Unknown");
+            }
+            
             request_client_close(canvas);
             return;
         }

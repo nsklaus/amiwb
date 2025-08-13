@@ -21,7 +21,7 @@ void handle_configure_request(XConfigureRequestEvent *event); // Dispatch config
 void handle_motion_notify(XMotionEvent *event); 		// Dispatch mouse motion
 void handle_property_notify(XPropertyEvent *event); 	// Dispatch property notify
 void handle_configure_notify(XConfigureEvent *event); 	// Dispatch configure notify
-void handle_unmap_notify(XUnmapEvent *event);          // Dispatch unmap notify  
+void handle_unmap_notify(XUnmapEvent *event);          // Dispatch unmap notify
 void handle_destroy_notify(XDestroyWindowEvent *event); // Dispatch destroy notify
 void quit_event_loop(void);
 extern bool running;

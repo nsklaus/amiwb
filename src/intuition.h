@@ -9,7 +9,6 @@
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/Xrandr.h>
 #include <stdbool.h>
-#include <time.h>
 #include <Imlib2.h>
 
 // UI metrics (frame and menubar sizes). Keep short to match Amiga style.
@@ -71,7 +70,8 @@ typedef struct {
     bool resizing_interactive;           // True during interactive resize (no buffer recreation)
     bool is_transient;                   // True if this is a transient window (modal dialog)
     Window transient_for;                // Parent window for transient windows
-    long long close_request_time_ms;     // When WM_DELETE_WINDOW was sent in milliseconds (0 = none pending)
+    bool close_request_sent;             // True if WM_DELETE_WINDOW was sent (for single-click close)
+    int consecutive_unmaps;              // Count of unmaps without remap (for zombie detection)
 } Canvas;
 
 extern int randr_event_base;
@@ -133,8 +133,6 @@ void intuition_handle_configure_notify(XConfigureEvent *event);   // for resizin
 void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event);
 void intuition_handle_client_message(XClientMessageEvent *event);
 
-// Auto-cleanup for unresponsive transient windows
-void check_unresponsive_transients(void);
 
 // Fullscreen helpers
 void intuition_enter_fullscreen(Canvas *c);

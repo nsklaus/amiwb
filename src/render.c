@@ -742,8 +742,6 @@ void render_recreate_canvas_surfaces(Canvas *canvas) {
 
     if (canvas->width <= 0 || canvas->height <= 0) return;
 
-    printf("[BUFFER] Recreating canvas surfaces: %p (%dx%d)\n", 
-           (void*)canvas, canvas->width, canvas->height);
 
     // Free existing resources first
     render_destroy_canvas_surfaces(canvas);
