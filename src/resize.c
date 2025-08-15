@@ -83,7 +83,6 @@ static void create_initial_resize_buffers(Canvas *canvas, int start_width, int s
 void resize_begin(Canvas *canvas, int mouse_x, int mouse_y) {
     if (!canvas) return;
     
-    printf("DEBUG: resize_begin called for canvas type=%d\n", canvas->type);
     
     // Simple state setup
     g_resize.canvas = canvas;
@@ -218,8 +217,12 @@ void resize_end(void) {
     
     // Final redraw with icon cleanup
     if (g_resize.canvas->type == WINDOW || g_resize.canvas->type == DESKTOP) {
-        icon_cleanup(g_resize.canvas);
+        // Only reorder icons if scrolling is needed (content doesn't fit)
         compute_max_scroll(g_resize.canvas);
+        if (g_resize.canvas->max_scroll_x > 0 || g_resize.canvas->max_scroll_y > 0) {
+            icon_cleanup(g_resize.canvas);
+            compute_max_scroll(g_resize.canvas);  // Recompute after cleanup
+        }
     }
     redraw_canvas(g_resize.canvas);
     

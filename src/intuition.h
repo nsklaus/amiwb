@@ -67,6 +67,14 @@ typedef struct {
     int saved_x, saved_y;               // Saved frame pos before fullscreen
     int saved_w, saved_h;               // Saved frame size before fullscreen
     bool close_armed;                    // Close gadget pressed (until release)
+    bool iconify_armed;                  // Iconify gadget pressed (until release)
+    bool maximize_armed;                  // Maximize gadget pressed (until release)
+    bool lower_armed;                     // Lower gadget pressed (until release)
+    bool v_arrow_up_armed;               // Vertical up arrow pressed
+    bool v_arrow_down_armed;             // Vertical down arrow pressed
+    bool h_arrow_left_armed;             // Horizontal left arrow pressed
+    bool h_arrow_right_armed;            // Horizontal right arrow pressed
+    bool resize_armed;                   // Resize button pressed
     bool resizing_interactive;           // True during interactive resize (no buffer recreation)
     bool is_transient;                   // True if this is a transient window (modal dialog)
     Window transient_for;                // Parent window for transient windows
@@ -96,6 +104,7 @@ Canvas  *find_window_by_path(const char *path);   // Find WINDOW by directory pa
 void destroy_canvas(Canvas *canvas);        // Destroy canvas and free X resources
 void cleanup_intuition(void);               // Free visuals, desktop, Display
 void set_active_window(Canvas *canvas);     // Activate one, deactivate others
+void deactivate_all_windows(void);          // Deactivate all windows
 // Temporarily suppress desktop deactivation on empty clicks (used after restore)
 void suppress_desktop_deactivate_for_ms(int ms);
 

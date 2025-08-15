@@ -41,6 +41,10 @@
 #define TYPE_DRAWER 1 			// Type for drawer/folder icon.
 #define MENUBAR_HEIGHT 20 		// Height of menubar.
 #define MENU_ITEM_HEIGHT 20 	// Height of menu item.
+#define MENU_SHOW_DATE 1        // Show date/time on menubar (0=off, 1=on)
+
+// Global shortcut symbol (Unicode 2237: ∷)
+#define SHORTCUT_SYMBOL "\xe2\x88\xb7"  // UTF-8 encoding of ∷ (U+2237)
 
 extern char *iconify_path;
 

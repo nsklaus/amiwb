@@ -3,7 +3,8 @@ window manager for linux using x11 and xlib, look at screenshots dir.
 
 dependencies:
 ```
--lSM -lICE -lXext -lXmu -lX11 -lXrender -lXft
+-lSM -lICE -lXext -lXmu -lX11 -lXrender -lXft -lXfixes -lXdamage
+-lXrandr -lXcomposite -lm -lImlib2 -lfontconfig 
 ```
 
 install:
@@ -12,48 +13,47 @@ $ make
 $ make install
 ```
 
-start the environment:  (stop it with: ESC key or menu > workbench > quit)
+start the environment:
 ```
 $ Xephyr -br -ac -noreset -screen 800x600 :1
 $ DISPLAY=:1 ./amiwb
+OR
+$ startx ~/.xinitrc_amiwb -- :2
 ```
 
-status:
+status: the base environment is nearly complete.
 
 - menubar:
-	works but very few entries are implemented, 
-	"Tools" menu have some entries to launch a few apps (kitty,	xcalc, sublime-text, brave, ..), 
-	"Workbench" menu have "Quit AmiWB" and "Suspend" 
-	"Window" menu have "Clean up", "Show Hidden (Yes/No)", "Show by .. (Icons/Names)"
+	most entries implemented. with global shortcut system.
 	menus are not dynamic yet, there's only system menus, 
-	app menus substitutions later, if i ever succeed with it..
+	app menus substitutions later, i'll have to look into it.
+	additional custom menus parsed from file toolsdaemon style. 
+	show date and time.
 
 - window decorations:
 	sliders, arrows, close, resize, iconify, lower and maximize buttons work. 
 	(maximize should be made toggle, right now it's just maximize once and done)
 
-- it handle resolutions changes and resizes accordingly
+- it handle fullscreen for apps, and X resolutions changes and resizes accordingly
 
 - iconifying windows:
 	"workbench" windows use a fixed "filer.info" icon for now, and clients use a name matching system, 
 	so if a app has a "kitty" name it will look for a "kitty.info" icon in /usr/local/share/amiwb/icons/
-	matching results (fail or pass) will show on terminal output, with path.
+	if matching result fail it will show in file amiwb.log see config.h
 
 - icons:
 	show amiga icons, both normal and selected images.
-	the icon matching system works like on amiga: "xyz" dir will display image from "xyz.info", 
-	same for files. (todo: def_icons system).
-	multiselection works but nothing is implemented to work with the selected icons. 
-	not even moving a multiselection. for now, one icon only can be dragged around at a time.
-	no rename, no delete, no copy, no nothing yet.
+	the icon matching system works like on amiga: "xyz" dir will display image from 
+	"xyz.info" icon next to it, while hidding the .info file. same for files. 
+	multiselection works. some menu actions do support it, like delete. 
+	for now, one icon only can be dragged around at a time.
 	file execution works through xdg-open for now.
+	def_icons system works, it's simple and based on file extensions for matching.
 
 TODO:
 
 - xdg-portal aware reqasl file picker
-- fullscreen support
-- workbench "Show by names" listers
-- custom menus, similar to toolsdaemon
+- make a GUI for system settings 
 - progress bar (copy/delete)
 - auto mount external drives as icons on the desktop
 - icon information UI window

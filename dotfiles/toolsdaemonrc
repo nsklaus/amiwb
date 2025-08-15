@@ -1,0 +1,25 @@
+#
+# toolsdaemon style custom menus
+#
+# format: 
+# [top menu]
+# "menu entry" = "command"
+
+
+[system]
+"Volume" = "/usr/bin/pavucontrol"
+"Display" = "/usr/bin/xfce4-display-settings"
+"Bluetooth" = "/usr/bin/blueman-manager"
+
+[inet]
+"Browser" = "/usr/bin/brave-browser"
+"Mail" = "/usr/bin/thunderbird"
+"News" = "/usr/bin/newsboat"
+
+[gfx]
+"Gimp" = "/usr/bin/gimp"
+"Viewer" = "/usr/bin/imv"
+
+[Media]
+"Player" = "/usr/bin/mpv"
+"Editor" = "/usr/bin/audacity"

@@ -43,4 +43,8 @@ void set_canvas_view_mode(Canvas *canvas, ViewMode m);  // Set mode, relayout, a
 // Directory refresh: scan dir and rebuild icons, then redraw
 void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath);
 
+// File operations
+void open_file(FileIcon *icon);                 // Open file with xdg-open
+void restore_iconified(FileIcon *icon);         // Restore iconified window
+
 #endif

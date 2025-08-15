@@ -3,6 +3,7 @@
 #define MENUS_H
 
 #include <X11/Xlib.h>
+#include <stdbool.h>
 #include "intuition.h"
 #include "workbench.h"
 
@@ -11,11 +12,15 @@
 typedef struct Menu {
     Canvas *canvas;             // Menubar or dropdown canvas
     char **items;               // Array of menu item labels
+    char **shortcuts;           // Array of shortcut keys (e.g., "R" for Rename, NULL if none)
+    bool *enabled;              // Array of enabled states (true = enabled, false = grayed out)
+    char **commands;            // Array of commands for custom menu items (NULL for system menus)
     int item_count;             // Number of items
     int selected_item;          // Index of selected item (-1 for none)
     int parent_index;           // Index in parent menu (-1 for top level)
     struct Menu *parent_menu;   // Parent menu (NULL for menubar)
     struct Menu **submenus;     // Array of submenus (NULL if none)
+    bool is_custom;             // True if this is a custom menu from config file
 } Menu;
 
 // Function prototypes
@@ -44,5 +49,26 @@ void toggle_menubar_state(void);                // Toggle between logo and menus
 int get_menu_item_count(void);                  // Get number of top-level menu items
 const char *get_menu_item_label(int index);     // Get label for item at index
 int get_selected_item(void);                    // Get currently selected (highlighted) item
+
+// Global action triggers (can be called from shortcuts or menus)
+void trigger_rename_action(void);               // Trigger rename for selected icon
+void trigger_cleanup_action(void);              // Trigger clean up for active window or desktop
+void trigger_close_action(void);                // Trigger close for active window
+void trigger_parent_action(void);               // Trigger open parent for active window
+void trigger_open_action(void);                 // Trigger open for selected icon
+void trigger_copy_action(void);                 // Trigger copy for selected icon
+void trigger_delete_action(void);               // Trigger delete for selected icon
+void trigger_execute_action(void);              // Trigger execute command dialog
+void trigger_new_drawer_action(void);           // Trigger new drawer creation
+void trigger_select_contents_action(void);      // Trigger select/deselect all in window
+void handle_quit_request(void);                 // Handle quit request (menu or shortcut)
+void handle_suspend_request(void);              // Handle suspend request (menu or shortcut)
+
+// Custom menu support
+void load_custom_menus(void);                   // Load custom menus from toolsdaemonrc
+void execute_custom_command(const char *cmd);   // Execute a custom menu command
+
+// Date/time display
+void update_menubar_time(void);                 // Check if time changed and redraw menubar if needed
 
 #endif

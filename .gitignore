@@ -45,6 +45,7 @@ valgrind_new.log
 amiwb.log
 plan_claude.md
 amiwb_lldb.log
+docs/
 
 # Debug files
 *.dSYM/

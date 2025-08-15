@@ -14,6 +14,7 @@
 #include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "resize.h"
 
 // Global font and UI colors. Centralize text style so all drawing
@@ -38,13 +39,24 @@ static char *get_resource_path(const char *rel_path) {
 }
 
 // Draw up and down arrow controls for vertical scrollbar
-static void draw_vertical_scrollbar_arrows(Display *dpy, Picture dest, int window_width, int window_height) {
+static void draw_vertical_scrollbar_arrows(Display *dpy, Picture dest, Canvas *canvas) {
+    int window_width = canvas->width;
+    int window_height = canvas->height;
     // Right border arrow separators
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 1, BORDER_WIDTH_RIGHT, 1); 
     XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 20, BORDER_WIDTH_RIGHT - 2, 1); 
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 21, BORDER_WIDTH_RIGHT - 2, 1); 
     XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 40, BORDER_WIDTH_RIGHT - 2, 1); 
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT + 1, window_height - BORDER_HEIGHT_BOTTOM - 41, BORDER_WIDTH_RIGHT - 2, 1);
+    
+    // Down arrow button (bottom)
+    if (canvas->v_arrow_down_armed) {
+        // Sunken effect - black on top/left, white on bottom/right
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM - 20, 1, 19);  // Left edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM - 21, 20, 1);  // Top edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 1, window_height - BORDER_HEIGHT_BOTTOM - 20, 1, 19);  // Right edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM - 1, 20, 1);  // Bottom edge
+    }
 
     // Down arrow shape
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 10, window_height - BORDER_HEIGHT_BOTTOM - 10, 2, 4);
@@ -52,6 +64,15 @@ static void draw_vertical_scrollbar_arrows(Display *dpy, Picture dest, int windo
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 14, window_height - BORDER_HEIGHT_BOTTOM - 14, 2, 4);
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 8, window_height - BORDER_HEIGHT_BOTTOM - 12, 2, 4);
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 6, window_height - BORDER_HEIGHT_BOTTOM - 14, 2, 4);
+    
+    // Up arrow button (top)
+    if (canvas->v_arrow_up_armed) {
+        // Sunken effect - black on top/left, white on bottom/right
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM - 40, 1, 19);  // Left edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM - 41, 20, 1);  // Top edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 1, window_height - BORDER_HEIGHT_BOTTOM - 40, 1, 19);  // Right edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM - 21, 20, 1);  // Bottom edge
+    }
 
     // Up arrow shape
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 10, window_height - BORDER_HEIGHT_BOTTOM - 35, 2, 4);
@@ -62,12 +83,23 @@ static void draw_vertical_scrollbar_arrows(Display *dpy, Picture dest, int windo
 }
 
 // Draw left and right arrow controls for horizontal scrollbar
-static void draw_horizontal_scrollbar_arrows(Display *dpy, Picture dest, int window_width, int window_height) {
+static void draw_horizontal_scrollbar_arrows(Display *dpy, Picture dest, Canvas *canvas) {
+    int window_width = canvas->width;
+    int window_height = canvas->height;
     // Bottom border arrow separators
     XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT - 21, window_height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM - 1); 
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 22, window_height - BORDER_HEIGHT_BOTTOM + 1, 1, BORDER_HEIGHT_BOTTOM - 1);  
     XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT - 41, window_height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM - 1); 
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 42, window_height - BORDER_HEIGHT_BOTTOM + 1, 1, BORDER_HEIGHT_BOTTOM - 1);  
+    
+    // Right arrow button
+    if (canvas->h_arrow_right_armed) {
+        // Sunken effect - black on top/left, white on bottom/right
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 22, window_height - BORDER_HEIGHT_BOTTOM, 1, 20);  // Left edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 22, window_height - BORDER_HEIGHT_BOTTOM, 22, 1);  // Top edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM, 1, 20);  // Right edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT - 22, window_height - 1, 22, 1);  // Bottom edge
+    }
 
     // Right arrow shape
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 8, window_height - BORDER_HEIGHT_BOTTOM + 10, 4, 2);
@@ -75,6 +107,15 @@ static void draw_horizontal_scrollbar_arrows(Display *dpy, Picture dest, int win
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 12, window_height - BORDER_HEIGHT_BOTTOM + 6, 4, 2);
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 10, window_height - BORDER_HEIGHT_BOTTOM + 12, 4, 2);
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 12, window_height - BORDER_HEIGHT_BOTTOM + 14, 4, 2);
+    
+    // Left arrow button
+    if (canvas->h_arrow_left_armed) {
+        // Sunken effect - black on top/left, white on bottom/right
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 42, window_height - BORDER_HEIGHT_BOTTOM, 1, 20);  // Left edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 42, window_height - BORDER_HEIGHT_BOTTOM, 20, 1);  // Top edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT - 22, window_height - BORDER_HEIGHT_BOTTOM, 1, 20);  // Right edge
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT - 42, window_height - 1, 20, 1);  // Bottom edge
+    }
 
     // Left arrow shape
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - 40 - 16, window_height - BORDER_HEIGHT_BOTTOM + 10, 4, 2);
@@ -85,10 +126,26 @@ static void draw_horizontal_scrollbar_arrows(Display *dpy, Picture dest, int win
 }
 
 // Draw the resize handle/grip in the bottom-right corner of window frame
-static void draw_resize_button(Display *dpy, Picture dest, int window_width, int window_height) {
-    // Border edges of resize button
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM - 1); 
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 1, window_height - BORDER_HEIGHT_BOTTOM + 1, 1, BORDER_HEIGHT_BOTTOM - 1); 
+static void draw_resize_button(Display *dpy, Picture dest, Canvas *canvas) {
+    int window_width = canvas->width;
+    int window_height = canvas->height;
+    
+    // Apply sunken 3D effect when resize button is armed
+    if (canvas->resize_armed) {
+        // Draw sunken borders - swap colors for pressed look
+        // Left edge (dark when pressed)
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM); 
+        // Top edge (dark when pressed)
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM, BORDER_WIDTH_RIGHT, 1);
+        // Right edge (light when pressed) 
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - 1, window_height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM);
+        // Bottom edge (light when pressed)
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT, window_height - 1, BORDER_WIDTH_RIGHT, 1);
+    } else {
+        // Border edges of resize button (normal state)
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, window_width - BORDER_WIDTH_RIGHT, window_height - BORDER_HEIGHT_BOTTOM, 1, BORDER_HEIGHT_BOTTOM - 1); 
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT - 1, window_height - BORDER_HEIGHT_BOTTOM + 1, 1, BORDER_HEIGHT_BOTTOM - 1); 
+    }
     
     // Main grip lines - black outlines
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, window_width - BORDER_WIDTH_RIGHT + 5, window_height - 5, 11, 1);
@@ -254,7 +311,7 @@ void cleanup_render(void) {
 void render_icon(FileIcon *icon, Canvas *canvas) {
     //printf("render_icon called\n");
     if (!icon || icon->display_window == None || !icon->current_picture) {
-        printf( "render_icon: Invalid icon "
+        printf("[ERROR] render_icon: Invalid icon "
                 "(icon=%p, canvas=%p, picture=%p, filename=%s )\n", 
             (void*)icon, 
             (void*)icon->display_window, 
@@ -482,6 +539,19 @@ void redraw_canvas(Canvas *canvas) {
     // render menu
     // ===========
     if (canvas->type == MENU) {
+        // Check if this is a completion dropdown
+        extern bool is_completion_dropdown(Canvas *canvas);
+        if (is_completion_dropdown(canvas)) {
+            extern void render_completion_dropdown(Canvas *canvas);
+            render_completion_dropdown(canvas);
+            // Composite the rendered dropdown to the window
+            XRenderComposite(ctx->dpy, PictOpSrc, canvas->canvas_render, None, 
+                           canvas->window_render, 0, 0, 0, 0, 0, 0, 
+                           canvas->width, canvas->height);
+            XFlush(ctx->dpy);
+            return;
+        }
+        
         Menu *menu = get_menu_by_canvas(canvas);
         if (!menu) return;
 
@@ -491,9 +561,15 @@ void redraw_canvas(Canvas *canvas) {
     bool is_menubar = (canvas == get_menubar());
     int selected = menu->selected_item;
     int padding = 20;  // Consistent for all items
+    
+    // For dropdown menus, fill entire background with white first
+    if (!is_menubar) {
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &canvas->bg_color, 
+                           0, 0, canvas->width, canvas->height);
+    }
 
     int x = 10;  // Aligned start
-    int y_base = font->ascent + (MENU_ITEM_HEIGHT - font->height) / 2;
+    int y_base = font->ascent + (MENU_ITEM_HEIGHT - font->height) / 2 - 1;  // Raised by 1 pixel
 
     for (int i = 0; i < menu->item_count; i++) {
         const char *label = menu->items[i];
@@ -518,27 +594,97 @@ void redraw_canvas(Canvas *canvas) {
             x += item_width;
         } else {
             // Vertical (submenu): highlight if selected, regardless of submenus
-            bg_color = (i == selected) ? BLACK : canvas->bg_color;
-            fg_color = (i == selected) ? WHITE : BLACK;
-            int item_y = i * MENU_ITEM_HEIGHT;
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &bg_color, 0, item_y, canvas->width, MENU_ITEM_HEIGHT);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, canvas->height - 1, canvas->width, 1);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, 0, canvas->width, 1);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, 0, 1, canvas->height);
-            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, canvas->width -1, 0, 1, canvas->height);
+            // Check if item is disabled
+            bool is_disabled = (menu->enabled && !menu->enabled[i]);
+            
+            // Use gray color for disabled items
+            XRenderColor GRAY_DISABLED = {0x8080, 0x8080, 0x8080, 0xffff};  // Medium gray for disabled text
+            fg_color = is_disabled ? GRAY_DISABLED : ((i == selected) ? WHITE : BLACK);
+            
+            int item_y = i * MENU_ITEM_HEIGHT + 4;  // Start 4 pixels down from top
+            // Always fill item area with white first
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &canvas->bg_color, 0, item_y, canvas->width, MENU_ITEM_HEIGHT);
+            
+            // For selected items, draw black highlight inset from left and right edges
+            if (i == selected && !is_disabled) {
+                // Draw the black highlight box with 4px white border on sides for visibility
+                // This creates visible white vertical lines on both sides of the highlight
+                XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 4, item_y + 1, canvas->width - 8, MENU_ITEM_HEIGHT - 2);
+            }
             
             XftColor item_fg;
             XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &fg_color, &item_fg);
             XftDrawStringUtf8(draw, &item_fg, font, 10, item_y + y_base, (FcChar8 *)label, strlen(label));
+            
+            // Draw shortcut if present (e.g., "∷ R" for Rename) - also in gray if disabled
+            if (menu->shortcuts && menu->shortcuts[i]) {
+                char shortcut_text[32];
+                // No space for shortcuts with modifiers (^Q), but keep space for single chars (E)
+                if (menu->shortcuts[i][0] == '^') {
+                    snprintf(shortcut_text, sizeof(shortcut_text), "%s%s", SHORTCUT_SYMBOL, menu->shortcuts[i]);
+                } else {
+                    snprintf(shortcut_text, sizeof(shortcut_text), "%s %s", SHORTCUT_SYMBOL, menu->shortcuts[i]);
+                }
+                
+                XGlyphInfo shortcut_extents;
+                XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)shortcut_text, strlen(shortcut_text), &shortcut_extents);
+                
+                // Right-align shortcut with 1 char padding from right edge
+                int shortcut_x = canvas->width - shortcut_extents.xOff - 10;  // 10 pixels padding from right
+                XftDrawStringUtf8(draw, &item_fg, font, shortcut_x, item_y + y_base, (FcChar8 *)shortcut_text, strlen(shortcut_text));
+            }
+            
             XftColorFree(ctx->dpy, canvas->visual, canvas->colormap, &item_fg);
         }
     }
+    
+    // Draw black borders around dropdown menus (after all items are drawn)
+    if (!is_menubar) {
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, canvas->height - 1, canvas->width, 1);  // Bottom
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, 0, canvas->width, 1);  // Top
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, 0, 0, 1, canvas->height);  // Left
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &BLACK, canvas->width - 1, 0, 1, canvas->height);  // Right
+    }
+    
     XftDrawDestroy(draw);
 
         // ============
-        // menu button
+        // menu button and date/time
         // ============
         if (!get_show_menus_state()){
+            
+#if MENU_SHOW_DATE
+            // Display date and time on the right side
+            if (font) {
+                time_t now;
+                time(&now);
+                struct tm *tm_info = localtime(&now);
+                char datetime_buf[64];
+                strftime(datetime_buf, sizeof(datetime_buf), "%a %e %b %H:%M", tm_info);
+                
+                // Create Xft draw context for date/time
+                XftDraw *dt_draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer, canvas->visual, canvas->colormap);
+                if (dt_draw) {
+                    XftColor dt_color;
+                    XRenderColor black_color = BLACK;
+                    XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &black_color, &dt_color);
+                    
+                    // Calculate text width to position it properly
+                    XGlyphInfo extents;
+                    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)datetime_buf, strlen(datetime_buf), &extents);
+                    
+                    // Position: end 4 chars (30 pixels) + 4 chars space before menu button
+                    int text_x = canvas->width - 30 - 30 - extents.xOff;
+                    int text_y = font->ascent + (MENU_ITEM_HEIGHT - font->height) / 2 - 1;  // Raised by 1 pixel
+                    
+                    XftDrawStringUtf8(dt_draw, &dt_color, font, text_x, text_y, 
+                                      (FcChar8 *)datetime_buf, strlen(datetime_buf));
+                    
+                    XftColorFree(ctx->dpy, canvas->visual, canvas->colormap, &dt_color);
+                    XftDrawDestroy(dt_draw);
+                }
+            }
+#endif
  
             // menu right side, lower button 
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &GRAY, canvas->width -28, 0 , 26, 19);
@@ -567,12 +713,13 @@ void redraw_canvas(Canvas *canvas) {
 
         // top border   
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 0, 0, canvas->width, BORDER_HEIGHT_TOP); 
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 0, 0, canvas->width, 1); 
+        
+        // Bottom black line of titlebar
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, 0, 19 , canvas->width, 1); 
 
         // left border 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 0, BORDER_HEIGHT_TOP, BORDER_WIDTH_LEFT, canvas->height - BORDER_HEIGHT_TOP);  
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 0, 0, 1, canvas->height); 
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 0, 1, 1, canvas->height - 1);  // Start at y=1 to avoid corner
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, BORDER_WIDTH_LEFT -1, 20, 1, canvas->height); 
 
         // right border
@@ -588,12 +735,42 @@ void redraw_canvas(Canvas *canvas) {
         // top border, close button 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, 29, 1 , 1, BORDER_HEIGHT_TOP-1); 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 30, 1 , 1, BORDER_HEIGHT_TOP-2);
+        
+        // Draw close button with its portion of the white line
+        if (canvas->close_armed) {
+            // Sunken effect - black top line instead of white
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, 0, 0, 30, 1);   // Top black line
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, 0, 1, 1, 18);   // Left edge
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 29, 1, 1, 18);  // Right edge
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 1, 18, 28, 1);  // Bottom edge
+        } else {
+            // Normal state - draw white line for this button area
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 0, 0, 30, 1);   // Top white line
+        }
+        
+        // Draw button interior (white square)
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, 11, 6 , 8, 8); 
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 12, 7 , 6, 6); 
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 12, 7 , 6, 6);
+        
+        // Title area white line (between close button and right-side buttons)
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, 30, 0, canvas->width - 91 - 30, 1);
 
         // top border, lower button 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -31, 1 , 1, BORDER_HEIGHT_TOP-1); 
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -30, 1 , 1, BORDER_HEIGHT_TOP-2); 
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -30, 1 , 1, BORDER_HEIGHT_TOP-2);
+        
+        if (canvas->lower_armed) {
+            // Sunken effect - black top line instead of white
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -31, 0, 31, 1);   // Top black line
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -31, 1, 1, 18);   // Left edge
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -2, 1, 1, 18);    // Right edge
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -30, 18, 28, 1);  // Bottom edge
+        } else {
+            // Normal state - draw white line for this button area
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -31, 0, 31, 1);   // Top white line
+        }
+        
+        // Draw button graphics
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -25, 4 , 15, 8); 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &GRAY,  canvas->width -24, 5 , 13, 6); 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -20, 7 , 15, 8); 
@@ -601,7 +778,20 @@ void redraw_canvas(Canvas *canvas) {
         
         // top border, maximize button 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -61, 1 , 1, BORDER_HEIGHT_TOP-1); 
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -60, 1 , 1, BORDER_HEIGHT_TOP-2); 
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -60, 1 , 1, BORDER_HEIGHT_TOP-2);
+        
+        if (canvas->maximize_armed) {
+            // Sunken effect - black top line instead of white
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -61, 0, 30, 1);   // Top black line
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -61, 1, 1, 18);   // Left edge
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -32, 1, 1, 18);   // Right edge
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -60, 18, 28, 1);  // Bottom edge
+        } else {
+            // Normal state - draw white line for this button area
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -61, 0, 30, 1);   // Top white line
+        }
+        
+        // Draw button graphics
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -53, 4 , 16, 11); 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, canvas->width -52, 5 , 14, 9);
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -52, 5 , 8, 6); 
@@ -609,7 +799,20 @@ void redraw_canvas(Canvas *canvas) {
         
         // top border, iconify button
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -91, 1 , 1, BORDER_HEIGHT_TOP-1); 
-        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -90, 1 , 1, BORDER_HEIGHT_TOP-2); 
+        XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -90, 1 , 1, BORDER_HEIGHT_TOP-2);
+        
+        if (canvas->iconify_armed) {
+            // Sunken effect - black top line instead of white
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -91, 0, 30, 1);   // Top black line
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -91, 1, 1, 18);   // Left edge
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -62, 1, 1, 18);   // Right edge
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -90, 18, 28, 1);  // Bottom edge
+        } else {
+            // Normal state - draw white line for this button area
+            XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width -91, 0, 30, 1);   // Top white line
+        }
+        
+        // Draw button graphics
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -83, 4 , 16, 11); 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest,&frame_color,canvas->width-82, 5 , 14, 9); 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -82, 10, 6, 5 );
@@ -617,15 +820,15 @@ void redraw_canvas(Canvas *canvas) {
         
         // Draw scrollbar arrows for workbench windows only (skip for dialogs)
         if (canvas->type == WINDOW && canvas->client_win == None && !canvas->disable_scrollbars) {
-            draw_vertical_scrollbar_arrows(ctx->dpy, dest, canvas->width, canvas->height);
+            draw_vertical_scrollbar_arrows(ctx->dpy, dest, canvas);
         }
 
         // Draw resize button/handle in bottom-right corner
-        draw_resize_button(ctx->dpy, dest, canvas->width, canvas->height);
+        draw_resize_button(ctx->dpy, dest, canvas);
 
         // Draw horizontal scrollbar arrows for workbench windows only (skip for dialogs)
         if (canvas->type == WINDOW && canvas->client_win == None && !canvas->disable_scrollbars) {
-            draw_horizontal_scrollbar_arrows(ctx->dpy, dest, canvas->width, canvas->height);
+            draw_horizontal_scrollbar_arrows(ctx->dpy, dest, canvas);
         }
 
         // ==================
@@ -721,6 +924,12 @@ void redraw_canvas(Canvas *canvas) {
         int copy_width = canvas->resizing_interactive ? canvas->buffer_width : canvas->width;
         int copy_height = canvas->resizing_interactive ? canvas->buffer_height : canvas->height;
         
+        // XRenderComposite: Hardware-accelerated image copying/blending
+        // Parameters: display, operation, source, mask, destination,
+        //            src_x, src_y, mask_x, mask_y, dest_x, dest_y, width, height
+        // PictOpSrc means "replace destination with source" (no blending)
+        // None for mask means no masking/transparency effects
+        // This copies the offscreen buffer to the visible window
         XRenderComposite(ctx->dpy, PictOpSrc, canvas->canvas_render, None, canvas->window_render, 0, 0, 0, 0, 0, 0, copy_width, copy_height);
     }
     XFlush(ctx->dpy);
@@ -773,6 +982,9 @@ void render_recreate_canvas_surfaces(Canvas *canvas) {
     canvas->buffer_height = buffer_height;
 
     // Create offscreen pixmap using buffer dimensions
+    // XCreatePixmap: Creates an offscreen drawable (like a canvas in memory)
+    // We draw everything to this invisible pixmap first, then copy to window
+    // This prevents flickering - technique called "double buffering"
     canvas->canvas_buffer = XCreatePixmap(ctx->dpy, canvas->win,
         buffer_width, buffer_height, canvas->depth);
     if (!canvas->canvas_buffer) return;
@@ -781,6 +993,9 @@ void render_recreate_canvas_surfaces(Canvas *canvas) {
     XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, canvas->visual);
     if (!fmt) { render_destroy_canvas_surfaces(canvas); return; }
 
+    // Create XRender Picture for the offscreen buffer
+    // This wraps our pixmap with rendering capabilities (compositing, transforms)
+    // The 0 and NULL mean "no special attributes" - we use defaults
     canvas->canvas_render = XRenderCreatePicture(ctx->dpy, canvas->canvas_buffer, fmt, 0, NULL);
     if (!canvas->canvas_render) { render_destroy_canvas_surfaces(canvas); return; }
 
@@ -791,6 +1006,9 @@ void render_recreate_canvas_surfaces(Canvas *canvas) {
     XRenderPictFormat *wfmt = XRenderFindVisualFormat(ctx->dpy, win_visual);
     if (!wfmt) { render_destroy_canvas_surfaces(canvas); return; }
 
+    // Create XRender Picture for the actual window
+    // This is our destination for compositing - what the user sees
+    // Desktop windows use root visual, others use their own visual
     canvas->window_render = XRenderCreatePicture(ctx->dpy, canvas->win, wfmt, 0, NULL);
     if (!canvas->window_render) { render_destroy_canvas_surfaces(canvas); return; }
 }

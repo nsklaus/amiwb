@@ -62,6 +62,8 @@ install:
 	cp -r patterns/* /usr/local/share/amiwb/patterns/
 	mkdir -p /usr/local/share/amiwb/fonts
 	cp -r fonts/* /usr/local/share/amiwb/fonts/
+	mkdir -p /usr/local/share/amiwb/dotfiles
+	cp -r dotfiles/* /usr/local/share/amiwb/dotfiles/
 
 uninstall:
 	rm -f /usr/local/bin/amiwb

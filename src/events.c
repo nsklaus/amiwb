@@ -17,10 +17,28 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h> // getenv
+#include <time.h>
+
+// External functions to trigger actions from menus.c
+extern void trigger_execute_action(void);
+extern void trigger_rename_action(void);
+extern void trigger_cleanup_action(void);
+extern void trigger_close_action(void);
+extern void trigger_parent_action(void);
+extern void trigger_open_action(void);
+extern void trigger_copy_action(void);
+extern void trigger_delete_action(void);
 
 // Track the window that owns the current button interaction so motion and
 // release are routed consistently, even if X delivers them elsewhere.
 static Window g_press_target = 0;
+
+// Clear the press target when a window is being destroyed
+void clear_press_target_if_matches(Window win) {
+    if (g_press_target == win) {
+        g_press_target = 0;
+    }
+}
 
 bool running = true;
 
@@ -111,10 +129,26 @@ void handle_events(void) {
 
     // Log cap management
     unsigned int iter = 0;
+    time_t last_time_check = 0;
+    
     while (running) {
-        // Deliver events as-is. If coalescing is needed, keep the last motion
-        // per target window rather than discarding all motions globally.
-        XNextEvent(dpy, &event);
+        // Check for events with timeout for periodic updates
+        if (XPending(dpy)) {
+            // Deliver events as-is. If coalescing is needed, keep the last motion
+            // per target window rather than discarding all motions globally.
+            XNextEvent(dpy, &event);
+        } else {
+            // No events pending, check if we should update time
+            time_t now = time(NULL);
+            if (now - last_time_check >= 1) {  // Check every second
+                last_time_check = now;
+                update_menubar_time();  // Will only redraw if minute changed
+            }
+            
+            // Brief sleep to avoid busy-waiting
+            usleep(50000);  // 50ms
+            continue;
+        }
 
         // Periodically enforce log cap (optional)
         #if LOGGING_ENABLED && LOG_CAP_ENABLED
@@ -255,6 +289,10 @@ void handle_button_press(XButtonEvent *event) {
             set_active_window(owner);
             // We grabbed buttons on the client in frame_client_window();
             // allow the click to proceed to the client after focusing
+            // XAllowEvents: Controls what happens to grabbed events
+            // ReplayPointer means "pretend the grab never happened" - 
+            // the click goes through to the client window normally
+            // This lets us intercept clicks for focus, then pass them along
             XAllowEvents(get_display(), ReplayPointer, event->time);
             // translate coords from client to frame canvas
             Window dummy; XTranslateCoordinates(get_display(), event->window, owner->win, event->x, event->y, &cx, &cy, &dummy);
@@ -340,13 +378,26 @@ void handle_button_release(XButtonEvent *event) {
     // If we have a press target, translate release to it
     if (g_press_target) {
         Display *dpy = get_display();
+        
+        // First check if g_press_target window still exists
+        Canvas *target_canvas = find_canvas(g_press_target);
+        if (!target_canvas) {
+            g_press_target = 0;
+            return;
+        }
+        
         // Ensure both source and target windows still exist before translating
         XWindowAttributes src_attrs, dst_attrs;
         bool src_ok = XGetWindowAttributes(dpy, event->window, &src_attrs);
         bool dst_ok = XGetWindowAttributes(dpy, g_press_target, &dst_attrs);
         if (!src_ok || !dst_ok) { g_press_target = 0; return; }
         Window dummy; int tx=0, ty=0;
+        
+        // Set an error handler to catch X errors
+        XSync(dpy, False);  // Clear any pending errors
         XTranslateCoordinates(dpy, event->window, g_press_target, event->x, event->y, &tx, &ty, &dummy);
+        XSync(dpy, False);  // Force error to occur now if any
+        
         XButtonEvent ev = *event; ev.window = g_press_target; ev.x = tx; ev.y = ty;
         Canvas *tc = find_canvas(g_press_target);
         if (tc && tc->type == MENU) {
@@ -396,6 +447,73 @@ void handle_key_press(XKeyEvent *event) {
         return;
     }
     */
+    
+    // Check for global shortcuts (Super/Windows key + letter)
+    KeySym keysym = XLookupKeysym(event, 0);
+    if (event->state & Mod4Mask) {  // Super/Windows key is pressed
+        if (event->state & ShiftMask) {
+            // Super+Shift combinations
+            // Super+Shift+Q: Quit AmiWB
+            if (keysym == XK_q || keysym == XK_Q) {
+                handle_quit_request();
+                return;
+            }
+            // Super+Shift+S: Suspend
+            if (keysym == XK_s || keysym == XK_S) {
+                handle_suspend_request();
+                return;
+            }
+        } else {
+            // Super-only combinations (no Shift)
+            // Super+E: Execute command
+            if (keysym == XK_e || keysym == XK_E) {
+                trigger_execute_action();
+                return;
+            }
+            // Super+R: Rename selected icon
+            if (keysym == XK_r || keysym == XK_R) {
+                trigger_rename_action();
+                return;
+            }
+            // Super+;: Clean up icons
+            if (keysym == XK_semicolon) {
+                trigger_cleanup_action();
+                return;
+            }
+            // Super+Q: Close active window
+            if (keysym == XK_q || keysym == XK_Q) {
+                trigger_close_action();
+                return;
+            }
+            // Super+P: Open parent directory
+            if (keysym == XK_p || keysym == XK_P) {
+                trigger_parent_action();
+                return;
+            }
+            // Super+O: Open selected icon
+            if (keysym == XK_o || keysym == XK_O) {
+                trigger_open_action();
+                return;
+            }
+            // Super+C: Copy selected icon
+            if (keysym == XK_c || keysym == XK_C) {
+                trigger_copy_action();
+                return;
+            }
+            // Super+D: Delete selected icon
+            if (keysym == XK_d || keysym == XK_D) {
+                trigger_delete_action();
+                return;
+            }
+            // Super+N: New Drawer
+            if (keysym == XK_n || keysym == XK_N) {
+                trigger_new_drawer_action();
+                return;
+            }
+        }
+        // Add more global shortcuts here in the future
+    }
+    
     menu_handle_key_press(event);
 }
 
@@ -457,7 +575,7 @@ void handle_motion_notify(XMotionEvent *event) {
             if (!(tc && tc->type == WINDOW && intuition_is_scrolling_active())) {
                 workbench_handle_motion_notify(&ev);
             }
-            if (tc && tc->type == WINDOW) {
+            if (tc && (tc->type == WINDOW || tc->type == DIALOG)) {
                 intuition_handle_motion_notify(&ev);
             }
         }
@@ -481,7 +599,7 @@ void handle_motion_notify(XMotionEvent *event) {
         if (!(canvas->type == WINDOW && intuition_is_scrolling_active())) {
             workbench_handle_motion_notify(&ev);
         }
-        if (canvas->type == WINDOW) {
+        if (canvas->type == WINDOW || canvas->type == DIALOG) {
             intuition_handle_motion_notify(&ev);
         }
     }

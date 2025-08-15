@@ -60,44 +60,34 @@ int main(int argc, char *argv[]) {
         }
     }
     #endif
-    fprintf(stderr, "Starting amiwb\n");
     
     // Intuition first: sets up X Display and RenderContext
-    fprintf(stderr, "Calling init_intuition\n");
     init_intuition();
 
     // Rendering second: needs the RenderContext built by intuition
-    fprintf(stderr, "Calling init_render\n");
     init_render();
 
     // Initialize menus
-    fprintf(stderr, "Calling init_menus\n");
     init_menus();
     
     // Initialize dialogs
-    fprintf(stderr, "Calling init_dialogs\n");
     init_dialogs();
     
     // Initialize workbench
-    fprintf(stderr, "Calling init_workbench\n");
     init_workbench();
     
     // Initialize events
-    fprintf(stderr, "Calling init_events\n");
     init_events();
     // Start compositor after events are ready. If it fails, continue.
-    fprintf(stderr, "Calling init_compositor\n");
     if (!init_compositor(get_display())) {
         fprintf(stderr, "Compositor: could not acquire selection, continuing without\n");
     }
     
     // Start event loop
-    fprintf(stderr, "Starting event loop\n");
     handle_events();
     
     // Clean up
     // Reverse init order to avoid dangling X resources during teardown.
-    fprintf(stderr, "Cleaning up\n");
     // Enter shutdown mode to suppress benign X errors
     begin_shutdown();
     // Stop compositor before closing the Display in cleanup_intuition()
@@ -110,6 +100,5 @@ int main(int argc, char *argv[]) {
     cleanup_intuition();
     cleanup_render();
     
-    fprintf(stderr, "Exiting amiwb\n");
     return 0;
 }

@@ -213,6 +213,9 @@ static void build_win_list(Display *dpy) {
         if (!XGetWindowAttributes(dpy, w, &wa)) continue;
         if (wa.map_state != IsViewable) continue;
         // Redirect named pixmap
+        // XCompositeNameWindowPixmap: Gets the offscreen pixmap for a window
+        // When a window is redirected, X renders it to this invisible pixmap
+        // We can then read this pixmap to composite the window however we want
         Pixmap pm = XCompositeNameWindowPixmap(dpy, w);
         if (!pm) continue;
         // Pick format by depth
@@ -220,6 +223,9 @@ static void build_win_list(Display *dpy) {
         int depth = dwa.depth;
         Picture pict = create_picture_from_pixmap(dpy, pm, depth);
         if (!pict) { XFreePixmap(dpy, pm); continue; }
+        // XDamageCreate: Start monitoring this window for changes
+        // XDamageReportNonEmpty means "notify us whenever damage happens"
+        // When the window redraws, we get an event so we know to recomposite
         Damage dmg = XDamageCreate(dpy, w, XDamageReportNonEmpty);
 
         CompWin *cw = (CompWin*)calloc(1, sizeof(CompWin));
@@ -338,12 +344,18 @@ bool init_compositor(Display *dpy) {
     g_root = RootWindow(dpy, screen);
 
     // Ensure required extensions exist
+    // XComposite: Allows windows to be rendered offscreen before display
+    // This extension is essential for compositing window managers
+    // Without it, we can't do transparency, shadows, or smooth effects
     if (!XCompositeQueryExtension(dpy, &g_composite_event_base, &g_composite_error_base)) {
         fprintf(stderr, "Compositor: XComposite extension missing\n");
         return false;
     }
     int major=0, minor=0;
     XCompositeQueryVersion(dpy, &major, &minor);
+    // XDamage: Notifies us when window contents change
+    // Instead of constantly redrawing everything, we only update damaged areas
+    // This makes compositing efficient - we redraw only what changed
     if (!XDamageQueryExtension(dpy, &g_damage_event_base, &g_damage_error_base)) {
         fprintf(stderr, "Compositor: XDamage extension missing\n");
         return false;
@@ -365,10 +377,16 @@ bool init_compositor(Display *dpy) {
     }
 
     // Redirect all subwindows to offscreen named pixmaps and listen for topology changes
+    // XCompositeRedirectSubwindows: The magic that enables compositing!
+    // CompositeRedirectManual means WE control how windows are drawn
+    // Windows render to invisible pixmaps, then we composite them together
     XCompositeRedirectSubwindows(dpy, g_root, CompositeRedirectManual);
     XSelectInput(dpy, g_root, SubstructureNotifyMask | StructureNotifyMask | PropertyChangeMask);
 
     // Get overlay window and create a Picture for it (ARGB)
+    // XCompositeGetOverlayWindow: Gets a special transparent window
+    // This overlay sits above all other windows but is click-through
+    // We draw our composited result here, creating the final desktop image
     g_overlay = XCompositeGetOverlayWindow(dpy, g_root);
     if (g_overlay == None) {
         fprintf(stderr, "Compositor: overlay window not available\n");
@@ -376,6 +394,9 @@ bool init_compositor(Display *dpy) {
         return false;
     }
     // Make overlay input-transparent so events pass through to underlying windows
+    // XFixes extension provides region operations for complex shapes
+    // We create an empty region (no pixels) and set it as the input shape
+    // Result: overlay is visible but mouse clicks go through to windows below
     XserverRegion empty = XFixesCreateRegion(dpy, NULL, 0);
     XFixesSetWindowShapeRegion(dpy, g_overlay, ShapeInput, 0, 0, empty);
     XFixesDestroyRegion(dpy, empty);
@@ -408,7 +429,7 @@ bool init_compositor(Display *dpy) {
     build_win_list(dpy);
     g_active = true;
     compositor_repaint(dpy);
-    fprintf(stderr, "Compositor: active (Composite v%d.%d)\n", major, minor);
+    fprintf(stderr, "[INFO] Compositor: active (Composite v%d.%d)\n", major, minor);
     return true;
 }
 

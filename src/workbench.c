@@ -5,6 +5,7 @@
 #include "intuition.h"
 #include "compositor.h"
 #include "config.h"  // Added to include config.h for max/min macros
+#include "events.h"  // For clear_press_target_if_matches
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -36,12 +37,6 @@ static int determine_file_type_from_path(const char *full_path);
 static void build_info_file_path(const char *base_dir, const char *filename, char *info_path_out, size_t max_size);
 static void move_sidecar_info_file(const char *src_path, const char *dst_dir, const char *dst_path);
 // Forward declarations for functions used before their definitions
-// Refreshes canvas from a given directory, populating it with icons
-void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath);
-// Opens a file represented by the given icon
-extern void open_file(FileIcon *icon);
-// Restores an iconified file to its original state
-extern void restore_iconified(FileIcon *icon);
 
 // Drag rendering helpers (direct compositing into target canvas)
 // These functions manage the creation, update, and destruction of the drag window
@@ -92,12 +87,14 @@ static char *def_pdf_info  = NULL;
 static char *def_avi_info  = NULL;
 static char *def_mp4_info  = NULL;
 static char *def_mkv_info  = NULL;
-static char *def_htm_info  = NULL;
+static char *def_html_info  = NULL;
 static char *def_webp_info = NULL;
 static char *def_zip_info  = NULL;
 static char *def_lha_info  = NULL;
 static char *def_mp3_info  = NULL;
 static char *def_mp4a_info  = NULL;
+static char *def_webm_info  = NULL;
+static char *def_rar_info  = NULL;
 static char *def_dir_info  = NULL;   // for directories
 static char *def_foo_info  = NULL;   // generic fallback for unknown filetypes
 
@@ -127,12 +124,14 @@ static void load_deficons(void) {
     load_one_deficon("def_avi.info",  &def_avi_info);
     load_one_deficon("def_mp4.info",  &def_mp4_info);
     load_one_deficon("def_mkv.info",  &def_mkv_info);
-    load_one_deficon("def_htm.info",  &def_htm_info);
+    load_one_deficon("def_html.info",  &def_html_info);
     load_one_deficon("def_webp.info", &def_webp_info);
     load_one_deficon("def_zip.info",  &def_zip_info);
     load_one_deficon("def_lha.info",  &def_lha_info);
     load_one_deficon("def_mp3.info",  &def_mp3_info);
     load_one_deficon("def_mp4a.info", &def_mp4a_info);
+    load_one_deficon("def_webm.info", &def_webm_info);
+    load_one_deficon("def_rar.info", &def_rar_info);
     load_one_deficon("def_dir.info",  &def_dir_info);
     load_one_deficon("def_foo.info",  &def_foo_info);
 }
@@ -177,7 +176,7 @@ static const char *definfo_for_file(const char *name, bool is_dir) {
         strcasecmp(ext, "jpeg") == 0) && def_jpg_info)  return def_jpg_info;
     
     if ((strcasecmp(ext, "htm") == 0  ||
-        strcasecmp(ext, "html") == 0) && def_htm_info)  return def_htm_info;
+        strcasecmp(ext, "html") == 0) && def_html_info)  return def_html_info;
     
     if (strcasecmp(ext, "webp") == 0  && def_webp_info) return def_webp_info;
     if (strcasecmp(ext, "zip")  == 0  && def_zip_info)  return def_zip_info;
@@ -191,6 +190,8 @@ static const char *definfo_for_file(const char *name, bool is_dir) {
     if (strcasecmp(ext, "avi")  == 0  && def_avi_info)  return def_avi_info;
     if (strcasecmp(ext, "mp4")  == 0  && def_mp4_info)  return def_mp4_info;
     if (strcasecmp(ext, "mkv")  == 0  && def_mkv_info)  return def_mkv_info;
+    if (strcasecmp(ext, "webm")  == 0  && def_webm_info) return def_webm_info;
+    if (strcasecmp(ext, "rar")  == 0  && def_rar_info) return def_rar_info;
     // Unknown or unmapped extension -> generic tool icon if available
     if (def_foo_info) return def_foo_info;
     return NULL;
@@ -390,9 +391,21 @@ static void end_drag_icon(Canvas *canvas) {
                 }
             }
 
-            // 4) Recompute bounds and redraw both canvases without auto cleanup
-            if (drag_source_canvas) { refresh_canvas(drag_source_canvas); }
-            refresh_canvas(target);
+            // 4) Apply proper layout based on target view mode
+            if (target->type == WINDOW && target->view_mode == VIEW_NAMES) {
+                apply_view_layout(target);  // Align dropped icon in list view
+            } else if (target->type == WINDOW && target->view_mode == VIEW_ICONS) {
+                // Don't call icon_cleanup here - let user place icon where they want
+                // Just compute bounds for scrolling
+                compute_content_bounds(target);
+            }
+            compute_max_scroll(target);
+            
+            // 5) Recompute bounds and redraw both canvases
+            if (drag_source_canvas) { 
+                refresh_canvas(drag_source_canvas); 
+            }
+            redraw_canvas(target);
         } else {
             // Move failed, restore icon to original position on source canvas
             if (dragged_icon) {
@@ -750,9 +763,6 @@ FileIcon **get_icon_array(void) { return icon_array; }
 FileIcon *get_selected_icon(void) {
     for (int i = 0; i < icon_count; i++) {
         if (icon_array[i] && icon_array[i]->selected) {
-            printf("DEBUG: Found selected icon - path='%s', label='%s'\n", 
-                   icon_array[i]->path ? icon_array[i]->path : "NULL",
-                   icon_array[i]->label ? icon_array[i]->label : "NULL");
             return icon_array[i];
         }
     }
@@ -766,9 +776,6 @@ FileIcon *get_selected_icon_from_canvas(Canvas *canvas) {
     for (int i = 0; i < icon_count; i++) {
         if (icon_array[i] && icon_array[i]->selected && 
             icon_array[i]->display_window == canvas->win) {
-            printf("DEBUG: Found selected icon from canvas - path='%s', label='%s'\n", 
-                   icon_array[i]->path ? icon_array[i]->path : "NULL",
-                   icon_array[i]->label ? icon_array[i]->label : "NULL");
             return icon_array[i];
         }
     }
@@ -1097,6 +1104,23 @@ static void open_directory(FileIcon *icon, Canvas *current_canvas) {
     // If window for this path exists, raise and activate it
     Canvas *existing = find_window_by_path(icon->path);
     if (existing) {
+        // Check if window is iconified (not visible)
+        XWindowAttributes attrs;
+        if (XGetWindowAttributes(get_display(), existing->win, &attrs)) {
+            if (attrs.map_state != IsViewable) {
+                // Window is iconified - find and restore it
+                FileIcon **icon_array = get_icon_array();
+                int icon_count = get_icon_count();
+                for (int i = 0; i < icon_count; i++) {
+                    FileIcon *ic = icon_array[i];
+                    if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == existing) {
+                        restore_iconified(ic);
+                        return;
+                    }
+                }
+            }
+        }
+        // Window is already visible - just raise and activate it
         set_active_window(existing);
         XRaiseWindow(get_display(), existing->win);
         redraw_canvas(existing);
@@ -1166,9 +1190,13 @@ void open_file(FileIcon *icon) {
 }
 
 void restore_iconified(FileIcon *icon) {
-    if (!icon || icon->type != TYPE_ICONIFIED) return;
+    if (!icon || icon->type != TYPE_ICONIFIED) {
+        return;
+    }
     Canvas *canvas = icon->iconified_canvas;
-    if (!canvas) return;
+    if (!canvas) {
+        return;
+    }
 
     // Remap and raise the original window frame
     Display *dpy = get_display();
@@ -1191,6 +1219,9 @@ void restore_iconified(FileIcon *icon) {
     redraw_canvas(canvas);
     compositor_sync_stacking(dpy);
 
+    // Clear press target if it matches the icon's window to prevent crash
+    clear_press_target_if_matches(icon->display_window);
+    
     // Remove the iconified desktop icon
     destroy_icon(icon);
 
@@ -1242,6 +1273,14 @@ static void deselect_all_icons(Canvas *canvas) {
 
 void workbench_handle_button_press(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window); if (!canvas) return;
+    
+    // Clicking on desktop (icon or empty space) should deactivate any active window
+    if (canvas->type == DESKTOP) {
+        deactivate_all_windows();
+        // Set focus to desktop
+        XSetInputFocus(get_display(), canvas->win, RevertToParent, CurrentTime);
+    }
+    
     FileIcon *icon = find_icon(event->window, event->x, event->y);
     if (icon && event->button == Button1) {
         // Handle double-click BEFORE preparing any drag to avoid interference
@@ -1306,17 +1345,19 @@ void cleanup_workbench(void) {
     if (def_txt_info)  { free(def_txt_info);  def_txt_info  = NULL; }
     if (def_jpg_info)  { free(def_jpg_info);  def_jpg_info  = NULL; }
     if (def_png_info)  { free(def_png_info);  def_png_info  = NULL; }
+    if (def_webp_info) { free(def_webp_info); def_webp_info = NULL; }
     if (def_gif_info)  { free(def_gif_info);  def_gif_info  = NULL; }
     if (def_pdf_info)  { free(def_pdf_info);  def_pdf_info  = NULL; }
     if (def_avi_info)  { free(def_avi_info);  def_avi_info  = NULL; }
     if (def_mp4_info)  { free(def_mp4_info);  def_mp4_info  = NULL; }
     if (def_mkv_info)  { free(def_mkv_info);  def_mkv_info  = NULL; }
-    if (def_htm_info)  { free(def_htm_info);  def_htm_info  = NULL; }
-    if (def_webp_info) { free(def_webp_info); def_webp_info = NULL; }
-    if (def_zip_info)  { free(def_zip_info);  def_zip_info  = NULL; }
-    if (def_lha_info)  { free(def_lha_info);  def_lha_info  = NULL; }
-    if (def_mp3_info)  { free(def_mp3_info);  def_mp3_info  = NULL; }
+    if (def_webm_info) { free(def_webm_info); def_webm_info = NULL; }
     if (def_mp4a_info) { free(def_mp4a_info); def_mp4a_info = NULL; }
+    if (def_mp3_info)  { free(def_mp3_info);  def_mp3_info  = NULL; }
+    if (def_html_info) { free(def_html_info); def_html_info = NULL; }
+    if (def_zip_info)  { free(def_zip_info);  def_zip_info  = NULL; }
+    if (def_rar_info)  { free(def_rar_info);  def_rar_info  = NULL; }
+    if (def_lha_info)  { free(def_lha_info);  def_lha_info  = NULL; }
     if (def_dir_info)  { free(def_dir_info);  def_dir_info  = NULL; }
     if (def_foo_info)  { free(def_foo_info);  def_foo_info  = NULL; }
 }

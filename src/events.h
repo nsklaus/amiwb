@@ -23,6 +23,7 @@ void handle_property_notify(XPropertyEvent *event); 	// Dispatch property notify
 void handle_configure_notify(XConfigureEvent *event); 	// Dispatch configure notify
 void handle_unmap_notify(XUnmapEvent *event);          // Dispatch unmap notify
 void handle_destroy_notify(XDestroyWindowEvent *event); // Dispatch destroy notify
+void clear_press_target_if_matches(Window win);        // Clear press target if it matches
 void quit_event_loop(void);
 extern bool running;
 #endif
