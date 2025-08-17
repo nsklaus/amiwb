@@ -651,23 +651,27 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
                     strcmp(ch.res_name, "vulkan") == 0 ||
                     strcmp(ch.res_name, "sdl") == 0) {
                     // Use res_class instead (usually the app name)
-                    frame->title = ch.res_class;
+                    frame->title = strdup(ch.res_class);
                     XFree(ch.res_name);
+                    XFree(ch.res_class);
                 } else {
                     // Use res_name as normal
-                    frame->title = ch.res_name;
+                    frame->title = strdup(ch.res_name);
+                    XFree(ch.res_name);
                     XFree(ch.res_class);
                 }
             } else if (ch.res_name) {
-                frame->title = ch.res_name;
+                frame->title = strdup(ch.res_name);
+                XFree(ch.res_name);
                 if (ch.res_class) XFree(ch.res_class);
             } else if (ch.res_class) {
-                frame->title = ch.res_class;
+                frame->title = strdup(ch.res_class);
+                XFree(ch.res_class);
             } else {
-                frame->title = "NoNameApp";
+                frame->title = strdup("NoNameApp");
             }
         } else {
-            frame->title = "NoNameApp";
+            frame->title = strdup("NoNameApp");
         }
     }
     XAddToSaveSet(display, client); 

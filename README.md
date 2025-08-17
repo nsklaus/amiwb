@@ -32,7 +32,6 @@ status: the base environment is nearly complete.
 
 - window decorations:
 	sliders, arrows, close, resize, iconify, lower and maximize buttons work. 
-	(maximize should be made toggle, right now it's just maximize once and done)
 
 - it handle fullscreen for apps, and X resolutions changes and resizes accordingly
 

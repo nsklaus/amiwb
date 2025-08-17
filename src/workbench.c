@@ -92,7 +92,7 @@ static char *def_webp_info = NULL;
 static char *def_zip_info  = NULL;
 static char *def_lha_info  = NULL;
 static char *def_mp3_info  = NULL;
-static char *def_mp4a_info  = NULL;
+static char *def_m4a_info  = NULL;
 static char *def_webm_info  = NULL;
 static char *def_rar_info  = NULL;
 static char *def_dir_info  = NULL;   // for directories
@@ -129,7 +129,7 @@ static void load_deficons(void) {
     load_one_deficon("def_zip.info",  &def_zip_info);
     load_one_deficon("def_lha.info",  &def_lha_info);
     load_one_deficon("def_mp3.info",  &def_mp3_info);
-    load_one_deficon("def_mp4a.info", &def_mp4a_info);
+    load_one_deficon("def_m4a.info", &def_m4a_info);
     load_one_deficon("def_webm.info", &def_webm_info);
     load_one_deficon("def_rar.info", &def_rar_info);
     load_one_deficon("def_dir.info",  &def_dir_info);
@@ -182,7 +182,7 @@ static const char *definfo_for_file(const char *name, bool is_dir) {
     if (strcasecmp(ext, "zip")  == 0  && def_zip_info)  return def_zip_info;
     if (strcasecmp(ext, "lha")  == 0  && def_lha_info)  return def_lha_info;
     if (strcasecmp(ext, "mp3")  == 0  && def_mp3_info)  return def_mp3_info;
-    if (strcasecmp(ext, "mp4a") == 0  && def_mp4a_info) return def_mp4a_info;
+    if (strcasecmp(ext, "m4a") == 0  && def_m4a_info) return def_m4a_info;
     if (strcasecmp(ext, "txt")  == 0  && def_txt_info)  return def_txt_info;
     if (strcasecmp(ext, "png")  == 0  && def_png_info)  return def_png_info;
     if (strcasecmp(ext, "gif")  == 0  && def_gif_info)  return def_gif_info;
@@ -1352,7 +1352,7 @@ void cleanup_workbench(void) {
     if (def_mp4_info)  { free(def_mp4_info);  def_mp4_info  = NULL; }
     if (def_mkv_info)  { free(def_mkv_info);  def_mkv_info  = NULL; }
     if (def_webm_info) { free(def_webm_info); def_webm_info = NULL; }
-    if (def_mp4a_info) { free(def_mp4a_info); def_mp4a_info = NULL; }
+    if (def_m4a_info)  { free(def_m4a_info);  def_m4a_info =  NULL; }
     if (def_mp3_info)  { free(def_mp3_info);  def_mp3_info  = NULL; }
     if (def_html_info) { free(def_html_info); def_html_info = NULL; }
     if (def_zip_info)  { free(def_zip_info);  def_zip_info  = NULL; }
