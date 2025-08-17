@@ -659,6 +659,39 @@ void redraw_canvas(Canvas *canvas) {
                 XftDrawStringUtf8(draw, &item_fg, font, shortcut_x, item_y + y_base, (FcChar8 *)shortcut_text, strlen(shortcut_text));
             }
             
+            // Check if this is a submenu under Window menu (not a custom menu)
+            bool is_window_submenu = menu->parent_menu && 
+                                     menu->parent_menu->parent_menu == get_menubar_menu() &&
+                                     menu->parent_menu->parent_index == 1;  // Window menu is at index 1
+            
+            // For Show Hidden submenu, show checkmark next to active choice
+            if (is_window_submenu && menu->parent_index == 5) {  // Show Hidden submenu
+                bool show_checkmark = false;
+                if (i == 0 && get_global_show_hidden()) show_checkmark = true;   // "Yes" is active
+                if (i == 1 && !get_global_show_hidden()) show_checkmark = true;  // "No" is active
+                
+                if (show_checkmark) {
+                    XGlyphInfo check_extents;
+                    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)CHECKMARK, strlen(CHECKMARK), &check_extents);
+                    int check_x = canvas->width - check_extents.xOff - 10;  // Same padding as shortcuts
+                    XftDrawStringUtf8(draw, &item_fg, font, check_x, item_y + y_base, (FcChar8 *)CHECKMARK, strlen(CHECKMARK));
+                }
+            }
+            
+            // For View By submenu, show checkmark next to active view mode
+            if (is_window_submenu && menu->parent_index == 6) {  // View By submenu
+                bool show_checkmark = false;
+                if (i == 0 && get_active_view_is_icons()) show_checkmark = true;   // "Icons" is active
+                if (i == 1 && !get_active_view_is_icons()) show_checkmark = true;  // "Names" is active
+                
+                if (show_checkmark) {
+                    XGlyphInfo check_extents;
+                    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)CHECKMARK, strlen(CHECKMARK), &check_extents);
+                    int check_x = canvas->width - check_extents.xOff - 10;  // Same padding as shortcuts
+                    XftDrawStringUtf8(draw, &item_fg, font, check_x, item_y + y_base, (FcChar8 *)CHECKMARK, strlen(CHECKMARK));
+                }
+            }
+            
             XftColorFree(ctx->dpy, canvas->visual, canvas->colormap, &item_fg);
         }
     }

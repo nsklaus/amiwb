@@ -156,7 +156,7 @@ void intuition_handle_map_request(XMapRequestEvent *event);
 void intuition_handle_map_notify(XMapEvent *event);
 void intuition_handle_configure_request(XConfigureRequestEvent *event); 
 
-void intuition_handle_property_notify(XPropertyEvent *event);     
+void intuition_handle_property_notify(XPropertyEvent *event);
 void intuition_handle_motion_notify(XMotionEvent *event);
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event); 
 void intuition_handle_configure_notify(XConfigureEvent *event);   // for resizing

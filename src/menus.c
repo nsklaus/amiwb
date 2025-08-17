@@ -332,14 +332,14 @@ void init_menus(void) {
     // Tools submenu (index 3)
     // Quick launchers for external apps; editable in config later.
     Menu *tools_submenu = malloc(sizeof(Menu));
-    tools_submenu->item_count = 6;
+    tools_submenu->item_count = 4;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("XCalc");
-    tools_submenu->items[1] = strdup("PavuControl");
-    tools_submenu->items[2] = strdup("Brave Browser");
-    tools_submenu->items[3] = strdup("Sublime Text");
-    tools_submenu->items[4] = strdup("Shell");
-    tools_submenu->items[5] = strdup("Debug Console");
+    //tools_submenu->items[1] = strdup("PavuControl");
+    //tools_submenu->items[2] = strdup("Brave Browser");
+    tools_submenu->items[1] = strdup("Sublime Text");
+    tools_submenu->items[2] = strdup("Shell");
+    tools_submenu->items[3] = strdup("Debug Console");
     init_menu_shortcuts(tools_submenu);  // Initialize all shortcuts to NULL
     init_menu_enabled(tools_submenu);  // Initialize all items as enabled
     tools_submenu->selected_item = -1;
@@ -672,6 +672,19 @@ Menu *get_menu_by_canvas(Canvas *canvas) {
     if (active_menu && active_menu->canvas == canvas) return active_menu;
     if (nested_menu && nested_menu->canvas == canvas) return nested_menu;
     return NULL;
+}
+
+// Get Show Hidden state from active window (for checkmark display)
+bool get_global_show_hidden(void) {
+    Canvas *active_window = get_active_window();
+    return active_window ? active_window->show_hidden : false;
+}
+
+// Get View Mode from active window (for checkmark display)
+// Returns true if Icons view, false if Names view
+bool get_active_view_is_icons(void) {
+    Canvas *active_window = get_active_window();
+    return active_window ? (active_window->view_mode == VIEW_ICONS) : true;  // Default to Icons
 }
 
 // Handle motion for menubar
@@ -1029,16 +1042,19 @@ void handle_menu_selection(Menu *menu, int item_index) {
         menu->parent_menu->parent_index == 1) {
         // Determine which child: by parent_index in Window submenu
         if (menu->parent_index == 5) { // Show Hidden
-            Canvas *aw = get_active_window();
-            if (aw) {
-                if (strcmp(item, "Yes") == 0) aw->show_hidden = true;
-                else if (strcmp(item, "No") == 0) aw->show_hidden = false;
+            Canvas *active_window = get_active_window();
+            if (active_window) {
+                if (strcmp(item, "Yes") == 0) {
+                    active_window->show_hidden = true;
+                } else if (strcmp(item, "No") == 0) {
+                    active_window->show_hidden = false;
+                }
                 // Refresh directory view to apply hidden filter
-                refresh_canvas_from_directory(aw, aw->path);
+                refresh_canvas_from_directory(active_window, active_window->path);
                 // Ensure layout matches current view mode (fix initial list spacing)
-                apply_view_layout(aw);
-                compute_max_scroll(aw);
-                redraw_canvas(aw);
+                apply_view_layout(active_window);
+                compute_max_scroll(active_window);
+                redraw_canvas(active_window);
             }
         } else if (menu->parent_index == 6) { // View By ..
             Canvas *aw = get_active_window();
@@ -1112,22 +1128,31 @@ void handle_menu_selection(Menu *menu, int item_index) {
         case 3:  // Tools
             if (strcmp(item, "XCalc") == 0) {
                 system("xcalc &");  // TODO: Handle errors and paths
-            
-            } else if (strcmp(item, "PavuControl") == 0) {
-                system("pavucontrol &");
+            } 
 
-            } else if (strcmp(item, "Sublime Text") == 0) {
+            /*
+            else if (strcmp(item, "PavuControl") == 0) {
+                //system("pavucontrol &");
+
+            } 
+            
+            else if (strcmp(item, "Sublime Text") == 0) {
                 system("subl &");
 
-            } else if (strcmp(item, "Sublime Text") == 0) {
+            } 
+
+            else if (strcmp(item, "Brave Browser") == 0) {
+                //printf("launching brave\n");
+                //system("brave-browser --password-store=basic &");
+            } 
+            */
+
+            else if (strcmp(item, "Sublime Text") == 0) {
                 system("subl &");   
 
             } else if (strcmp(item, "Shell") == 0) {
                 system("kitty &"); 
 
-            } else if (strcmp(item, "Brave Browser") == 0) {
-                //printf("launching brave\n");
-                system("brave-browser &");
             } else if (strcmp(item, "Debug Console") == 0) {
                 // Open a terminal that tails the configured log file live.
                 // Uses config.h LOG_FILE_PATH and kitty.

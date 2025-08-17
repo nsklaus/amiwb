@@ -47,6 +47,10 @@ void menu_handle_key_press(XKeyEvent *event);                   // Handle key pr
 bool get_show_menus_state(void);                // Get current show_menus state
 void toggle_menubar_state(void);                // Toggle between logo and menus state
 int get_menu_item_count(void);                  // Get number of top-level menu items
+
+// Show Hidden state management
+bool get_global_show_hidden(void);              // Get Show Hidden state from active window
+bool get_active_view_is_icons(void);            // Get View Mode from active window (true=Icons, false=Names)
 const char *get_menu_item_label(int index);     // Get label for item at index
 int get_selected_item(void);                    // Get currently selected (highlighted) item
 

@@ -50,6 +50,9 @@
 // Global shortcut symbol (Unicode 2237: ∷)
 #define SHORTCUT_SYMBOL "\xe2\x88\xb7"  // UTF-8 encoding of ∷ (U+2237)
 
+// Checkmark symbol (Unicode 2713: ✓)
+#define CHECKMARK "\xe2\x9c\x93"  // UTF-8 encoding of ✓ (U+2713)
+
 extern char *iconify_path;
 
 //#define SYSFONT "fonts/SourceCodePro-Semibold.otf"

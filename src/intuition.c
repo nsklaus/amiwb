@@ -510,6 +510,7 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
     c->bg_color = GRAY;
     c->buffer_width = w; c->buffer_height = h;  // Initialize to canvas size, may be enlarged later
     c->resizing_interactive = false;
+    // show_hidden defaults to false via Canvas{0}
     // Initialize damage tracking - mark entire canvas as needing initial draw
     c->needs_redraw = true;
     c->dirty_x = 0;
@@ -1759,6 +1760,7 @@ static void frame_and_activate(Window client, XWindowAttributes *attrs, bool map
         if (map_client) XMapWindow(display, client);
         return;
     }
+    
     if (map_client) XMapWindow(display, client);
     set_active_window(frame);
     redraw_canvas(frame);
