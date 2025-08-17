@@ -91,7 +91,7 @@ void resize_begin(Canvas *canvas, int mouse_x, int mouse_y) {
     g_resize.start_width = canvas->width;
     g_resize.start_height = canvas->height;
     g_resize.active = true;
-    g_resize.min_interval_ms = 16; // ~60 FPS maximum update rate
+    g_resize.min_interval_ms = 16; // ~60 FPS throttle for resize
     
     // Mark canvas as being resized
     canvas->resizing_interactive = true;
@@ -110,7 +110,7 @@ void resize_begin(Canvas *canvas, int mouse_x, int mouse_y) {
 void resize_motion(int mouse_x, int mouse_y) {
     if (!g_resize.active || !g_resize.canvas) return;
     
-    // Motion compression: skip if too soon since last update
+    // Throttle resize updates to 60 FPS
     if (!should_update_resize()) {
         return;
     }
@@ -193,7 +193,7 @@ void resize_motion(int mouse_x, int mouse_y) {
     // Redraw only this window (render.c will skip others during interactive resize)
     redraw_canvas(g_resize.canvas);
     
-    // Update timestamp for motion compression
+    // Update timestamp for throttling
     clock_gettime(CLOCK_MONOTONIC, &g_resize.last_update);
 }
 

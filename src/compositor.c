@@ -1,5 +1,6 @@
 #include "compositor.h"
 #include <stdio.h>
+#include <stdbool.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xdamage.h>
@@ -18,6 +19,8 @@ typedef struct CompWin {
     int depth;
     int width;
     int height;
+    int x;      // Cached position to avoid XTranslateCoordinates
+    int y;      // Cached position to avoid XTranslateCoordinates
     struct CompWin *next;
 } CompWin;
 
@@ -35,6 +38,9 @@ static Picture g_back_pict = 0;
 static CompWin *g_list = NULL;
 static int g_damage_event_base = 0, g_damage_error_base = 0;
 static int g_composite_event_base = 0, g_composite_error_base = 0;
+
+// Motion event batching to reduce repaints
+static bool g_pending_repaint = false;
 
 // Helper function to safely free X11 resources with sync
 static void safe_sync_and_free_picture(Display *dpy, Picture *pict) {
@@ -174,6 +180,14 @@ void compositor_repaint(Display *dpy) {
     repaint(dpy);
 }
 
+void compositor_flush_pending(Display *dpy) {
+    if (!g_active) return;
+    if (g_pending_repaint) {
+        repaint(dpy);
+        g_pending_repaint = false;
+    }
+}
+
 void compositor_sync_stacking(Display *dpy) {
     if (!g_active) return;
     // Do not restack here; only reflect current X server order and repaint
@@ -228,9 +242,15 @@ static void build_win_list(Display *dpy) {
         // When the window redraws, we get an event so we know to recomposite
         Damage dmg = XDamageCreate(dpy, w, XDamageReportNonEmpty);
 
+        // Get window position once during creation
+        int x = 0, y = 0;
+        Window dummy;
+        XTranslateCoordinates(dpy, w, g_root, 0, 0, &x, &y, &dummy);
+        
         CompWin *cw = (CompWin*)calloc(1, sizeof(CompWin));
         cw->win = w; cw->pm = pm; cw->pict = pict; cw->damage = dmg; cw->depth = depth;
         cw->width = wa.width; cw->height = wa.height;
+        cw->x = x; cw->y = y;  // Cache position
         cw->next = NULL; *tail = cw; tail = &cw->next; // append to preserve order
         added++;
     }
@@ -299,37 +319,34 @@ static void repaint(Display *dpy) {
     // 2) Normal windows (and unknown) in X stacking order
     // 3) Menus/menubar canvases
     unsigned int count = 0;
-    // Pass 1: desktop
+    // Pass 1: desktop - use cached position/size
     for (CompWin *it = g_list; it; it = it->next) {
         Canvas *c = find_canvas(it->win);
         if (!(c && c->type == DESKTOP)) continue;
-        int x=0,y=0; Window dummy; XTranslateCoordinates(dpy, it->win, g_root, 0, 0, &x, &y, &dummy);
-        XWindowAttributes wwa; if (!XGetWindowAttributes(dpy, it->win, &wwa)) continue;
-        unsigned int ww = (unsigned int)wwa.width, wh = (unsigned int)wwa.height;
+        // Use cached values - no X11 calls!
+        unsigned int ww = (unsigned int)it->width, wh = (unsigned int)it->height;
         int op = (it->depth == 32) ? PictOpOver : PictOpSrc;
-        XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, x,y, ww,wh);
+        XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, it->x, it->y, ww,wh);
         count++;
     }
-    // Pass 2: normal windows or unknowns
+    // Pass 2: normal windows or unknowns - use cached position/size  
     for (CompWin *it = g_list; it; it = it->next) {
         Canvas *c = find_canvas(it->win);
         if (c && (c->type == DESKTOP || c->type == MENU)) continue;
-        int x=0,y=0; Window dummy; XTranslateCoordinates(dpy, it->win, g_root, 0, 0, &x, &y, &dummy);
-        XWindowAttributes wwa; if (!XGetWindowAttributes(dpy, it->win, &wwa)) continue;
-        unsigned int ww = (unsigned int)wwa.width, wh = (unsigned int)wwa.height;
+        // Use cached values - no X11 calls!
+        unsigned int ww = (unsigned int)it->width, wh = (unsigned int)it->height;
         int op = (it->depth == 32) ? PictOpOver : PictOpSrc;
-        XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, x,y, ww,wh);
+        XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, it->x, it->y, ww,wh);
         count++;
     }
-    // Pass 3: menus/menubar
+    // Pass 3: menus/menubar - use cached position/size
     for (CompWin *it = g_list; it; it = it->next) {
         Canvas *c = find_canvas(it->win);
         if (!(c && c->type == MENU)) continue;
-        int x=0,y=0; Window dummy; XTranslateCoordinates(dpy, it->win, g_root, 0, 0, &x, &y, &dummy);
-        XWindowAttributes wwa; if (!XGetWindowAttributes(dpy, it->win, &wwa)) continue;
-        unsigned int ww = (unsigned int)wwa.width, wh = (unsigned int)wwa.height;
+        // Use cached values - no X11 calls!
+        unsigned int ww = (unsigned int)it->width, wh = (unsigned int)it->height;
         int op = (it->depth == 32) ? PictOpOver : PictOpSrc;
-        XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, x,y, ww,wh);
+        XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, it->x, it->y, ww,wh);
         count++;
     }
     // Single blit from back buffer to overlay
@@ -464,11 +481,25 @@ void compositor_handle_event(Display *dpy, XEvent *ev) {
     }
     if (type == ConfigureNotify) {
         XConfigureEvent *cev = &ev->xconfigure;
+        bool size_changed = false;
+        bool position_changed = false;
         // Find window
         for (CompWin *it = g_list; it; it = it->next) {
             if (it->win == cev->window) {
+                // Get absolute position relative to root
+                int x = 0, y = 0;
+                Window dummy;
+                XTranslateCoordinates(dpy, it->win, g_root, 0, 0, &x, &y, &dummy);
+                
+                // Update cached position
+                if (it->x != x || it->y != y) {
+                    position_changed = true;
+                    it->x = x;
+                    it->y = y;
+                }
                 // If size changed, recreate named pixmap and picture
                 if (it->width != cev->width || it->height != cev->height) {
+                    size_changed = true;
                     if (it->pict) { XRenderFreePicture(dpy, it->pict); it->pict = 0; }
                     if (it->pm) { XFreePixmap(dpy, it->pm); it->pm = 0; }
                     it->pm = XCompositeNameWindowPixmap(dpy, it->win);
@@ -481,14 +512,22 @@ void compositor_handle_event(Display *dpy, XEvent *ev) {
                             XRenderChangePicture(dpy, it->pict, CPSubwindowMode, &change);
                         }
                     }
+                    // Update cached size
+                    it->width = cev->width; it->height = cev->height;
                 }
-                // Update cached size (position not tracked in CompWin)
-                it->width = cev->width; it->height = cev->height;
                 break;
             }
         }
-        // Repaint without rebuilding list to avoid drag-time stalls
-        repaint(dpy);
+        // CRITICAL: Only repaint immediately if size changed
+        // For position changes, mark pending to batch them
+        if (size_changed) {
+            repaint(dpy);
+            g_pending_repaint = false; // Clear pending since we just repainted
+        } else if (position_changed) {
+            // Mark that we need a repaint, but don't do it yet
+            // This batches multiple rapid position changes
+            g_pending_repaint = true;
+        }
         return;
     }
     if (type == g_damage_event_base + XDamageNotify) {

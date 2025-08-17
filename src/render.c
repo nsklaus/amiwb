@@ -214,15 +214,45 @@ void render_load_wallpapers(void) {
     Display *dpy = ctx->dpy;
     int scr = DefaultScreen(dpy);
 
-    // Free previous pixmaps if any
-    if (ctx->desk_img != None) { XFreePixmap(dpy, ctx->desk_img); ctx->desk_img = None; }
-    if (ctx->wind_img != None) { XFreePixmap(dpy, ctx->wind_img); ctx->wind_img = None; }
+    // Free previous pixmaps and cached Pictures if any
+    if (ctx->desk_img != None) { 
+        XFreePixmap(dpy, ctx->desk_img); 
+        ctx->desk_img = None; 
+    }
+    if (ctx->desk_picture != None) {
+        XRenderFreePicture(dpy, ctx->desk_picture);
+        ctx->desk_picture = None;
+    }
+    if (ctx->wind_img != None) { 
+        XFreePixmap(dpy, ctx->wind_img); 
+        ctx->wind_img = None; 
+    }
+    if (ctx->wind_picture != None) {
+        XRenderFreePicture(dpy, ctx->wind_picture);
+        ctx->wind_picture = None;
+    }
 
     if (strlen(DESKPICT) > 0) {
         ctx->desk_img = load_wallpaper_to_pixmap(dpy, scr, DESKPICT, DESKTILE);
+        // Create cached Picture for desktop wallpaper
+        if (ctx->desk_img != None) {
+            Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
+            XRenderPictFormat *fmt = XRenderFindVisualFormat(dpy, visual);
+            if (fmt) {
+                ctx->desk_picture = XRenderCreatePicture(dpy, ctx->desk_img, fmt, 0, NULL);
+            }
+        }
     }
     if (strlen(WINDPICT) > 0) {
         ctx->wind_img = load_wallpaper_to_pixmap(dpy, scr, WINDPICT, WINDTILE);
+        // Create cached Picture for window wallpaper
+        if (ctx->wind_img != None) {
+            Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
+            XRenderPictFormat *fmt = XRenderFindVisualFormat(dpy, visual);
+            if (fmt) {
+                ctx->wind_picture = XRenderCreatePicture(dpy, ctx->wind_img, fmt, 0, NULL);
+            }
+        }
     }
 }
 
@@ -399,14 +429,8 @@ void redraw_canvas(Canvas *canvas) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
     
-    // Validate window still exists before any drawing operations
-    if (canvas->win != None) {
-        XWindowAttributes attrs;
-        if (XGetWindowAttributes(ctx->dpy, canvas->win, &attrs) != True) {
-            // Window is invalid, skip rendering
-            return;
-        }
-    }
+    // Skip validation - canvas lifecycle is properly managed
+    // This eliminates a synchronous X11 call on every redraw
 
     // If canvas is WINDOW type with a client window, 
     // dest is window_render; otherwise, canvas_render.
@@ -424,21 +448,19 @@ void redraw_canvas(Canvas *canvas) {
         
 
         // Apply wallpaper background for desktop and icon view windows
-        Pixmap wallpaper_source = None;
-        if (canvas->type == DESKTOP && ctx->desk_img != None) {
-            wallpaper_source = ctx->desk_img;
-        } else if (canvas->type == WINDOW && canvas->view_mode == VIEW_ICONS && ctx->wind_img != None) {
-            wallpaper_source = ctx->wind_img;
+        // Use cached Pictures instead of creating/destroying every frame
+        Picture wallpaper_picture = None;
+        if (canvas->type == DESKTOP && ctx->desk_picture != None) {
+            wallpaper_picture = ctx->desk_picture;
+        } else if (canvas->type == WINDOW && canvas->view_mode == VIEW_ICONS && ctx->wind_picture != None) {
+            wallpaper_picture = ctx->wind_picture;
         }
         
-        if (wallpaper_source != None) {
+        if (wallpaper_picture != None) {
             Display *dpy = ctx->dpy;
-            Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
-            XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, visual);
-            Picture wallpaper_picture = XRenderCreatePicture(dpy, wallpaper_source, fmt, 0, NULL);
             XRenderComposite(dpy, PictOpSrc, wallpaper_picture, None, canvas->canvas_render, 
                 0, 0, 0, 0, 0, 0, render_width, render_height);
-            XRenderFreePicture(dpy, wallpaper_picture);
+            // No XRenderFreePicture - we're using cached Pictures now!
             has_bg_image = true;
         }
 
@@ -551,7 +573,7 @@ void redraw_canvas(Canvas *canvas) {
             XRenderComposite(ctx->dpy, PictOpSrc, canvas->canvas_render, None, 
                            canvas->window_render, 0, 0, 0, 0, 0, 0, 
                            canvas->width, canvas->height);
-            XFlush(ctx->dpy);
+            // XFlush removed - let X11 batch operations for better performance
             return;
         }
         
@@ -935,7 +957,7 @@ void redraw_canvas(Canvas *canvas) {
         // This copies the offscreen buffer to the visible window
         XRenderComposite(ctx->dpy, PictOpSrc, canvas->canvas_render, None, canvas->window_render, 0, 0, 0, 0, 0, 0, copy_width, copy_height);
     }
-    XFlush(ctx->dpy);
+    // XFlush removed - let X11 batch operations for better performance
 }
 
 // Destroy pixmap and XRender Pictures attached to a canvas

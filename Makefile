@@ -55,7 +55,8 @@ clean:
 
 install:
 	mkdir -p /usr/local/bin
-	cp $(EXEC) /usr/local/bin/amiwb
+	cp $(EXEC) /usr/local/bin/amiwb.new
+	mv /usr/local/bin/amiwb.new /usr/local/bin/amiwb
 	mkdir -p /usr/local/share/amiwb/icons
 	cp -r icons/* /usr/local/share/amiwb/icons/
 	mkdir -p /usr/local/share/amiwb/patterns

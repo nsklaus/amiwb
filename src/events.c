@@ -146,8 +146,8 @@ void handle_events(void) {
                 update_menubar_time();  // Will only redraw if minute changed
             }
             
-            // Brief sleep to avoid busy-waiting
-            usleep(50000);  // 50ms
+            // Very brief sleep to avoid busy-waiting but remain responsive
+            usleep(1000);  // 1ms - much more responsive
             continue;
         }
 
@@ -241,6 +241,10 @@ void handle_events(void) {
             default:
                 break;
         }
+        
+        // Flush any pending compositor repaints after processing events
+        // This batches multiple position updates from rapid motion events
+        compositor_flush_pending(dpy);
     }
 }
 

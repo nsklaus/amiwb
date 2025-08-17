@@ -15,6 +15,9 @@ void compositor_handle_event(Display *dpy, XEvent *ev);
 // Force a repaint of the composed scene
 void compositor_repaint(Display *dpy);
 
+// Flush any pending repaints (for batching position updates)
+void compositor_flush_pending(Display *dpy);
+
 // Re-read stacking from XQueryTree and repaint (use after XRaiseWindow/XLowerWindow)
 void compositor_sync_stacking(Display *dpy);
 
