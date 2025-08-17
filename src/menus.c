@@ -674,10 +674,15 @@ Menu *get_menu_by_canvas(Canvas *canvas) {
     return NULL;
 }
 
-// Get Show Hidden state from active window (for checkmark display)
+// Get Show Hidden state from active window or desktop (for checkmark display)
 bool get_global_show_hidden(void) {
     Canvas *active_window = get_active_window();
-    return active_window ? active_window->show_hidden : false;
+    if (active_window) {
+        return active_window->show_hidden;
+    }
+    // No active window - check desktop
+    Canvas *desktop = get_desktop_canvas();
+    return desktop ? desktop->show_hidden : false;
 }
 
 // Get View Mode from active window (for checkmark display)
@@ -997,7 +1002,9 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
     if (menu == menubar && index == 1) {  // Window menu
         Canvas *aw = get_active_window();
         bool has_active_window = (aw && aw->type == WINDOW);
-        bool has_path = (has_active_window && aw->path);
+        bool is_workbench_window = (aw && aw->type == WINDOW && aw->client_win == None);
+        bool desktop_focused = (aw == NULL);  // No active window means desktop is focused
+        bool has_path = (is_workbench_window && aw->path);
         bool can_go_parent = false;
         
         // Check if we can go to parent (not already at root)
@@ -1008,15 +1015,16 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
             }
         }
         
-        // Update the enabled states
+        // Update the enabled states based on window type
         if (active_menu->enabled) {
-            active_menu->enabled[0] = true;  // New Drawer - always enabled for now
-            active_menu->enabled[1] = can_go_parent;  // Open Parent - only if active window with parent path
-            active_menu->enabled[2] = has_active_window;  // Close - only if active window
-            active_menu->enabled[3] = has_active_window;  // Select Contents - only if active window
-            active_menu->enabled[4] = true;  // Clean Up - always enabled (works on desktop too)
-            active_menu->enabled[5] = has_active_window;  // Show Hidden - only if active window
-            active_menu->enabled[6] = has_active_window;  // View By .. - only if active window
+            // Desktop-focused or workbench window operations
+            active_menu->enabled[0] = is_workbench_window || desktop_focused;  // New Drawer - workbench or desktop
+            active_menu->enabled[1] = can_go_parent;                          // Open Parent - only for workbench with parent path
+            active_menu->enabled[2] = has_active_window;                      // Close - only if there's a window
+            active_menu->enabled[3] = is_workbench_window || desktop_focused;  // Select Contents - workbench or desktop
+            active_menu->enabled[4] = is_workbench_window || desktop_focused;  // Clean Up - workbench or desktop
+            active_menu->enabled[5] = is_workbench_window || desktop_focused;  // Show Hidden - workbench or desktop  
+            active_menu->enabled[6] = is_workbench_window;                     // View By - only for workbench windows (not desktop)
         }
     }
     
@@ -1042,19 +1050,35 @@ void handle_menu_selection(Menu *menu, int item_index) {
         menu->parent_menu->parent_index == 1) {
         // Determine which child: by parent_index in Window submenu
         if (menu->parent_index == 5) { // Show Hidden
-            Canvas *active_window = get_active_window();
-            if (active_window) {
+            Canvas *target = get_active_window();
+            if (!target) {
+                // No active window - use desktop
+                target = get_desktop_canvas();
+            }
+            if (target) {
                 if (strcmp(item, "Yes") == 0) {
-                    active_window->show_hidden = true;
+                    target->show_hidden = true;
                 } else if (strcmp(item, "No") == 0) {
-                    active_window->show_hidden = false;
+                    target->show_hidden = false;
                 }
                 // Refresh directory view to apply hidden filter
-                refresh_canvas_from_directory(active_window, active_window->path);
-                // Ensure layout matches current view mode (fix initial list spacing)
-                apply_view_layout(active_window);
-                compute_max_scroll(active_window);
-                redraw_canvas(active_window);
+                if (target->path) {
+                    refresh_canvas_from_directory(target, target->path);
+                } else if (target->type == DESKTOP) {
+                    // Desktop uses ~/Desktop as its path
+                    const char *home = getenv("HOME");
+                    if (home) {
+                        char desktop_path[1024];
+                        snprintf(desktop_path, sizeof(desktop_path), "%s/Desktop", home);
+                        refresh_canvas_from_directory(target, desktop_path);
+                    }
+                }
+                // Layout only applies to workbench windows, not desktop
+                if (target->type == WINDOW) {
+                    apply_view_layout(target);
+                    compute_max_scroll(target);
+                }
+                redraw_canvas(target);
             }
         } else if (menu->parent_index == 6) { // View By ..
             Canvas *aw = get_active_window();
