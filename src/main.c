@@ -14,6 +14,33 @@
 #include <time.h>   // time, strftime
 #include <string.h>
 
+// Global variables for restart functionality
+static char **g_argv = NULL;
+static int g_argc = 0;
+static Window g_selection_window = None;
+static Display *g_selection_display = NULL;
+
+// Function to restart the window manager
+void restart_amiwb(void) {
+    // Clean up instance selection first
+    if (g_selection_display && g_selection_window != None) {
+        XDestroyWindow(g_selection_display, g_selection_window);
+        XCloseDisplay(g_selection_display);
+    }
+    
+    // Perform minimal cleanup - we're about to exec
+    begin_shutdown();
+    shutdown_compositor(get_display());
+    cleanup_intuition();  // This closes the X display
+    
+    // Replace ourselves with a new instance
+    execvp(g_argv[0], g_argv);
+    
+    // If exec fails, exit with error
+    fprintf(stderr, "Failed to restart AmiWB: execvp failed\n");
+    exit(1);
+}
+
 // Entry point
 // Initializes subsystems in the order they depend on each other and
 // shuts them down in reverse. No behavior changes.
@@ -24,6 +51,9 @@
 // 4) init_events() hooks dispatcher, then compositor starts
 // Initialize window manager components
 int main(int argc, char *argv[]) {
+    // Store arguments for potential restart
+    g_argc = argc;
+    g_argv = argv;
     // Configurable logging: redirect stdout/stderr to LOG_FILE_PATH when enabled.
     // Truncate on each run and print a timestamp header. Line-buffered writes.
     #if LOGGING_ENABLED
@@ -60,6 +90,39 @@ int main(int argc, char *argv[]) {
         }
     }
     #endif
+    
+    // Check if another instance is already running by trying to own a selection
+    g_selection_display = XOpenDisplay(NULL);
+    if (g_selection_display) {
+        Atom wm_selection = XInternAtom(g_selection_display, "_AMIWB_WM_S0", False);
+        Window owner = XGetSelectionOwner(g_selection_display, wm_selection);
+        
+        if (owner != None) {
+            // Another instance is running
+            fprintf(stderr, "AmiWB is already running. Only one instance allowed.\n");
+            XCloseDisplay(g_selection_display);
+            return 1;
+        }
+        
+        // Try to claim ownership
+        g_selection_window = XCreateSimpleWindow(g_selection_display, 
+                                                DefaultRootWindow(g_selection_display), 
+                                                0, 0, 1, 1, 0, 0, 0);
+        XSetSelectionOwner(g_selection_display, wm_selection, g_selection_window, CurrentTime);
+        XSync(g_selection_display, False);
+        
+        // Verify we got it
+        if (XGetSelectionOwner(g_selection_display, wm_selection) != g_selection_window) {
+            fprintf(stderr, "Failed to acquire WM selection. Another WM may be running.\n");
+            XDestroyWindow(g_selection_display, g_selection_window);
+            XCloseDisplay(g_selection_display);
+            g_selection_window = None;
+            g_selection_display = NULL;
+            return 1;
+        }
+        
+        // Keep the display and window for the lifetime of the program
+    }
     
     // Intuition first: sets up X Display and RenderContext
     init_intuition();
@@ -99,6 +162,12 @@ int main(int argc, char *argv[]) {
     // Finally close Display and render resources
     cleanup_intuition();
     cleanup_render();
+    
+    // Clean up instance selection
+    if (g_selection_display && g_selection_window != None) {
+        XDestroyWindow(g_selection_display, g_selection_window);
+        XCloseDisplay(g_selection_display);
+    }
     
     return 0;
 }

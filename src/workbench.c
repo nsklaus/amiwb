@@ -124,14 +124,14 @@ static void load_deficons(void) {
     load_one_deficon("def_avi.info",  &def_avi_info);
     load_one_deficon("def_mp4.info",  &def_mp4_info);
     load_one_deficon("def_mkv.info",  &def_mkv_info);
-    load_one_deficon("def_html.info",  &def_html_info);
+    load_one_deficon("def_html.info", &def_html_info);
     load_one_deficon("def_webp.info", &def_webp_info);
     load_one_deficon("def_zip.info",  &def_zip_info);
     load_one_deficon("def_lha.info",  &def_lha_info);
     load_one_deficon("def_mp3.info",  &def_mp3_info);
-    load_one_deficon("def_m4a.info", &def_m4a_info);
+    load_one_deficon("def_m4a.info",  &def_m4a_info);
     load_one_deficon("def_webm.info", &def_webm_info);
-    load_one_deficon("def_rar.info", &def_rar_info);
+    load_one_deficon("def_rar.info",  &def_rar_info);
     load_one_deficon("def_dir.info",  &def_dir_info);
     load_one_deficon("def_foo.info",  &def_foo_info);
 }
@@ -176,13 +176,13 @@ static const char *definfo_for_file(const char *name, bool is_dir) {
         strcasecmp(ext, "jpeg") == 0) && def_jpg_info)  return def_jpg_info;
     
     if ((strcasecmp(ext, "htm") == 0  ||
-        strcasecmp(ext, "html") == 0) && def_html_info)  return def_html_info;
+        strcasecmp(ext, "html") == 0) && def_html_info) return def_html_info;
     
     if (strcasecmp(ext, "webp") == 0  && def_webp_info) return def_webp_info;
     if (strcasecmp(ext, "zip")  == 0  && def_zip_info)  return def_zip_info;
     if (strcasecmp(ext, "lha")  == 0  && def_lha_info)  return def_lha_info;
     if (strcasecmp(ext, "mp3")  == 0  && def_mp3_info)  return def_mp3_info;
-    if (strcasecmp(ext, "m4a") == 0  && def_m4a_info) return def_m4a_info;
+    if (strcasecmp(ext, "m4a")  == 0  && def_m4a_info)  return def_m4a_info;
     if (strcasecmp(ext, "txt")  == 0  && def_txt_info)  return def_txt_info;
     if (strcasecmp(ext, "png")  == 0  && def_png_info)  return def_png_info;
     if (strcasecmp(ext, "gif")  == 0  && def_gif_info)  return def_gif_info;
@@ -190,8 +190,8 @@ static const char *definfo_for_file(const char *name, bool is_dir) {
     if (strcasecmp(ext, "avi")  == 0  && def_avi_info)  return def_avi_info;
     if (strcasecmp(ext, "mp4")  == 0  && def_mp4_info)  return def_mp4_info;
     if (strcasecmp(ext, "mkv")  == 0  && def_mkv_info)  return def_mkv_info;
-    if (strcasecmp(ext, "webm")  == 0  && def_webm_info) return def_webm_info;
-    if (strcasecmp(ext, "rar")  == 0  && def_rar_info) return def_rar_info;
+    if (strcasecmp(ext, "webm") == 0  && def_webm_info) return def_webm_info;
+    if (strcasecmp(ext, "rar")  == 0  && def_rar_info)  return def_rar_info;
     // Unknown or unmapped extension -> generic tool icon if available
     if (def_foo_info) return def_foo_info;
     return NULL;

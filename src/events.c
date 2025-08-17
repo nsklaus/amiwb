@@ -459,6 +459,12 @@ void handle_key_press(XKeyEvent *event) {
                 handle_quit_request();
                 return;
             }
+            // Super+Shift+R: Restart AmiWB
+            if (keysym == XK_r || keysym == XK_R) {
+                extern void handle_restart_request(void);
+                handle_restart_request();
+                return;
+            }
             // Super+Shift+S: Suspend
             if (keysym == XK_s || keysym == XK_S) {
                 handle_suspend_request();

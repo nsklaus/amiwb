@@ -40,8 +40,9 @@ static bool show_menus = false;     // State: false for logo, true for menus
 static void rename_file_ok_callback(const char *new_name);
 static void rename_file_cancel_callback(void);
 
-// Forward declaration for execute action
+// Forward declarations for actions
 void trigger_execute_action(void);
+void handle_restart_request(void);
 
 // Global variable to store the icon being renamed
 static FileIcon *g_rename_icon = NULL;
@@ -212,13 +213,14 @@ void init_menus(void) {
     // Workbench submenu (index 0)
     // Basic actions for the environment and global app state.
     Menu *wb_submenu = malloc(sizeof(Menu));
-    wb_submenu->item_count = 5;
+    wb_submenu->item_count = 6;
     wb_submenu->items = malloc(wb_submenu->item_count * sizeof(char*));
     wb_submenu->items[0] = strdup("Execute");
     wb_submenu->items[1] = strdup("Settings");
     wb_submenu->items[2] = strdup("About");
     wb_submenu->items[3] = strdup("Suspend");
-    wb_submenu->items[4] = strdup("Quit AmiWB");
+    wb_submenu->items[4] = strdup("Restart AmiWB");
+    wb_submenu->items[5] = strdup("Quit AmiWB");
     
     // Initialize shortcuts for Workbench menu
     wb_submenu->shortcuts = malloc(wb_submenu->item_count * sizeof(char*));
@@ -226,7 +228,8 @@ void init_menus(void) {
     wb_submenu->shortcuts[1] = NULL;  // Settings - no shortcut yet
     wb_submenu->shortcuts[2] = NULL;  // About - no shortcut yet
     wb_submenu->shortcuts[3] = strdup("^S");  // Suspend - Super+Shift+S
-    wb_submenu->shortcuts[4] = strdup("^Q");  // Quit - Super+Shift+Q
+    wb_submenu->shortcuts[4] = strdup("^R");  // Restart - Super+Shift+R
+    wb_submenu->shortcuts[5] = strdup("^Q");  // Quit - Super+Shift+Q
     
     init_menu_enabled(wb_submenu);  // Initialize all items as enabled
     // Gray out Settings and About menu items (not implemented yet)
@@ -1059,6 +1062,10 @@ void handle_menu_selection(Menu *menu, int item_index) {
 
             } else if (strcmp(item, "Suspend") == 0) {
                 handle_suspend_request();
+            
+            } else if (strcmp(item, "Restart AmiWB") == 0) {
+                handle_restart_request();
+                return;
 
             } else if (strcmp(item, "Quit AmiWB") == 0) {
                 handle_quit_request();
@@ -1770,6 +1777,12 @@ void handle_quit_request(void) {
 // Handle suspend request (from menu or Super+Shift+S)
 void handle_suspend_request(void) {
     system("systemctl suspend &");
+}
+
+// Handle restart request (from menu or Super+Shift+R)
+void handle_restart_request(void) {
+    extern void restart_amiwb(void);
+    restart_amiwb();
 }
 
 // Trigger select contents action (from menu)
