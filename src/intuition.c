@@ -893,8 +893,13 @@ static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy) {
             collision_found = false;
             for (int i = 0; i < n; i++) {
                 FileIcon *ic = arr[i];
-                if (ic->display_window != desk->win || ic->type != TYPE_ICONIFIED) continue;
-                if (ic->x == x && ic->y == y) {
+                if (ic->display_window != desk->win) continue;
+                // Check collision with ANY icon type (file, drawer, or iconified)
+                // Check if icons would overlap in the same column slot
+                // Icons in same column if their x positions are within the column range
+                bool same_column = (ic->x >= x && ic->x < x + step_x) || 
+                                  (x >= ic->x && x < ic->x + ic->width);
+                if (same_column && ic->y == y) {
                     y += 80;  // Move down and check again
                     collision_found = true;
                     break;  // Start collision check over from beginning
@@ -902,7 +907,9 @@ static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy) {
             }
         } while (collision_found && y + 64 < desk->height);
         
-        if (y + 64 < desk->height) { *ox = x; *oy = y; return; }
+        if (y + 64 < desk->height) { 
+            *ox = x; *oy = y; return; 
+        }
     }
     *ox = sx; *oy = first_iconified_y;
 }
@@ -984,6 +991,12 @@ void iconify_canvas(Canvas *c) {
     free(ni->path); 
     ni->path = NULL; 
     ni->iconified_canvas = c;
+    
+    // Center the iconified icon within its column slot (same as cleanup does)
+    const int step_x = 110;  // Column width
+    int column_center_offset = (step_x - ni->width) / 2;
+    if (column_center_offset < 0) column_center_offset = 0;
+    ni->x = nx + column_center_offset;
     XUnmapWindow(display, c->win); 
     if (active_window == c) active_window = NULL; 
     redraw_canvas(desk); 

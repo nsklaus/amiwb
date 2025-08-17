@@ -951,16 +951,24 @@ void icon_cleanup(Canvas *canvas) {
         for (int i2 = 0; i2 < count; ++i2) {
             FileIcon *ic = list[i2];
             
-            // System and Home get fixed positions
+            // System and Home get fixed positions at top of first column, but centered
             if (strcmp(ic->label, "System") == 0) {
-                ic->x = 20; 
+                int column_center_offset = (step_x - ic->width) / 2;
+                if (column_center_offset < 0) column_center_offset = 0;
+                ic->x = 20 + column_center_offset; 
                 ic->y = 40;
             } else if (strcmp(ic->label, "Home") == 0) {
-                ic->x = 20; 
+                int column_center_offset = (step_x - ic->width) / 2;
+                if (column_center_offset < 0) column_center_offset = 0;
+                ic->x = 20 + column_center_offset; 
                 ic->y = 120;
             } else {
                 // All other icons (regular AND iconified) use column layout
-                ic->x = x;
+                // Center the icon within its column slot
+                int column_center_offset = (step_x - ic->width) / 2;
+                if (column_center_offset < 0) column_center_offset = 0; // Don't offset if icon is wider than column
+                
+                ic->x = x + column_center_offset;
                 ic->y = y;
                 
                 // Move to next slot vertically
@@ -1361,9 +1369,12 @@ void init_workbench(void) {
     signal(SIGCHLD, SIG_IGN);
     // Load default icons used for filetypes without sidecar .info
     load_deficons();
-    // Create desktop prime icons
-    add_prime_desktop_icons(get_desktop_canvas());
-    icon_cleanup(get_desktop_canvas()); redraw_canvas(get_desktop_canvas());
+    // Scan ~/Desktop directory for files and create icons for them
+    // This will also add the prime desktop icons (System/Home)
+    Canvas *desktop = get_desktop_canvas();
+    refresh_canvas_from_directory(desktop, NULL); // NULL means use ~/Desktop
+    icon_cleanup(desktop); // Arrange all icons properly
+    redraw_canvas(desktop);
     wb_initialized = true;
 }
 
