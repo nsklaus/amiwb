@@ -866,15 +866,35 @@ void compute_content_bounds(Canvas *canvas) {
         canvas->content_width = max(visible_w, max_text_w + padding);
         canvas->content_height = max_y + 10;
     } else {
-        // Icons view: use icon bounds
+        // Icons view: use icon bounds INCLUDING label width
         int max_x = 0, max_y = 0;
         for (int i = 0; i < icon_count; i++) {
             if (icon_array[i]->display_window == canvas->win) {
-                max_x = max(max_x, icon_array[i]->x + icon_array[i]->width);
-                max_y = max(max_y, icon_array[i]->y + icon_array[i]->height + 20);
+                FileIcon *icon = icon_array[i];
+                
+                // Calculate the actual right edge including the label
+                // Label is centered under icon, so it can extend beyond icon bounds
+                int icon_right = icon->x + icon->width;
+                
+                // Get label width if we have a label
+                int label_width = 0;
+                if (icon->label) {
+                    label_width = get_text_width(icon->label);
+                }
+                
+                // Label is centered, so calculate where its right edge would be
+                int label_center_x = icon->x + icon->width / 2;
+                int label_right = label_center_x + label_width / 2;
+                
+                // Use whichever extends further right
+                int actual_right = max(icon_right, label_right);
+                max_x = max(max_x, actual_right);
+                
+                max_y = max(max_y, icon->y + icon->height + 20);
             }
         }
-        canvas->content_width = max_x + 80;
+        // Add small padding for visual comfort, not 80 pixels
+        canvas->content_width = max_x + 20;
         canvas->content_height = max_y + 10;
     }
 }

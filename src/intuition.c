@@ -455,6 +455,7 @@ static bool init_render_context(void) {
     XVisualInfo vinfo; XMatchVisualInfo(display, screen, depth, TrueColor, &vinfo);
     render_context->fmt = XRenderFindVisualFormat(display, vinfo.visual);
     render_context->desk_img = None; render_context->wind_img = None;
+    render_context->desk_picture = None; render_context->wind_picture = None;
     // Cache frequently used default values to avoid repeated lookups
     render_context->default_screen = DefaultScreen(display);
     render_context->default_visual = DefaultVisual(display, render_context->default_screen);
