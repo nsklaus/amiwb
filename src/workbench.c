@@ -849,15 +849,34 @@ void clear_canvas_icons(Canvas *canvas) {
 
 void compute_content_bounds(Canvas *canvas) {
     if (!canvas) return;
-    int max_x = 0, max_y = 0;
-    for (int i = 0; i < icon_count; i++) {
-        if (icon_array[i]->display_window == canvas->win) {
-            max_x = max(max_x, icon_array[i]->x + icon_array[i]->width);
-            max_y = max(max_y, icon_array[i]->y + icon_array[i]->height + 20);
+    
+    // For Names view, calculate based on text width, not icon width
+    if (canvas->type == WINDOW && canvas->view_mode == VIEW_NAMES) {
+        int max_text_w = 0;
+        int max_y = 0;
+        for (int i = 0; i < icon_count; i++) {
+            if (icon_array[i]->display_window == canvas->win) {
+                int lw = get_text_width(icon_array[i]->label ? icon_array[i]->label : "");
+                if (lw > max_text_w) max_text_w = lw;
+                max_y = max(max_y, icon_array[i]->y + 24); // row height is 24 in Names view
+            }
         }
+        int padding = 16; // selection + text left pad (same as apply_view_layout)
+        int visible_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+        canvas->content_width = max(visible_w, max_text_w + padding);
+        canvas->content_height = max_y + 10;
+    } else {
+        // Icons view: use icon bounds
+        int max_x = 0, max_y = 0;
+        for (int i = 0; i < icon_count; i++) {
+            if (icon_array[i]->display_window == canvas->win) {
+                max_x = max(max_x, icon_array[i]->x + icon_array[i]->width);
+                max_y = max(max_y, icon_array[i]->y + icon_array[i]->height + 20);
+            }
+        }
+        canvas->content_width = max_x + 80;
+        canvas->content_height = max_y + 10;
     }
-    canvas->content_width = max_x + 80;
-    canvas->content_height = max_y + 10;
 }
 
 // Convenience: recompute bounds, scroll ranges, and redraw
