@@ -107,6 +107,17 @@ static void rename_file_ok_callback(const char *new_name) {
         free(icon->path);
         icon->path = strdup(new_path);
         
+        // Recalculate label width after rename
+        XftFont *font = get_font();
+        if (icon->label && font) {
+            RenderContext *ctx = get_render_context();
+            if (ctx) {
+                XGlyphInfo extents;
+                XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)icon->label, strlen(icon->label), &extents);
+                icon->label_width = extents.xOff;
+            }
+        }
+        
         // Refresh display WITHOUT full directory reload - just update this icon
         Canvas *canvas = find_canvas(icon->display_window);
         if (canvas && canvas->path) {
@@ -246,7 +257,7 @@ void init_menus(void) {
     win_submenu->shortcuts[0] = strdup("N");  // New Drawer - Super+N
     win_submenu->shortcuts[1] = strdup("P");  // Open Parent - Super+P
     win_submenu->shortcuts[2] = strdup("Q");  // Close - Super+Q
-    win_submenu->shortcuts[3] = NULL;  // Select Contents - no shortcut yet
+    win_submenu->shortcuts[3] = strdup("A");  // Select Contents - Super+A
     win_submenu->shortcuts[4] = strdup(";");  // Clean Up - Super+;
     win_submenu->shortcuts[5] = NULL;  // Show Hidden - no shortcut yet
     win_submenu->shortcuts[6] = NULL;  // View By .. - no shortcut yet
@@ -557,7 +568,7 @@ void cleanup_menus(void) {
 
     // Release font/color and destroy any menu canvases.
     if (font) XftFontClose(ctx->dpy, font);
-    if (text_color.pixel) XftColorFree(ctx->dpy, DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)), DefaultColormap(ctx->dpy, DefaultScreen(ctx->dpy)), &text_color);
+    if (text_color.pixel) XftColorFree(ctx->dpy, ctx->default_visual, ctx->default_colormap, &text_color);
     if (active_menu) {
         if (active_menu->canvas) {
             clear_press_target_if_matches(active_menu->canvas->win);  // Clear before destroy
@@ -827,7 +838,7 @@ static void maybe_open_nested_for_selection(void) {
         int ny = active_menu->canvas->y + sel * MENU_ITEM_HEIGHT;
         nested_menu = child;
         nested_menu->canvas = create_canvas(NULL, nx, ny, submenu_width,
-            nested_menu->item_count * MENU_ITEM_HEIGHT, MENU);
+            nested_menu->item_count * MENU_ITEM_HEIGHT + 8, MENU);
         if (nested_menu->canvas) {
             nested_menu->canvas->bg_color = (XRenderColor){0xFFFF,0xFFFF,0xFFFF,0xFFFF};
             nested_menu->selected_item = -1;

@@ -43,6 +43,10 @@
 #define MENU_ITEM_HEIGHT 20 	// Height of menu item.
 #define MENU_SHOW_DATE 1        // Show date/time on menubar (0=off, 1=on)
 
+// "%I:%M %p" = 02:00pm
+// "%a %e %b %H:%M" = Sun 17 Aug 02:00
+#define MENUBAR_DATE_FORMAT "%I:%M %p"  // Date/time format for menubar (see strftime)
+
 // Global shortcut symbol (Unicode 2237: ∷)
 #define SHORTCUT_SYMBOL "\xe2\x88\xb7"  // UTF-8 encoding of ∷ (U+2237)
 

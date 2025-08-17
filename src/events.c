@@ -28,6 +28,7 @@ extern void trigger_parent_action(void);
 extern void trigger_open_action(void);
 extern void trigger_copy_action(void);
 extern void trigger_delete_action(void);
+extern void trigger_select_contents_action(void);
 
 // Track the window that owns the current button interaction so motion and
 // release are routed consistently, even if X delivers them elsewhere.
@@ -508,6 +509,11 @@ void handle_key_press(XKeyEvent *event) {
             // Super+N: New Drawer
             if (keysym == XK_n || keysym == XK_N) {
                 trigger_new_drawer_action();
+                return;
+            }
+            // Super+A: Select Contents
+            if (keysym == XK_a || keysym == XK_A) {
+                trigger_select_contents_action();
                 return;
             }
         }

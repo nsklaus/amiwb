@@ -11,7 +11,9 @@ typedef struct {
     char *path;                 // File/directory path
     IconType type;              // Icon type: TOOL, DRAWER, ICONIFIED
     int x, y;                   // Position on canvas
-    int width, height;          // Icon dimensions
+    int width, height;          // Normal icon dimensions
+    int sel_width, sel_height;  // Selected icon dimensions (may differ from normal)
+    int label_width;            // Cached label text width for layout
     bool selected;              // Selection state
     Picture normal_picture;     // Normal state picture
     Picture selected_picture;   // Selected state picture

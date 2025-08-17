@@ -8,6 +8,7 @@
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/Xrandr.h>
+#include <X11/Xft/Xft.h>
 #include <stdbool.h>
 #include <Imlib2.h>
 
@@ -34,7 +35,11 @@ typedef struct {
     Pixmap wind_img;              // windows background pic 
     int desk_img_w, desk_img_h;
     int wind_img_w, wind_img_h;
-    
+    Picture desk_picture;         // Cached XRender Picture for desktop wallpaper
+    Picture wind_picture;         // Cached XRender Picture for window wallpaper
+    int default_screen;           // Cached DefaultScreen(dpy)
+    Visual *default_visual;       // Cached DefaultVisual(dpy, default_screen)
+    Colormap default_colormap;    // Cached DefaultColormap(dpy, default_screen)
 } RenderContext;
 
 // Canvas describes any drawable AmiWB surface:
@@ -66,6 +71,10 @@ typedef struct {
     bool fullscreen;                    // EWMH fullscreen active
     int saved_x, saved_y;               // Saved frame pos before fullscreen
     int saved_w, saved_h;               // Saved frame size before fullscreen
+    // Maximize toggle support
+    bool maximized;                     // True if window is currently maximized
+    int pre_max_x, pre_max_y;           // Saved position before maximize
+    int pre_max_w, pre_max_h;           // Saved dimensions before maximize
     bool close_armed;                    // Close gadget pressed (until release)
     bool iconify_armed;                  // Iconify gadget pressed (until release)
     bool maximize_armed;                  // Maximize gadget pressed (until release)
@@ -81,6 +90,17 @@ typedef struct {
     bool close_request_sent;             // True if WM_DELETE_WINDOW was sent (for single-click close)
     int consecutive_unmaps;              // Count of unmaps without remap (for zombie detection)
     bool disable_scrollbars;             // True to disable scrollbar rendering (for dialogs)
+    XftDraw *xft_draw;                    // Cached XftDraw for text rendering (avoids recreation)
+    // Pre-allocated Xft colors to avoid repeated allocation in render loops
+    XftColor xft_black;                   // Pre-allocated black color
+    XftColor xft_white;                   // Pre-allocated white color
+    XftColor xft_blue;                    // Pre-allocated blue (selection) color
+    XftColor xft_gray;                    // Pre-allocated gray color (for disabled items)
+    bool xft_colors_allocated;            // True if Xft colors have been allocated
+    // Damage tracking - only redraw changed regions instead of entire canvas
+    bool needs_redraw;                    // True if any part needs redrawing
+    int dirty_x, dirty_y;                 // Top-left corner of damaged region
+    int dirty_w, dirty_h;                 // Size of damaged region
 } Canvas;
 
 extern int randr_event_base;

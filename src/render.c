@@ -330,8 +330,11 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
     int base_y = (canvas->type == WINDOW) ? BORDER_HEIGHT_TOP : 0;
     int render_x = base_x + icon->x - canvas->scroll_x;
     int render_y = base_y + icon->y - canvas->scroll_y;
+    // Use appropriate dimensions based on selection state
+    int render_width = icon->selected ? icon->sel_width : icon->width;
+    int render_height = icon->selected ? icon->sel_height : icon->height;
     XRenderComposite(ctx->dpy, PictOpOver, icon->current_picture, None, canvas->canvas_render,
-                     0, 0, 0, 0, render_x, render_y, icon->width, icon->height);
+                     0, 0, 0, 0, render_x, render_y, render_width, render_height);
 
     if (!font) {
         fprintf(stderr, "render_icon: Font not loaded\n");
@@ -660,7 +663,7 @@ void redraw_canvas(Canvas *canvas) {
                 time(&now);
                 struct tm *tm_info = localtime(&now);
                 char datetime_buf[64];
-                strftime(datetime_buf, sizeof(datetime_buf), "%a %e %b %H:%M", tm_info);
+                strftime(datetime_buf, sizeof(datetime_buf), MENUBAR_DATE_FORMAT, tm_info);
                 
                 // Create Xft draw context for date/time
                 XftDraw *dt_draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer, canvas->visual, canvas->colormap);

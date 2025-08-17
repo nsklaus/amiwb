@@ -219,10 +219,6 @@ void resize_end(void) {
     if (g_resize.canvas->type == WINDOW || g_resize.canvas->type == DESKTOP) {
         // Only reorder icons if scrolling is needed (content doesn't fit)
         compute_max_scroll(g_resize.canvas);
-        if (g_resize.canvas->max_scroll_x > 0 || g_resize.canvas->max_scroll_y > 0) {
-            icon_cleanup(g_resize.canvas);
-            compute_max_scroll(g_resize.canvas);  // Recompute after cleanup
-        }
     }
     redraw_canvas(g_resize.canvas);
     

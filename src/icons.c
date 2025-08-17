@@ -201,21 +201,23 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
             return;
         }
 
-        if (sel_width != width || sel_height != height || sel_depth != depth) {
-            icon->selected_picture = None;
-        } else {
-            Pixmap selected_pixmap;
-            if (render_icon(ctx->dpy, &selected_pixmap, data + second_header_offset + ICON_HEADER_SIZE, sel_width, sel_height, sel_depth)) {
-                cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
-                free(data);
-                return;
-            }
-            icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
+        // Allow different sized selected images
+        Pixmap selected_pixmap;
+        if (render_icon(ctx->dpy, &selected_pixmap, data + second_header_offset + ICON_HEADER_SIZE, sel_width, sel_height, sel_depth)) {
+            cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
+            free(data);
+            return;
         }
+        icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
+        icon->sel_width = sel_width;
+        icon->sel_height = sel_height;
     } else {
         icon->selected_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);
         XRenderColor tint = {0x0000, 0x0000, 0xFFFF, 0x8000};
         XRenderFillRectangle(ctx->dpy, PictOpOver, icon->selected_picture, &tint, 0, 0, width, height);
+        // Selected dimensions same as normal when tinted
+        icon->sel_width = width;
+        icon->sel_height = height;
     }
 
     XFreePixmap(ctx->dpy, normal_pixmap);

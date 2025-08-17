@@ -454,7 +454,12 @@ static bool init_render_context(void) {
     render_context->dpy = display;
     XVisualInfo vinfo; XMatchVisualInfo(display, screen, depth, TrueColor, &vinfo);
     render_context->fmt = XRenderFindVisualFormat(display, vinfo.visual);
-    render_context->desk_img = None; render_context->wind_img = None; return true;
+    render_context->desk_img = None; render_context->wind_img = None;
+    // Cache frequently used default values to avoid repeated lookups
+    render_context->default_screen = DefaultScreen(display);
+    render_context->default_visual = DefaultVisual(display, render_context->default_screen);
+    render_context->default_colormap = DefaultColormap(display, render_context->default_screen);
+    return true;
 }
 
 static void apply_resize_and_redraw(Canvas *c, int nw, int nh) {
@@ -504,6 +509,12 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
     c->bg_color = GRAY;
     c->buffer_width = w; c->buffer_height = h;  // Initialize to canvas size, may be enlarged later
     c->resizing_interactive = false;
+    // Initialize damage tracking - mark entire canvas as needing initial draw
+    c->needs_redraw = true;
+    c->dirty_x = 0;
+    c->dirty_y = 0;
+    c->dirty_w = w;
+    c->dirty_h = h;
 }
 
 static Bool setup_visual_and_window(Canvas *c, CanvasType t,
@@ -564,11 +575,23 @@ static Bool init_render_pictures(Canvas *c, CanvasType t) {
     // This one is for our off-screen buffer where we compose the window content
     c->canvas_render = XRenderCreatePicture(ctx->dpy, c->canvas_buffer, fmt, 0, NULL); if (!c->canvas_render) return False;
     // Get the visual for the actual window (may differ from buffer visual)
-    Visual *wv = (t == DESKTOP) ? DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)) : c->visual;
+    Visual *wv = (t == DESKTOP) ? ctx->default_visual : c->visual;
     XRenderPictFormat *wfmt = XRenderFindVisualFormat(ctx->dpy, wv); if (!wfmt) return False;
     // Create Picture for the actual window - this is what gets displayed on screen
     // We composite from canvas_render (buffer) to window_render (screen)
-    c->window_render = XRenderCreatePicture(ctx->dpy, c->win, wfmt, 0, NULL); return c->window_render ? True : False;
+    c->window_render = XRenderCreatePicture(ctx->dpy, c->win, wfmt, 0, NULL); 
+    if (!c->window_render) return False;
+    
+    // Pre-allocate commonly used Xft colors to avoid repeated allocation in render loops
+    if (!c->xft_colors_allocated) {
+        XftColorAllocValue(ctx->dpy, c->visual, c->colormap, &BLACK, &c->xft_black);
+        XftColorAllocValue(ctx->dpy, c->visual, c->colormap, &WHITE, &c->xft_white);
+        XftColorAllocValue(ctx->dpy, c->visual, c->colormap, &BLUE, &c->xft_blue);
+        XftColorAllocValue(ctx->dpy, c->visual, c->colormap, &GRAY, &c->xft_gray);
+        c->xft_colors_allocated = true;
+    }
+    
+    return True;
 }
 
 static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
@@ -971,12 +994,28 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
     Canvas *canvas = manage_canvases(true, NULL);
     if (!canvas) return NULL;
     init_canvas_metadata(canvas, path, type, x, y, width, height);
+    // Initialize all button armed states
     canvas->close_armed = false;
+    canvas->iconify_armed = false;
+    canvas->maximize_armed = false;
+    canvas->lower_armed = false;
+    canvas->v_arrow_up_armed = false;
+    canvas->v_arrow_down_armed = false;
+    canvas->h_arrow_left_armed = false;
+    canvas->h_arrow_right_armed = false;
+    canvas->resize_armed = false;
+    // Initialize other states
     canvas->is_transient = false;
     canvas->transient_for = None;
     canvas->close_request_sent = false;
     canvas->consecutive_unmaps = 0;
     canvas->disable_scrollbars = false;
+    // Initialize maximize toggle support
+    canvas->maximized = false;
+    canvas->pre_max_x = 0;
+    canvas->pre_max_y = 0;
+    canvas->pre_max_w = 0;
+    canvas->pre_max_h = 0;
 
     if (!setup_visual_and_window(canvas, type, x, y, width, height)) {
         destroy_canvas(canvas);
@@ -1075,12 +1114,16 @@ static inline Bool begin_frame_drag(Canvas *c, XButtonEvent *e) {
     dragging_canvas = c;
     drag_start_x = e->x_root; drag_start_y = e->y_root;
     window_start_x = c->x; window_start_y = c->y;
+    // Clear maximized state when manually moving
+    c->maximized = false;
     return True;
 }
 
 static inline Bool begin_frame_resize(Canvas *c, XButtonEvent *e) {
     // Use the new clean resize module
     resize_begin(c, e->x_root, e->y_root);
+    // Clear maximized state when manually resizing
+    c->maximized = false;
     return True;
 }
 
@@ -1666,9 +1709,24 @@ void intuition_handle_button_release(XButtonEvent *event) {
             if (hit == HIT_MAXIMIZE) {
                 Canvas *desk = get_desktop_canvas();
                 if (desk) {
-                    int new_w = desk->width;
-                    int new_h = desk->height - (MENUBAR_HEIGHT - 1);
-                    move_and_resize_frame(canvas, 0, MENUBAR_HEIGHT, new_w, new_h);
+                    if (!canvas->maximized) {
+                        // Save current position and dimensions before maximizing
+                        canvas->pre_max_x = canvas->x;
+                        canvas->pre_max_y = canvas->y;
+                        canvas->pre_max_w = canvas->width;
+                        canvas->pre_max_h = canvas->height;
+                        
+                        // Maximize the window
+                        int new_w = desk->width;
+                        int new_h = desk->height - (MENUBAR_HEIGHT - 1);
+                        move_and_resize_frame(canvas, 0, MENUBAR_HEIGHT, new_w, new_h);
+                        canvas->maximized = true;
+                    } else {
+                        // Restore to saved dimensions
+                        move_and_resize_frame(canvas, canvas->pre_max_x, canvas->pre_max_y, 
+                                            canvas->pre_max_w, canvas->pre_max_h);
+                        canvas->maximized = false;
+                    }
                 }
                 return;
             }
@@ -1808,13 +1866,29 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
 
     Canvas *desktop = get_desktop_canvas();
     if (desktop) {
-        apply_resize_and_redraw(desktop, width, height);
-        render_load_wallpapers();
+        // Resize the X window first
+        XResizeWindow(display, desktop->win, width, height);
+        desktop->width = width;
+        desktop->height = height;
+        
+        // Reload wallpapers at the NEW screen size from the event
+        // render_load_wallpapers_at_size(width, height);  // TODO: implement
+        
+        // Now recreate surfaces and redraw with new wallpaper
+        render_recreate_canvas_surfaces(desktop);
+        // canvas_damage_all(desktop);  // TODO: implement
+        redraw_canvas(desktop);
     }
 
     Canvas *menubar_canvas = get_menubar();
     if (menubar_canvas) {
-        apply_resize_and_redraw(menubar_canvas, width, MENUBAR_HEIGHT);
+        // Resize and reposition menubar to span new width
+        XMoveResizeWindow(display, menubar_canvas->win, 0, 0, width, MENUBAR_HEIGHT);
+        menubar_canvas->width = width;
+        menubar_canvas->height = MENUBAR_HEIGHT;
+        render_recreate_canvas_surfaces(menubar_canvas);
+        // canvas_damage_all(menubar_canvas);  // TODO: implement
+        redraw_canvas(menubar_canvas);
     }
 
     XSync(display, False);
@@ -1859,6 +1933,21 @@ void destroy_canvas(Canvas *canvas) {
     
     // Skip X11 operations if shutting down or display is invalid
     if (!g_shutting_down && dpy) {
+        // Free pre-allocated Xft colors
+        if (canvas->xft_colors_allocated) {
+            XftColorFree(dpy, canvas->visual, canvas->colormap, &canvas->xft_black);
+            XftColorFree(dpy, canvas->visual, canvas->colormap, &canvas->xft_white);
+            XftColorFree(dpy, canvas->visual, canvas->colormap, &canvas->xft_blue);
+            XftColorFree(dpy, canvas->visual, canvas->colormap, &canvas->xft_gray);
+            canvas->xft_colors_allocated = false;
+        }
+        
+        // Free XftDraw if allocated
+        if (canvas->xft_draw) {
+            XftDrawDestroy(canvas->xft_draw);
+            canvas->xft_draw = NULL;
+        }
+        
         // Free render resources
         if (canvas->window_render != None) { XRenderFreePicture(dpy, canvas->window_render); canvas->window_render = None; }
         if (canvas->canvas_render != None) { XRenderFreePicture(dpy, canvas->canvas_render); canvas->canvas_render = None; }

@@ -28,4 +28,11 @@ void render_destroy_canvas_surfaces(Canvas *canvas);
 // Load or reload wallpapers (desktop/window) into RenderContext.
 // Uses screen size and config (DESKPICT/WINDPICT, tiling flags).
 void render_load_wallpapers(void);
+void render_load_wallpapers_at_size(int width, int height);  // Load at specific size
+
+// Damage tracking - mark regions that need redrawing
+void canvas_add_damage(Canvas *canvas, int x, int y, int w, int h);  // Add damage rectangle
+void canvas_damage_all(Canvas *canvas);                               // Mark entire canvas dirty
+void canvas_clear_damage(Canvas *canvas);                             // Clear damage after draw
+
 #endif
