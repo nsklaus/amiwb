@@ -496,7 +496,7 @@ static void calculate_layout(RenameDialog *dialog, int *input_x, int *input_y, i
     // Account for window borders in layout calculations
     int content_left = BORDER_WIDTH_LEFT;
     int content_top = BORDER_HEIGHT_TOP;
-    int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+    int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
     // int content_height = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;  // May be used later
     
     // Input box: starts after "New Name:" label, positioned below title with small gap
@@ -557,7 +557,7 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
     XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &text_color, &xft_text);
     
     if (dialog->dialog_type == DIALOG_DELETE_CONFIRM) {
-        int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+        int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
         int line_y = BORDER_HEIGHT_TOP + 30;
         int text_left_x = BORDER_WIDTH_LEFT + 15;  // Left margin inside inner window
         
@@ -599,7 +599,7 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
         
         XGlyphInfo title_ext;
         XftTextExtentsUtf8(dpy, font, (FcChar8*)title_text, strlen(title_text), &title_ext);
-        int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+        int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
         int title_x = BORDER_WIDTH_LEFT + (content_width - title_ext.xOff) / 2;
         int title_y = BORDER_HEIGHT_TOP + 20;
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, title_x, title_y, 
@@ -631,7 +631,7 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
         
         XGlyphInfo title_ext;
         XftTextExtentsUtf8(dpy, font, (FcChar8*)title_text, strlen(title_text), &title_ext);
-        int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+        int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
         int title_x = BORDER_WIDTH_LEFT + (content_width - title_ext.xOff) / 2;
         int title_y = BORDER_HEIGHT_TOP + 20;
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, title_x, title_y, 
@@ -893,7 +893,7 @@ void render_dialog_content(Canvas *canvas) {
         int border_thickness = 10;
         int content_left = BORDER_WIDTH_LEFT;
         int content_top = BORDER_HEIGHT_TOP;
-        int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+        int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
         // int content_height = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;  // May be used later
         
         // Bottom area: encompasses the buttons

@@ -1,16 +1,9 @@
 #include "inputfield.h"
+#include "../amiwb/config.h"
 #include <stdlib.h>
 #include <string.h>
 #include <X11/keysym.h>
 #include <X11/Xft/Xft.h>
-
-// AmigaOS colors
-static XRenderColor GRAY  = {0x9999, 0x9999, 0x9999, 0xffff};
-static XRenderColor WHITE = {0xffff, 0xffff, 0xffff, 0xffff};
-static XRenderColor BLACK = {0x0000, 0x0000, 0x0000, 0xffff};
-static XRenderColor DARK  = {0x5555, 0x5555, 0x5555, 0xffff};
-// BLUE will be used for cursor caret in rename dialog
-// static XRenderColor BLUE  = {0x5555, 0x8888, 0xffff, 0xffff};
 
 InputField* inputfield_create(int x, int y, int width, int height) {
     InputField *field = malloc(sizeof(InputField));
@@ -83,15 +76,30 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
     int w = field->width;
     int h = field->height;
     
-    // Draw inset box (input field appearance)
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &DARK, x, y, w, h);          // Outer border
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, x+1, y+1, 1, h-2);   // Left inner (black)
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, x+1, y+1, w-2, 1);   // Top inner (black)
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, x+w-2, y+1, 1, h-2); // Right inner (white)
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, x+1, y+h-2, w-2, 1); // Bottom inner (white)
+    // Draw inset box with proper Amiga-style borders
+    // Inner lines should never overwrite outer lines
+    XRenderColor white = WHITE;
+    XRenderColor black = BLACK;
+    XRenderColor gray = GRAY;
+    
+    // Outer white border (left and top)
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &white, x, y, 1, h);         // Left white
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &white, x, y, w, 1);         // Top white
+    
+    // Inner black border (left and top) - avoiding corners to prevent overlap
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &black, x+1, y+1, 1, h-2);   // Left black (skip corners)
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &black, x+1, y+1, w-2, 1);   // Top black (skip corners)
+    
+    // Inner white border (right and bottom) - positioned to not overlap
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &white, x+w-2, y+1, 1, h-2); // Right white (skip corners)
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &white, x+1, y+h-2, w-2, 1); // Bottom white (skip corners)
+    
+    // Outer black border (right and bottom)
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &black, x+w-1, y, 1, h);     // Right black
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &black, x, y+h-1, w, 1);     // Bottom black
     
     // Gray fill for input area
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, x+2, y+2, w-4, h-4);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &gray, x+2, y+2, w-4, h-4);
     
     // Draw text content with cursor if we have a font
     if (font && xft_draw && field->text[0] != '\0') {
@@ -122,7 +130,7 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
             }
             
             // Draw cursor line
-            XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
+            XRenderFillRectangle(dpy, PictOpSrc, dest, &black,
                                text_x, y + 3, 1, h - 6);
         }
         

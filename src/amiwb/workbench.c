@@ -1072,7 +1072,7 @@ void compute_content_bounds(Canvas *canvas) {
             }
         }
         int padding = 16; // selection + text left pad (same as apply_view_layout)
-        int visible_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+        int visible_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
         canvas->content_width = max(visible_w, max_text_w + padding);
         canvas->content_height = max_y + 10;
     } else {
@@ -1247,7 +1247,7 @@ void apply_view_layout(Canvas *canvas) {
         }
         free(list);
         int padding = 16; // selection + text left pad
-        int visible_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+        int visible_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
         canvas->content_width = max(visible_w, max_text_w + padding);
         canvas->content_height = y + 10;
     } else {

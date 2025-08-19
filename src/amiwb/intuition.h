@@ -188,4 +188,16 @@ void intuition_exit_fullscreen(Canvas *c);
 extern int dragging_canvas_index;   // -1 for none
 extern int resizing_canvas_index;   // -1 for none*/
 // Old resize global removed - now using clean resize.c module
+
+// Helper function to determine the actual right border width for a window
+static inline int get_right_border_width(const Canvas *canvas) {
+    // Workbench windows with scrollbars need full width for scrollbar
+    if (canvas->type == WINDOW && 
+        canvas->client_win == None && 
+        !canvas->disable_scrollbars) {
+        return BORDER_WIDTH_RIGHT;  // 20px for scrollbar
+    }
+    return 8;  // 8px for clients, dialogs, and windows without scrollbars
+}
+
 #endif

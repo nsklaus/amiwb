@@ -188,7 +188,8 @@ static inline void move_and_resize_frame(Canvas *c, int x, int y, int w, int h) 
 
 // Calculate frame window size needed to contain client area with borders
 static inline void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height) {
-    if (frame_width) *frame_width = max(1, client_width) + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+    // Client windows always get thin 8px right border
+    if (frame_width) *frame_width = max(1, client_width) + BORDER_WIDTH_LEFT + 8;
     if (frame_height) *frame_height = max(1, client_height) + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
 }
 
@@ -206,7 +207,7 @@ static inline void calculate_content_area_inside_frame(const Canvas *canvas, int
         return;
     }
     
-    if (content_width) *content_width = max(1, canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT);
+    if (content_width) *content_width = max(1, canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas));
     if (content_height) *content_height = max(1, canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);
 }
 
@@ -671,7 +672,7 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
         if (hints && XGetWMNormalHints(display, client, hints, &supplied_hints)) {
             // Apply minimum size constraints (add frame decorations to client minimums)
             if (hints->flags & PMinSize) {
-                frame->min_width = hints->min_width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+                frame->min_width = hints->min_width + BORDER_WIDTH_LEFT + 8;  // Client windows get 8px right border
                 frame->min_height = hints->min_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
             } else {
                 frame->min_width = 150;  // Default minimum
@@ -680,7 +681,7 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
             
             // Apply maximum size constraints (add frame decorations to client maximums)
             if (hints->flags & PMaxSize) {
-                frame->max_width = hints->max_width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT;
+                frame->max_width = hints->max_width + BORDER_WIDTH_LEFT + 8;  // Client windows get 8px right border
                 frame->max_height = hints->max_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
             } else {
                 frame->max_width = max_frame_width;

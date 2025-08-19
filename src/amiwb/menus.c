@@ -1780,7 +1780,7 @@ void trigger_execute_action(void) {
 // Public function to trigger requester (launch reqasl)
 void trigger_requester_action(void) {
     // Launch reqasl in the background
-    system("./reqasl &");
+    system("reqasl &");
 }
 
 // Public function to trigger rename action (called from menu or global shortcut)

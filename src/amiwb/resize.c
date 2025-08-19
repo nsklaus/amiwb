@@ -191,7 +191,7 @@ void resize_motion(int mouse_x, int mouse_y) {
     // Also resize client window if this is a client frame
     if (g_resize.canvas->client_win != None) {
         // Calculate client content area (same logic as content_rect() in intuition.c)
-        int client_width = max(1, new_width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT);
+        int client_width = max(1, new_width - BORDER_WIDTH_LEFT - get_right_border_width(g_resize.canvas));
         int client_height = max(1, new_height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);
         
         XWindowChanges client_changes = { .width = client_width, .height = client_height };

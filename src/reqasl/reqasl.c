@@ -1,6 +1,8 @@
 #include "reqasl.h"
+#include "../amiwb/config.h"
 #include "../toolkit/button.h"
 #include "../toolkit/inputfield.h"
+#include "../toolkit/listview.h"
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/extensions/Xrender.h>
@@ -16,12 +18,52 @@
 #include <unistd.h>
 #include <time.h>
 #include <pwd.h>
+#include <stdarg.h>
+
+// Initialize debug logging (create fresh log with timestamp)
+static void reqasl_log_init(void) {
+    const char *home = getenv("HOME");
+    if (!home) return;
+    
+    char log_path[512];
+    snprintf(log_path, sizeof(log_path), "%s/Sources/amiwb/reqasl.log", home);
+    
+    FILE *debug_file = fopen(log_path, "w");  // "w" to create fresh file
+    if (debug_file) {
+        time_t now = time(NULL);
+        char *timestamp = ctime(&now);
+        fprintf(debug_file, "=== ReqASL Debug Log ===\n");
+        fprintf(debug_file, "Started: %s", timestamp);  // ctime includes newline
+        fprintf(debug_file, "========================\n\n");
+        fclose(debug_file);
+    }
+}
+
+// Debug logging function
+static void reqasl_log(const char *format, ...) {
+    const char *home = getenv("HOME");
+    if (!home) return;
+    
+    char log_path[512];
+    snprintf(log_path, sizeof(log_path), "%s/Sources/amiwb/reqasl.log", home);
+    
+    FILE *debug_file = fopen(log_path, "a");
+    if (debug_file) {
+        va_list args;
+        va_start(args, format);
+        vfprintf(debug_file, format, args);
+        va_end(args);
+        fprintf(debug_file, "\n");
+        fflush(debug_file);
+        fclose(debug_file);
+    }
+}
 
 // Window dimensions
 #define REQASL_WIDTH 381
 #define REQASL_HEIGHT 405
-#define REQASL_MIN_WIDTH 381
-#define REQASL_MIN_HEIGHT 405
+#define REQASL_MIN_WIDTH 377  // Decreased by 4
+#define REQASL_MIN_HEIGHT 405  // Decreased to not overlap decoration
 #define BUTTON_WIDTH 80
 #define BUTTON_HEIGHT 25
 #define INPUT_HEIGHT 20
@@ -30,12 +72,7 @@
 #define SPACING 5
 #define LABEL_WIDTH 60
 
-// Colors
-static XRenderColor GRAY  = {0x9999, 0x9999, 0x9999, 0xffff};
-static XRenderColor WHITE = {0xffff, 0xffff, 0xffff, 0xffff};
-static XRenderColor BLACK = {0x0000, 0x0000, 0x0000, 0xffff};
-static XRenderColor BLUE  = {0x5555, 0x8888, 0xffff, 0xffff};
-static XRenderColor DARK  = {0x5555, 0x5555, 0x5555, 0xffff};
+// Note: Colors are now defined in config.h (BLACK, WHITE, GRAY, BLUE)
 
 // Forward declarations
 static void free_entries(ReqASL *req);
@@ -45,9 +82,15 @@ static void draw_list_view(ReqASL *req, Picture dest);
 static void handle_list_click(ReqASL *req, int y);
 static void handle_list_double_click(ReqASL *req, int y);
 static int compare_entries(const void *a, const void *b);
+static void listview_select_callback(int index, const char *text, void *user_data);
+static void listview_double_click_callback(int index, const char *text, void *user_data);
 
 ReqASL* reqasl_create(Display *display) {
     if (!display) return NULL;
+    
+    // Initialize debug logging with fresh file
+    reqasl_log_init();
+    reqasl_log("ReqASL starting...");
     
     ReqASL *req = calloc(1, sizeof(ReqASL));
     if (!req) return NULL;
@@ -59,7 +102,7 @@ ReqASL* reqasl_create(Display *display) {
     // Initialize font - use SourceCodePro-Bold.otf with FontConfig pattern
     FcPattern *pattern = FcPatternCreate();
     if (pattern) {
-        FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)"fonts/SourceCodePro-Bold.otf");
+        FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)"/usr/local/share/amiwb/fonts/SourceCodePro-Bold.otf");
         FcPatternAddDouble(pattern, FC_SIZE, 12.0);
         FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);
         FcPatternAddDouble(pattern, FC_DPI, 75);
@@ -85,10 +128,31 @@ ReqASL* reqasl_create(Display *display) {
     req->selected_index = -1;
     req->scroll_offset = 0;
     
+    // Initialize button press states
+    req->open_button_pressed = false;
+    req->volumes_button_pressed = false;
+    req->parent_button_pressed = false;
+    req->cancel_button_pressed = false;
+    
     // Calculate list area (at top, takes most space)
     req->list_y = MARGIN;
     req->list_height = req->height - MARGIN - (3 * INPUT_HEIGHT) - (4 * SPACING) - BUTTON_HEIGHT - MARGIN;
-    req->visible_items = req->list_height / LIST_ITEM_HEIGHT;
+    req->visible_items = req->list_height / LISTVIEW_ITEM_HEIGHT;
+    
+    // Create ListView widget
+    req->listview = listview_create(MARGIN, req->list_y, 
+                                   req->width - MARGIN * 2, 
+                                   req->list_height);
+    if (!req->listview) {
+        reqasl_log("ERROR: Failed to create listview");
+        // Continue anyway - old rendering will be fallback
+    } else {
+        // Set callbacks for ListView
+        listview_set_callbacks(req->listview, 
+                             listview_select_callback,
+                             listview_double_click_callback,
+                             req);
+    }
     
     // Initialize entries array
     req->entries = NULL;
@@ -115,10 +179,10 @@ ReqASL* reqasl_create(Display *display) {
     
     XSetWindowAttributes attrs;
     // Use gray background (approximate Amiga gray)
-    attrs.background_pixel = 0x999999;
+    attrs.background_pixel = 0xa0a0a2;  // GRAY from config.h
     attrs.border_pixel = BlackPixel(display, screen);
     attrs.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | 
-                       ButtonReleaseMask | StructureNotifyMask;
+                       ButtonReleaseMask | PointerMotionMask | StructureNotifyMask;
     
     req->window = XCreateWindow(display, root,
                                100, 100, req->width, req->height,
@@ -126,8 +190,30 @@ ReqASL* reqasl_create(Display *display) {
                                CWBackPixel | CWBorderPixel | CWEventMask,
                                &attrs);
     
-    // Set window title
-    XStoreName(display, req->window, "Select File");
+    // Set window title (multiple methods for compatibility with different WMs)
+    XStoreName(display, req->window, "reqasl");
+    
+    // Set WM_NAME property
+    XTextProperty window_name;
+    char *title = "reqasl";
+    XStringListToTextProperty(&title, 1, &window_name);
+    XSetWMName(display, req->window, &window_name);
+    XFree(window_name.value);
+    
+    // Also set _NET_WM_NAME for modern window managers
+    Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", False);
+    Atom utf8_string = XInternAtom(display, "UTF8_STRING", False);
+    XChangeProperty(display, req->window, net_wm_name, utf8_string, 8,
+                    PropModeReplace, (unsigned char *)"reqasl", 6);
+    
+    // Set WM_CLASS for window identification
+    XClassHint *class_hint = XAllocClassHint();
+    if (class_hint) {
+        class_hint->res_name = "reqasl";
+        class_hint->res_class = "ReqASL";
+        XSetClassHint(display, req->window, class_hint);
+        XFree(class_hint);
+    }
     
     // Set minimum and maximum window size hints to the same value
     // This effectively makes the window non-resizable
@@ -158,6 +244,10 @@ ReqASL* reqasl_create(Display *display) {
 
 void reqasl_destroy(ReqASL *req) {
     if (!req) return;
+    
+    if (req->listview) {
+        listview_destroy(req->listview);
+    }
     
     if (req->xft_draw) {
         XftDrawDestroy(req->xft_draw);
@@ -223,16 +313,25 @@ void reqasl_refresh(ReqASL *req) {
 void reqasl_navigate_to(ReqASL *req, const char *path) {
     if (!req || !path) return;
     
+    reqasl_log("reqasl_navigate_to: Navigating to path: %s", path);
+    
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        reqasl_log("reqasl_navigate_to: Path is valid directory");
         strncpy(req->current_path, path, sizeof(req->current_path) - 1);
         req->current_path[sizeof(req->current_path) - 1] = '\0';
         strncpy(req->drawer_text, req->current_path, sizeof(req->drawer_text) - 1);
         req->drawer_text[sizeof(req->drawer_text) - 1] = '\0';
         req->selected_index = -1;
         req->scroll_offset = 0;
-        scan_directory(req, path);
+        scan_directory(req, req->current_path);  // Use copied path, not original which may be freed
+        reqasl_log("reqasl_navigate_to: After scan_directory, entry_count=%d", req->entry_count);
+        if (req->listview) {
+            reqasl_log("reqasl_navigate_to: ListView item_count=%d", req->listview->item_count);
+        }
         draw_window(req);
+    } else {
+        reqasl_log("reqasl_navigate_to: Path is not valid or not a directory");
     }
 }
 
@@ -281,11 +380,23 @@ static int compare_entries(const void *a, const void *b) {
 static void scan_directory(ReqASL *req, const char *path) {
     if (!req || !path) return;
     
+    reqasl_log("scan_directory: Scanning path: %s", path);
+    
     // Free existing entries
     free_entries(req);
     
+    // Clear ListView
+    if (req->listview) {
+        reqasl_log("scan_directory: Clearing ListView");
+        listview_clear(req->listview);
+        reqasl_log("scan_directory: After clear, ListView item_count=%d", req->listview->item_count);
+    }
+    
     DIR *dir = opendir(path);
-    if (!dir) return;
+    if (!dir) {
+        reqasl_log("scan_directory: Failed to open directory: %s", path);
+        return;
+    }
     
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
@@ -338,22 +449,36 @@ static void scan_directory(ReqASL *req, const char *path) {
     
     closedir(dir);
     
+    reqasl_log("scan_directory: Found %d entries total", req->entry_count);
+    
     // Sort entries
     if (req->entry_count > 0) {
         qsort(req->entries, req->entry_count, sizeof(FileEntry*), compare_entries);
+        
+        // Add entries to ListView
+        if (req->listview) {
+            reqasl_log("scan_directory: Adding %d entries to ListView", req->entry_count);
+            for (int i = 0; i < req->entry_count; i++) {
+                FileEntry *fe = req->entries[i];
+                reqasl_log("scan_directory: Adding item %d: %s (dir=%d)", i, fe->name, fe->type == TYPE_DRAWER);
+                listview_add_item(req->listview, fe->name, 
+                                fe->type == TYPE_DRAWER, fe);
+            }
+            reqasl_log("scan_directory: ListView now has %d items", req->listview->item_count);
+            reqasl_log("scan_directory: ListView needs_redraw=%d", req->listview->needs_redraw);
+        } else {
+            reqasl_log("scan_directory: ERROR - ListView is NULL!");
+        }
+    } else {
+        reqasl_log("scan_directory: No entries found in directory");
     }
 }
 
 static void draw_window(ReqASL *req) {
     if (!req || !req->window) return;
     
-    // Debug output for window dimensions to file
-    FILE *debug_file = fopen("reqasl_dimensions.log", "a");
-    if (debug_file) {
-        fprintf(debug_file, "width=%d, height=%d\n", req->width, req->height);
-        fflush(debug_file);
-        fclose(debug_file);
-    }
+    // Debug output for window dimensions
+    reqasl_log("Window dimensions: width=%d, height=%d", req->width, req->height);
     
     // Get window drawable
     Pixmap pixmap = XCreatePixmap(req->display, req->window, 
@@ -364,57 +489,63 @@ static void draw_window(ReqASL *req) {
     XRenderPictFormat *fmt = XRenderFindStandardFormat(req->display, PictStandardRGB24);
     Picture dest = XRenderCreatePicture(req->display, pixmap, fmt, 0, NULL);
     
-    // Create or update XftDraw for text rendering
-    if (req->xft_draw) {
-        XftDrawDestroy(req->xft_draw);
-    }
-    req->xft_draw = XftDrawCreate(req->display, pixmap,
-                                  DefaultVisual(req->display, DefaultScreen(req->display)),
-                                  DefaultColormap(req->display, DefaultScreen(req->display)));
+    // Create temporary XftDraw for this pixmap
+    XftDraw *temp_xft_draw = XftDrawCreate(req->display, pixmap,
+                                           DefaultVisual(req->display, DefaultScreen(req->display)),
+                                           DefaultColormap(req->display, DefaultScreen(req->display)));
     
     // Clear background
-    XRenderFillRectangle(req->display, PictOpSrc, dest, &GRAY, 
+    XRenderColor gray = GRAY;
+    XRenderFillRectangle(req->display, PictOpSrc, dest, &gray, 
                         0, 0, req->width, req->height);
     
-    // Draw list view area with inset border
-    int list_x = MARGIN;
-    int list_w = req->width - MARGIN * 2;
-    
-    // Inset border for list
-    XRenderFillRectangle(req->display, PictOpSrc, dest, &DARK, 
-                        list_x, req->list_y, list_w, req->list_height);
-    XRenderFillRectangle(req->display, PictOpSrc, dest, &BLACK,
-                        list_x+1, req->list_y+1, 1, req->list_height-2);
-    XRenderFillRectangle(req->display, PictOpSrc, dest, &BLACK,
-                        list_x+1, req->list_y+1, list_w-2, 1);
-    XRenderFillRectangle(req->display, PictOpSrc, dest, &WHITE,
-                        list_x+list_w-2, req->list_y+1, 1, req->list_height-2);
-    XRenderFillRectangle(req->display, PictOpSrc, dest, &WHITE,
-                        list_x+1, req->list_y+req->list_height-2, list_w-2, 1);
-    
-    // Gray background for list content (Amiga style)
-    XRenderFillRectangle(req->display, PictOpSrc, dest, &GRAY,
-                        list_x+2, req->list_y+2, list_w-4, req->list_height-4);
-    
-    // Draw list items
-    draw_list_view(req, dest);
+    // Draw ListView widget if available, otherwise fallback to old rendering
+    if (req->listview) {
+        listview_draw(req->listview, req->display, dest, temp_xft_draw, req->font);
+    } else {
+        // Fallback to old manual rendering
+        int list_x = MARGIN;
+        int list_w = req->width - MARGIN * 2;
+        
+        // Inset border for list
+        XRenderColor black = BLACK;
+        XRenderColor white = WHITE;
+        XRenderColor dark = {0x5555, 0x5555, 0x5555, 0xffff};  // Dark gray for border
+        XRenderFillRectangle(req->display, PictOpSrc, dest, &dark, 
+                            list_x, req->list_y, list_w, req->list_height);
+        XRenderFillRectangle(req->display, PictOpSrc, dest, &black,
+                            list_x+1, req->list_y+1, 1, req->list_height-2);
+        XRenderFillRectangle(req->display, PictOpSrc, dest, &black,
+                            list_x+1, req->list_y+1, list_w-2, 1);
+        XRenderFillRectangle(req->display, PictOpSrc, dest, &white,
+                            list_x+list_w-2, req->list_y+1, 1, req->list_height-2);
+        XRenderFillRectangle(req->display, PictOpSrc, dest, &white,
+                            list_x+1, req->list_y+req->list_height-2, list_w-2, 1);
+        
+        // Gray background for list content (Amiga style)
+        XRenderFillRectangle(req->display, PictOpSrc, dest, &gray,
+                            list_x+2, req->list_y+2, list_w-4, req->list_height-4);
+        
+        // Draw list items
+        draw_list_view(req, dest);
+    }
     
     // Draw input field labels if we have font
-    if (req->font && req->xft_draw) {
+    if (req->font && temp_xft_draw) {
         XftColor label_color;
-        XRenderColor black = {0x0000, 0x0000, 0x0000, 0xffff};
+        XRenderColor black = BLACK;
         XftColorAllocValue(req->display, DefaultVisual(req->display, DefaultScreen(req->display)),
                           DefaultColormap(req->display, DefaultScreen(req->display)),
                           &black, &label_color);
         
-        // Calculate label positions (right-justified)
-        int label_x_right = MARGIN + LABEL_WIDTH - 5;
+        // Calculate label positions (right-justified, moved 5px to right to align with listview)
+        int label_x_right = MARGIN + LABEL_WIDTH;
         
         // Pattern label
         int pattern_y = req->height - MARGIN - BUTTON_HEIGHT - SPACING - (3 * INPUT_HEIGHT) - (2 * SPACING);
         XGlyphInfo extents;
         XftTextExtentsUtf8(req->display, req->font, (FcChar8*)"Pattern:", 8, &extents);
-        XftDrawStringUtf8(req->xft_draw, &label_color, req->font,
+        XftDrawStringUtf8(temp_xft_draw, &label_color, req->font,
                          label_x_right - extents.width,
                          pattern_y + (INPUT_HEIGHT + req->font->ascent - req->font->descent) / 2,
                          (FcChar8*)"Pattern:", 8);
@@ -422,7 +553,7 @@ static void draw_window(ReqASL *req) {
         // Drawer label
         int drawer_y = req->height - MARGIN - BUTTON_HEIGHT - SPACING - (2 * INPUT_HEIGHT) - SPACING;
         XftTextExtentsUtf8(req->display, req->font, (FcChar8*)"Drawer:", 7, &extents);
-        XftDrawStringUtf8(req->xft_draw, &label_color, req->font,
+        XftDrawStringUtf8(temp_xft_draw, &label_color, req->font,
                          label_x_right - extents.width,
                          drawer_y + (INPUT_HEIGHT + req->font->ascent - req->font->descent) / 2,
                          (FcChar8*)"Drawer:", 7);
@@ -430,7 +561,7 @@ static void draw_window(ReqASL *req) {
         // File label
         int file_y = req->height - MARGIN - BUTTON_HEIGHT - SPACING - INPUT_HEIGHT;
         XftTextExtentsUtf8(req->display, req->font, (FcChar8*)"File:", 5, &extents);
-        XftDrawStringUtf8(req->xft_draw, &label_color, req->font,
+        XftDrawStringUtf8(temp_xft_draw, &label_color, req->font,
                          label_x_right - extents.width,
                          file_y + (INPUT_HEIGHT + req->font->ascent - req->font->descent) / 2,
                          (FcChar8*)"File:", 5);
@@ -445,69 +576,84 @@ static void draw_window(ReqASL *req) {
     // File field (bottom-most input)
     input_y -= INPUT_HEIGHT;
     InputField file_field = {
-        .x = MARGIN + LABEL_WIDTH, .y = input_y,
-        .width = req->width - MARGIN * 2 - LABEL_WIDTH, .height = INPUT_HEIGHT
+        .x = MARGIN + LABEL_WIDTH + 5, .y = input_y,
+        .width = req->width - MARGIN * 2 - LABEL_WIDTH - 5, .height = INPUT_HEIGHT
     };
     strncpy(file_field.text, req->file_text, INPUTFIELD_MAX_LENGTH);
     file_field.text[INPUTFIELD_MAX_LENGTH] = '\0';
-    inputfield_draw(&file_field, dest, req->display, req->xft_draw, req->font);
+    inputfield_draw(&file_field, dest, req->display, temp_xft_draw, req->font);
     
     // Drawer field (middle input)
     input_y -= (INPUT_HEIGHT + SPACING);
     InputField drawer_field = {
-        .x = MARGIN + LABEL_WIDTH, .y = input_y,
-        .width = req->width - MARGIN * 2 - LABEL_WIDTH, .height = INPUT_HEIGHT
+        .x = MARGIN + LABEL_WIDTH + 5, .y = input_y,
+        .width = req->width - MARGIN * 2 - LABEL_WIDTH - 5, .height = INPUT_HEIGHT
     };
     strncpy(drawer_field.text, req->drawer_text, INPUTFIELD_MAX_LENGTH);
     drawer_field.text[INPUTFIELD_MAX_LENGTH] = '\0';
-    inputfield_draw(&drawer_field, dest, req->display, req->xft_draw, req->font);
+    inputfield_draw(&drawer_field, dest, req->display, temp_xft_draw, req->font);
     
     // Pattern field (top-most input)
     input_y -= (INPUT_HEIGHT + SPACING);
     InputField pattern_field = {
-        .x = MARGIN + LABEL_WIDTH, .y = input_y,
-        .width = req->width - MARGIN * 2 - LABEL_WIDTH, .height = INPUT_HEIGHT
+        .x = MARGIN + LABEL_WIDTH + 5, .y = input_y,
+        .width = req->width - MARGIN * 2 - LABEL_WIDTH - 5, .height = INPUT_HEIGHT
     };
     strncpy(pattern_field.text, req->pattern_text, INPUTFIELD_MAX_LENGTH);
     pattern_field.text[INPUTFIELD_MAX_LENGTH] = '\0';
-    inputfield_draw(&pattern_field, dest, req->display, req->xft_draw, req->font);
+    inputfield_draw(&pattern_field, dest, req->display, temp_xft_draw, req->font);
     
-    // Draw buttons with dynamic spacing
-    int button_y = req->height - MARGIN - BUTTON_HEIGHT;
-    int total_button_width = 4 * BUTTON_WIDTH;
-    int available_width = req->width - MARGIN * 2;
-    int spacing = (available_width - total_button_width) / 3; // Space between buttons
+    // Draw buttons with dynamic spacing (moved down by 2 pixels)
+    int button_y = req->height - MARGIN - BUTTON_HEIGHT + 2;
+    
+    // Calculate button positions to spread evenly
+    // Left button stays at left, right button stays at right
+    // Middle buttons spread evenly in remaining space
+    int open_x = MARGIN;
+    int cancel_x = req->width - MARGIN - BUTTON_WIDTH;
+    
+    // Calculate spacing for middle buttons
+    int middle_space = cancel_x - (open_x + BUTTON_WIDTH);
+    int middle_buttons_width = 2 * BUTTON_WIDTH;  // Volumes and Parent
+    int middle_spacing = (middle_space - middle_buttons_width) / 3;  // 3 gaps: after Open, between middle, before Cancel
     
     // Ensure minimum spacing
-    if (spacing < SPACING) spacing = SPACING;
+    if (middle_spacing < SPACING) middle_spacing = SPACING;
+    
+    int volumes_x = open_x + BUTTON_WIDTH + middle_spacing;
+    int parent_x = volumes_x + BUTTON_WIDTH + middle_spacing;
     
     Button open_btn = {
-        .x = MARGIN, .y = button_y,
+        .x = open_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
-        .label = "Open"
+        .label = "Open",
+        .pressed = req->open_button_pressed
     };
-    button_draw(&open_btn, dest, req->display, req->xft_draw, req->font);
+    button_draw(&open_btn, dest, req->display, temp_xft_draw, req->font);
     
     Button volumes_btn = {
-        .x = MARGIN + BUTTON_WIDTH + spacing, .y = button_y,
+        .x = volumes_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
-        .label = "Volumes"
+        .label = "Volumes",
+        .pressed = req->volumes_button_pressed
     };
-    button_draw(&volumes_btn, dest, req->display, req->xft_draw, req->font);
+    button_draw(&volumes_btn, dest, req->display, temp_xft_draw, req->font);
     
     Button parent_btn = {
-        .x = MARGIN + 2 * (BUTTON_WIDTH + spacing), .y = button_y,
+        .x = parent_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
-        .label = "Parent"
+        .label = "Parent",
+        .pressed = req->parent_button_pressed
     };
-    button_draw(&parent_btn, dest, req->display, req->xft_draw, req->font);
+    button_draw(&parent_btn, dest, req->display, temp_xft_draw, req->font);
     
     Button cancel_btn = {
-        .x = req->width - MARGIN - BUTTON_WIDTH, .y = button_y,
+        .x = cancel_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
-        .label = "Cancel"
+        .label = "Cancel",
+        .pressed = req->cancel_button_pressed
     };
-    button_draw(&cancel_btn, dest, req->display, req->xft_draw, req->font);
+    button_draw(&cancel_btn, dest, req->display, temp_xft_draw, req->font);
     
     // Copy to window
     GC gc = XCreateGC(req->display, req->window, 0, NULL);
@@ -516,6 +662,7 @@ static void draw_window(ReqASL *req) {
     
     // Cleanup
     XFreeGC(req->display, gc);
+    XftDrawDestroy(temp_xft_draw);
     XRenderFreePicture(req->display, dest);
     XFreePixmap(req->display, pixmap);
     XFlush(req->display);
@@ -531,8 +678,8 @@ static void draw_list_view(ReqASL *req, Picture dest) {
     // Set up text color if we have font
     XftColor text_color, white_color;
     if (req->font && req->xft_draw) {
-        XRenderColor black = {0x0000, 0x0000, 0x0000, 0xffff};
-        XRenderColor white = {0xffff, 0xffff, 0xffff, 0xffff};
+        XRenderColor black = BLACK;
+        XRenderColor white = WHITE;
         XftColorAllocValue(req->display, DefaultVisual(req->display, DefaultScreen(req->display)),
                           DefaultColormap(req->display, DefaultScreen(req->display)),
                           &black, &text_color);
@@ -550,29 +697,28 @@ static void draw_list_view(ReqASL *req, Picture dest) {
         
         // Highlight selected item
         if (idx == req->selected_index) {
-            XRenderFillRectangle(req->display, PictOpSrc, dest, &BLUE,
+            XRenderColor blue = BLUE;
+            XRenderFillRectangle(req->display, PictOpSrc, dest, &blue,
                                list_x, item_y, list_w, LIST_ITEM_HEIGHT);
         }
         
-        // Draw folder/file icon placeholder
-        if (entry->type == TYPE_DRAWER) {
-            // Draw folder indicator (small rectangle)
-            XRenderColor folder_color = {0x8888, 0x6666, 0x3333, 0xffff};
-            XRenderFillRectangle(req->display, PictOpSrc, dest, &folder_color,
-                               list_x + 2, item_y + 2, 10, 10);
-        } else {
-            // Draw file indicator (smaller rectangle)
-            XRenderFillRectangle(req->display, PictOpSrc, dest, &DARK,
-                               list_x + 3, item_y + 3, 8, 8);
-        }
-        
-        // Draw item name if we have font
+        // Draw item name if we have font (no icon squares)
         if (req->font && req->xft_draw && entry->name) {
-            int text_x = list_x + 16;  // After icon
+            int text_x = list_x + 4;  // Small left padding
             int text_y = item_y + (LIST_ITEM_HEIGHT + req->font->ascent - req->font->descent) / 2;
             
-            // Use white text on blue background for selected items
-            XftColor *color = (idx == req->selected_index) ? &white_color : &text_color;
+            // Choose text color based on type and selection:
+            // - Selected items always use white
+            // - Directories use white (unless selected)
+            // - Files use black (unless selected)
+            XftColor *color;
+            if (idx == req->selected_index) {
+                color = &white_color;  // White text on blue background
+            } else if (entry->type == TYPE_DRAWER) {
+                color = &white_color;  // White text for directories
+            } else {
+                color = &text_color;   // Black text for files
+            }
             
             XftDrawStringUtf8(req->xft_draw, color, req->font,
                              text_x, text_y,
@@ -643,74 +789,181 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
             return true;
             
         case ButtonPress:
+            // Handle scroll wheel
+            if (event->xbutton.button == Button4 || event->xbutton.button == Button5) {
+                if (req->listview) {
+                    int direction = (event->xbutton.button == Button4) ? -1 : 1;
+                    if (listview_handle_scroll(req->listview, direction)) {
+                        draw_window(req);
+                        return true;
+                    }
+                }
+            }
+            
             if (event->xbutton.button == Button1) {
                 int x = event->xbutton.x;
                 int y = event->xbutton.y;
                 
-                // Check if click is in list area
-                if (x >= MARGIN && x < req->width - MARGIN &&
-                    y >= req->list_y && y < req->list_y + req->list_height) {
-                    
-                    // Check for double-click (simplified - would need timing)
-                    static Time last_click = 0;
-                    if (event->xbutton.time - last_click < 500) {
-                        handle_list_double_click(req, y);
-                    } else {
-                        handle_list_click(req, y);
+                // Handle ListView click if available
+                if (req->listview) {
+                    if (listview_handle_click(req->listview, x, y)) {
+                        draw_window(req);
+                        return true;
                     }
-                    last_click = event->xbutton.time;
-                    return true;
+                } else {
+                    // Fallback to old list handling
+                    if (x >= MARGIN && x < req->width - MARGIN &&
+                        y >= req->list_y && y < req->list_y + req->list_height) {
+                        
+                        // Check for double-click (simplified - would need timing)
+                        static Time last_click = 0;
+                        if (event->xbutton.time - last_click < 500) {
+                            handle_list_double_click(req, y);
+                        } else {
+                            handle_list_click(req, y);
+                        }
+                        last_click = event->xbutton.time;
+                        return true;
+                    }
                 }
                 
-                // Check buttons with dynamic spacing
+                // Check if pressing a button and set pressed state
                 int button_y = req->height - MARGIN - BUTTON_HEIGHT;
                 int total_button_width = 4 * BUTTON_WIDTH;
-                int available_width = req->width - MARGIN * 2;
-                int spacing = (available_width - total_button_width) / 3;
-                if (spacing < SPACING) spacing = SPACING;
+                int available_space = req->width - 2 * MARGIN;
+                int total_spacing = available_space - total_button_width;
+                int middle_spacing = total_spacing / 3;
                 
-                // Open button
-                if (x >= MARGIN && x < MARGIN + BUTTON_WIDTH &&
-                    y >= button_y && y < button_y + BUTTON_HEIGHT) {
-                    if (req->on_open) {
-                        char full_path[2048];
-                        if (req->file_text[0]) {
-                            snprintf(full_path, sizeof(full_path), "%s/%s",
-                                   req->current_path, req->file_text);
-                        } else {
-                            strcpy(full_path, req->current_path);
+                int open_x = MARGIN;
+                int volumes_x = open_x + BUTTON_WIDTH + middle_spacing;
+                int parent_x = volumes_x + BUTTON_WIDTH + middle_spacing;
+                int cancel_x = req->width - MARGIN - BUTTON_WIDTH;
+                
+                if (y >= button_y && y < button_y + BUTTON_HEIGHT) {
+                    if (x >= open_x && x < open_x + BUTTON_WIDTH) {
+                        req->open_button_pressed = true;
+                        draw_window(req);
+                        return true;
+                    } else if (x >= volumes_x && x < volumes_x + BUTTON_WIDTH) {
+                        req->volumes_button_pressed = true;
+                        draw_window(req);
+                        return true;
+                    } else if (x >= parent_x && x < parent_x + BUTTON_WIDTH) {
+                        req->parent_button_pressed = true;
+                        draw_window(req);
+                        return true;
+                    } else if (x >= cancel_x && x < cancel_x + BUTTON_WIDTH) {
+                        req->cancel_button_pressed = true;
+                        draw_window(req);
+                        return true;
+                    }
+                }
+            }
+            break;
+            
+        case MotionNotify:
+            // Handle scrollbar dragging in ListView
+            if (req->listview) {
+                if (listview_handle_motion(req->listview, event->xmotion.x, event->xmotion.y)) {
+                    draw_window(req);
+                    return true;
+                }
+            }
+            break;
+            
+        case ButtonRelease:
+            // Handle scrollbar release in ListView
+            if (req->listview) {
+                if (listview_handle_release(req->listview)) {
+                    draw_window(req);
+                    return true;
+                }
+            }
+            
+            // Handle button clicks on release
+            if (event->xbutton.button == Button1) {
+                int x = event->xbutton.x;
+                int y = event->xbutton.y;
+                
+                // Calculate button positions (same as in ButtonPress)
+                int button_y = req->height - MARGIN - BUTTON_HEIGHT;
+                int total_button_width = 4 * BUTTON_WIDTH;
+                int available_space = req->width - 2 * MARGIN;
+                int total_spacing = available_space - total_button_width;
+                int middle_spacing = total_spacing / 3;
+                
+                int open_x = MARGIN;
+                int volumes_x = open_x + BUTTON_WIDTH + middle_spacing;
+                int parent_x = volumes_x + BUTTON_WIDTH + middle_spacing;
+                int cancel_x = req->width - MARGIN - BUTTON_WIDTH;
+                
+                bool need_redraw = false;
+                
+                // Check Open button
+                if (req->open_button_pressed) {
+                    req->open_button_pressed = false;
+                    need_redraw = true;
+                    
+                    if (x >= open_x && x < open_x + BUTTON_WIDTH &&
+                        y >= button_y && y < button_y + BUTTON_HEIGHT) {
+                        if (req->on_open) {
+                            char full_path[2048];
+                            if (req->file_text[0]) {
+                                snprintf(full_path, sizeof(full_path), "%s/%s",
+                                       req->current_path, req->file_text);
+                            } else {
+                                strcpy(full_path, req->current_path);
+                            }
+                            req->on_open(full_path);
                         }
-                        req->on_open(full_path);
+                        reqasl_hide(req);
+                        return true;
                     }
-                    reqasl_hide(req);
-                    return true;
                 }
                 
-                // Volumes button
-                int volumes_x = MARGIN + BUTTON_WIDTH + spacing;
-                if (x >= volumes_x && x < volumes_x + BUTTON_WIDTH &&
-                    y >= button_y && y < button_y + BUTTON_HEIGHT) {
-                    // TODO: Implement volumes functionality
-                    return true;
-                }
-                
-                // Parent button
-                int parent_x = MARGIN + 2 * (BUTTON_WIDTH + spacing);
-                if (x >= parent_x && x < parent_x + BUTTON_WIDTH &&
-                    y >= button_y && y < button_y + BUTTON_HEIGHT) {
-                    reqasl_navigate_parent(req);
-                    return true;
-                }
-                
-                // Cancel button
-                if (x >= req->width - MARGIN - BUTTON_WIDTH &&
-                    x < req->width - MARGIN &&
-                    y >= button_y && y < button_y + BUTTON_HEIGHT) {
-                    if (req->on_cancel) {
-                        req->on_cancel();
+                // Check Volumes button
+                if (req->volumes_button_pressed) {
+                    req->volumes_button_pressed = false;
+                    need_redraw = true;
+                    
+                    if (x >= volumes_x && x < volumes_x + BUTTON_WIDTH &&
+                        y >= button_y && y < button_y + BUTTON_HEIGHT) {
+                        // TODO: Implement volumes functionality
+                        draw_window(req);
+                        return true;
                     }
-                    reqasl_hide(req);
-                    return true;
+                }
+                
+                // Check Parent button
+                if (req->parent_button_pressed) {
+                    req->parent_button_pressed = false;
+                    need_redraw = true;
+                    
+                    if (x >= parent_x && x < parent_x + BUTTON_WIDTH &&
+                        y >= button_y && y < button_y + BUTTON_HEIGHT) {
+                        reqasl_navigate_parent(req);
+                        return true;
+                    }
+                }
+                
+                // Check Cancel button
+                if (req->cancel_button_pressed) {
+                    req->cancel_button_pressed = false;
+                    need_redraw = true;
+                    
+                    if (x >= cancel_x && x < cancel_x + BUTTON_WIDTH &&
+                        y >= button_y && y < button_y + BUTTON_HEIGHT) {
+                        if (req->on_cancel) {
+                            req->on_cancel();
+                        }
+                        reqasl_hide(req);
+                        return true;
+                    }
+                }
+                
+                // Redraw if any button was released (to clear pressed state)
+                if (need_redraw) {
+                    draw_window(req);
                 }
             }
             break;
@@ -739,13 +992,8 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
         case ConfigureRequest:
             // Handle resize requests - enforce minimum size
             {
-                FILE *debug_file = fopen("reqasl_dimensions.log", "a");
-                if (debug_file) {
-                    fprintf(debug_file, "ConfigureRequest: width=%d, height=%d\n", 
-                            event->xconfigurerequest.width, event->xconfigurerequest.height);
-                    fflush(debug_file);
-                    fclose(debug_file);
-                }
+                reqasl_log("ConfigureRequest: width=%d, height=%d", 
+                          event->xconfigurerequest.width, event->xconfigurerequest.height);
                 
                 XWindowChanges changes;
                 changes.x = event->xconfigurerequest.x;
@@ -770,35 +1018,32 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
             return true;
             
         case ConfigureNotify:
-            // Handle window configuration change (position, size)
-            // Since we've set min and max to same value, size shouldn't change
+            // Handle window resize
             {
-                int event_width = event->xconfigure.width;
-                int event_height = event->xconfigure.height;
+                int new_width = event->xconfigure.width;
+                int new_height = event->xconfigure.height;
                 
-                // If somehow the size changed (non-compliant WM), force it back
-                if (event_width != REQASL_MIN_WIDTH || event_height != REQASL_MIN_HEIGHT) {
-                    // Log unexpected resize
-                    FILE *debug_file = fopen("reqasl_dimensions.log", "a");
-                    if (debug_file) {
-                        fprintf(debug_file, "ConfigureNotify: Unexpected size change to width=%d, height=%d. Forcing back to %dx%d\n", 
-                                event_width, event_height, REQASL_MIN_WIDTH, REQASL_MIN_HEIGHT);
-                        fclose(debug_file);
-                    }
+                // Check if size actually changed
+                if (new_width != req->width || new_height != req->height) {
+                    reqasl_log("ConfigureNotify: Window resized to %dx%d", new_width, new_height);
                     
-                    // Force the window to fixed size
-                    XResizeWindow(req->display, req->window, REQASL_MIN_WIDTH, REQASL_MIN_HEIGHT);
-                    XSync(req->display, False);
+                    // Update internal dimensions
+                    req->width = new_width;
+                    req->height = new_height;
                     
-                    // Update internal state to fixed dimensions
-                    req->width = REQASL_MIN_WIDTH;
-                    req->height = REQASL_MIN_HEIGHT;
-                    
-                    // Recalculate list area (though it shouldn't change)
+                    // Recalculate list area height (grows with window)
                     req->list_height = req->height - MARGIN - (3 * INPUT_HEIGHT) - 
                                       (4 * SPACING) - BUTTON_HEIGHT - MARGIN;
                     req->visible_items = req->list_height / LIST_ITEM_HEIGHT;
                     
+                    // Update ListView dimensions
+                    if (req->listview) {
+                        req->listview->width = req->width - 2 * MARGIN;
+                        req->listview->height = req->list_height;
+                        listview_update_scrollbar(req->listview);
+                    }
+                    
+                    // Redraw everything with new layout
                     draw_window(req);
                 }
             }
@@ -818,4 +1063,38 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
     }
     
     return false;
+}
+
+static void listview_select_callback(int index, const char *text, void *user_data) {
+    ReqASL *req = (ReqASL *)user_data;
+    if (!req || index < 0 || index >= req->entry_count) return;
+    
+    req->selected_index = index;
+    FileEntry *entry = req->entries[index];
+    
+    // Update file field with selection if it's a file
+    if (entry->type == TYPE_FILE) {
+        strcpy(req->file_text, entry->name);
+    }
+    
+    // Redraw to update input fields
+    draw_window(req);
+}
+
+static void listview_double_click_callback(int index, const char *text, void *user_data) {
+    ReqASL *req = (ReqASL *)user_data;
+    if (!req || index < 0 || index >= req->entry_count) return;
+    
+    FileEntry *entry = req->entries[index];
+    
+    if (entry->type == TYPE_DRAWER) {
+        // Navigate into directory
+        reqasl_navigate_to(req, entry->path);
+    } else {
+        // Open file
+        if (req->on_open) {
+            req->on_open(entry->path);
+        }
+        reqasl_hide(req);
+    }
 }

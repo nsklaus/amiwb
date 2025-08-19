@@ -5,6 +5,9 @@
 #include <X11/Xft/Xft.h>
 #include <stdbool.h>
 
+// Forward declaration
+typedef struct ListView ListView;
+
 // File types (matching workbench)
 typedef enum {
     TYPE_FILE = 0,
@@ -55,6 +58,15 @@ typedef struct ReqASL {
     // Window dimensions
     int width, height;
     int list_y, list_height;
+    
+    // ListView widget
+    ListView *listview;
+    
+    // Button press states
+    bool open_button_pressed;
+    bool volumes_button_pressed;
+    bool parent_button_pressed;
+    bool cancel_button_pressed;
     
 } ReqASL;
 
