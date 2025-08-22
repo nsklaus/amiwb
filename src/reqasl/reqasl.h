@@ -5,8 +5,9 @@
 #include <X11/Xft/Xft.h>
 #include <stdbool.h>
 
-// Forward declaration
+// Forward declarations
 typedef struct ListView ListView;
+typedef struct InputField InputField;
 
 // File types (matching workbench)
 typedef enum {
@@ -45,6 +46,11 @@ typedef struct ReqASL {
     char pattern_text[256];
     char drawer_text[1024];
     char file_text[256];
+    
+    // InputField widgets for text editing
+    InputField *pattern_field;
+    InputField *drawer_field;
+    InputField *file_field;
     
     // Dialog state
     bool is_open;

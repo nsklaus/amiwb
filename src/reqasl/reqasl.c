@@ -154,6 +154,28 @@ ReqASL* reqasl_create(Display *display) {
                              req);
     }
     
+    // Create InputField widgets for text editing
+    // Calculate positions (will be updated in draw_window for dynamic resizing)
+    int input_y = req->list_y + req->list_height + SPACING;
+    
+    req->pattern_field = inputfield_create(MARGIN + LABEL_WIDTH, input_y, 
+                                          req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT);
+    if (req->pattern_field) {
+        inputfield_set_text(req->pattern_field, "");
+    }
+    
+    req->drawer_field = inputfield_create(MARGIN + LABEL_WIDTH, input_y + INPUT_HEIGHT + SPACING,
+                                         req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT);
+    if (req->drawer_field) {
+        inputfield_set_text(req->drawer_field, "");
+    }
+    
+    req->file_field = inputfield_create(MARGIN + LABEL_WIDTH, input_y + 2 * (INPUT_HEIGHT + SPACING),
+                                       req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT);
+    if (req->file_field) {
+        inputfield_set_text(req->file_field, "");
+    }
+    
     // Initialize entries array
     req->entries = NULL;
     req->entry_count = 0;
@@ -172,6 +194,11 @@ ReqASL* reqasl_create(Display *display) {
     req->drawer_text[sizeof(req->drawer_text) - 1] = '\0';
     req->pattern_text[0] = '\0';
     req->file_text[0] = '\0';
+    
+    // Sync InputFields with text buffers
+    if (req->drawer_field) {
+        inputfield_set_text(req->drawer_field, req->drawer_text);
+    }
     
     // Create window
     int screen = DefaultScreen(display);
@@ -247,6 +274,17 @@ void reqasl_destroy(ReqASL *req) {
     
     if (req->listview) {
         listview_destroy(req->listview);
+    }
+    
+    // Destroy InputField widgets
+    if (req->pattern_field) {
+        inputfield_destroy(req->pattern_field);
+    }
+    if (req->drawer_field) {
+        inputfield_destroy(req->drawer_field);
+    }
+    if (req->file_field) {
+        inputfield_destroy(req->file_field);
     }
     
     if (req->xft_draw) {
@@ -325,6 +363,9 @@ void reqasl_navigate_to(ReqASL *req, const char *path) {
         
         // Clear the File field when changing directories
         req->file_text[0] = '\0';
+        if (req->file_field) {
+            inputfield_set_text(req->file_field, "");
+        }
         
         req->selected_index = -1;
         req->scroll_offset = 0;
@@ -574,38 +615,50 @@ static void draw_window(ReqASL *req) {
                     DefaultColormap(req->display, DefaultScreen(req->display)), &label_color);
     }
     
-    // Draw input fields anchored to bottom
+    // Update positions and draw input fields anchored to bottom
     int input_y = req->height - MARGIN - BUTTON_HEIGHT - SPACING;
     
     // File field (bottom-most input)
     input_y -= INPUT_HEIGHT;
-    InputField file_field = {
-        .x = MARGIN + LABEL_WIDTH + 5, .y = input_y,
-        .width = req->width - MARGIN * 2 - LABEL_WIDTH - 5, .height = INPUT_HEIGHT
-    };
-    strncpy(file_field.text, req->file_text, INPUTFIELD_MAX_LENGTH);
-    file_field.text[INPUTFIELD_MAX_LENGTH] = '\0';
-    inputfield_draw(&file_field, dest, req->display, temp_xft_draw, req->font);
+    if (req->file_field) {
+        req->file_field->x = MARGIN + LABEL_WIDTH + 5;
+        req->file_field->y = input_y;
+        req->file_field->width = req->width - MARGIN * 2 - LABEL_WIDTH - 5;
+        req->file_field->height = INPUT_HEIGHT;
+        // Only sync text if it has changed (to preserve cursor position)
+        if (strcmp(req->file_field->text, req->file_text) != 0) {
+            inputfield_set_text(req->file_field, req->file_text);
+        }
+        inputfield_draw(req->file_field, dest, req->display, temp_xft_draw, req->font);
+    }
     
     // Drawer field (middle input)
     input_y -= (INPUT_HEIGHT + SPACING);
-    InputField drawer_field = {
-        .x = MARGIN + LABEL_WIDTH + 5, .y = input_y,
-        .width = req->width - MARGIN * 2 - LABEL_WIDTH - 5, .height = INPUT_HEIGHT
-    };
-    strncpy(drawer_field.text, req->drawer_text, INPUTFIELD_MAX_LENGTH);
-    drawer_field.text[INPUTFIELD_MAX_LENGTH] = '\0';
-    inputfield_draw(&drawer_field, dest, req->display, temp_xft_draw, req->font);
+    if (req->drawer_field) {
+        req->drawer_field->x = MARGIN + LABEL_WIDTH + 5;
+        req->drawer_field->y = input_y;
+        req->drawer_field->width = req->width - MARGIN * 2 - LABEL_WIDTH - 5;
+        req->drawer_field->height = INPUT_HEIGHT;
+        // Only sync text if it has changed (to preserve cursor position)
+        if (strcmp(req->drawer_field->text, req->drawer_text) != 0) {
+            inputfield_set_text(req->drawer_field, req->drawer_text);
+        }
+        inputfield_draw(req->drawer_field, dest, req->display, temp_xft_draw, req->font);
+    }
     
     // Pattern field (top-most input)
     input_y -= (INPUT_HEIGHT + SPACING);
-    InputField pattern_field = {
-        .x = MARGIN + LABEL_WIDTH + 5, .y = input_y,
-        .width = req->width - MARGIN * 2 - LABEL_WIDTH - 5, .height = INPUT_HEIGHT
-    };
-    strncpy(pattern_field.text, req->pattern_text, INPUTFIELD_MAX_LENGTH);
-    pattern_field.text[INPUTFIELD_MAX_LENGTH] = '\0';
-    inputfield_draw(&pattern_field, dest, req->display, temp_xft_draw, req->font);
+    if (req->pattern_field) {
+        req->pattern_field->x = MARGIN + LABEL_WIDTH + 5;
+        req->pattern_field->y = input_y;
+        req->pattern_field->width = req->width - MARGIN * 2 - LABEL_WIDTH - 5;
+        req->pattern_field->height = INPUT_HEIGHT;
+        // Only sync text if it has changed (to preserve cursor position)
+        if (strcmp(req->pattern_field->text, req->pattern_text) != 0) {
+            inputfield_set_text(req->pattern_field, req->pattern_text);
+        }
+        inputfield_draw(req->pattern_field, dest, req->display, temp_xft_draw, req->font);
+    }
     
     // Draw buttons with dynamic spacing (moved down by 2 pixels)
     int button_y = req->height - MARGIN - BUTTON_HEIGHT + 2;
@@ -807,6 +860,46 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
             if (event->xbutton.button == Button1) {
                 int x = event->xbutton.x;
                 int y = event->xbutton.y;
+                
+                // Handle input field clicks first
+                bool field_clicked = false;
+                
+                if (req->pattern_field && inputfield_handle_click(req->pattern_field, x, y)) {
+                    // Clear focus from other fields
+                    if (req->drawer_field) inputfield_set_focus(req->drawer_field, false);
+                    if (req->file_field) inputfield_set_focus(req->file_field, false);
+                    field_clicked = true;
+                    draw_window(req);
+                    XFlush(req->display);  // Force immediate update
+                    return true;
+                }
+                
+                if (req->drawer_field && inputfield_handle_click(req->drawer_field, x, y)) {
+                    // Clear focus from other fields
+                    if (req->pattern_field) inputfield_set_focus(req->pattern_field, false);
+                    if (req->file_field) inputfield_set_focus(req->file_field, false);
+                    field_clicked = true;
+                    draw_window(req);
+                    XFlush(req->display);  // Force immediate update
+                    return true;
+                }
+                
+                if (req->file_field && inputfield_handle_click(req->file_field, x, y)) {
+                    // Clear focus from other fields
+                    if (req->pattern_field) inputfield_set_focus(req->pattern_field, false);
+                    if (req->drawer_field) inputfield_set_focus(req->drawer_field, false);
+                    field_clicked = true;
+                    draw_window(req);
+                    XFlush(req->display);  // Force immediate update
+                    return true;
+                }
+                
+                // If no field was clicked, clear all focus
+                if (!field_clicked) {
+                    if (req->pattern_field) inputfield_set_focus(req->pattern_field, false);
+                    if (req->drawer_field) inputfield_set_focus(req->drawer_field, false);
+                    if (req->file_field) inputfield_set_focus(req->file_field, false);
+                }
                 
                 // Handle ListView click if available
                 if (req->listview) {
@@ -1047,8 +1140,34 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     return true;
                 }
                 
-                // TODO: Add proper input field keyboard handling
-                // Currently input fields are created locally for drawing only
+                // Pass keyboard events to input fields
+                // Try each input field in order
+                if (req->pattern_field && inputfield_handle_key(req->pattern_field, &event->xkey)) {
+                    // Sync field text back to buffer
+                    strncpy(req->pattern_text, inputfield_get_text(req->pattern_field), 
+                           sizeof(req->pattern_text) - 1);
+                    req->pattern_text[sizeof(req->pattern_text) - 1] = '\0';
+                    draw_window(req);
+                    return true;
+                }
+                
+                if (req->drawer_field && inputfield_handle_key(req->drawer_field, &event->xkey)) {
+                    // Sync field text back to buffer
+                    strncpy(req->drawer_text, inputfield_get_text(req->drawer_field),
+                           sizeof(req->drawer_text) - 1);
+                    req->drawer_text[sizeof(req->drawer_text) - 1] = '\0';
+                    draw_window(req);
+                    return true;
+                }
+                
+                if (req->file_field && inputfield_handle_key(req->file_field, &event->xkey)) {
+                    // Sync field text back to buffer
+                    strncpy(req->file_text, inputfield_get_text(req->file_field),
+                           sizeof(req->file_text) - 1);
+                    req->file_text[sizeof(req->file_text) - 1] = '\0';
+                    draw_window(req);
+                    return true;
+                }
             }
             break;
             
@@ -1110,6 +1229,10 @@ static void listview_select_callback(int index, const char *text, void *user_dat
     // Update file field with selection if it's a file
     if (entry->type == TYPE_FILE) {
         strcpy(req->file_text, entry->name);
+        // Also update the InputField widget
+        if (req->file_field) {
+            inputfield_set_text(req->file_field, entry->name);
+        }
     }
     
     // Redraw to update input fields

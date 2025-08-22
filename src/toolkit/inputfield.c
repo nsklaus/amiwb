@@ -76,7 +76,10 @@ void inputfield_set_focus(InputField *field, bool has_focus) {
         return;
     }
     field->has_focus = has_focus;
-    if (!has_focus) {
+    if (has_focus) {
+        // When getting focus, position cursor at end of text
+        field->cursor_pos = strlen(field->text);
+    } else {
         field->selection_start = -1;
         field->selection_end = -1;
     }
@@ -118,40 +121,131 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
     XRenderFillRectangle(dpy, PictOpSrc, dest, &gray, x+2, y+2, w-4, h-4);
     
     // Draw text content with cursor if we have a font
-    if (font && xft_draw && field->text[0] != '\0') {
-        // Set up text color (black on gray background)
-        XftColor text_color;
+    if (font && xft_draw) {
+        // Set up text colors
+        XftColor black_color, white_color;
         XRenderColor black = {0x0000, 0x0000, 0x0000, 0xffff};
+        XRenderColor white = {0xffff, 0xffff, 0xffff, 0xffff};
+        XRenderColor blue = {0x4858, 0x6F6F, 0xB0B0, 0xFFFF};  // From config.h
+        
         XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
                           DefaultColormap(dpy, DefaultScreen(dpy)),
-                          &black, &text_color);
+                          &black, &black_color);
+        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                          DefaultColormap(dpy, DefaultScreen(dpy)),
+                          &white, &white_color);
         
         // Calculate text position (vertically centered, left-aligned with padding)
-        int text_x = x + 4;
+        int text_x = x + 8;  // More padding to prevent border touching
         int text_y = y + (h + font->ascent - font->descent) / 2;
+        int available_width = w - 16;  // Leave padding on both sides
         
-        // Draw the text
-        XftDrawStringUtf8(xft_draw, &text_color, font,
-                         text_x, text_y,
-                         (FcChar8*)field->text, strlen(field->text));
+        int text_len = strlen(field->text);
         
-        // Draw cursor if field has focus
-        if (field->has_focus && field->cursor_pos >= 0) {
-            // Calculate cursor position
-            XGlyphInfo extents;
-            if (field->cursor_pos > 0) {
-                XftTextExtentsUtf8(dpy, font, (FcChar8*)field->text, 
-                                  field->cursor_pos, &extents);
-                text_x += extents.width;
+        // Handle empty text with cursor
+        if (text_len == 0 && field->has_focus && field->cursor_pos == 0) {
+            // Draw blue rectangle cursor the size of a space
+            XGlyphInfo space_info;
+            XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
+            // Use minimum width of 8 pixels if space has no width
+            int cursor_width = space_info.width > 0 ? space_info.width : 8;
+            XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
+                               text_x, y + 3, cursor_width, h - 6);
+        } else if (text_len > 0) {
+            // Calculate visible text range based on cursor position
+            int visible_start = field->visible_start;
+            
+            // Adjust visible_start to keep cursor in view
+            if (field->has_focus && field->cursor_pos >= 0) {
+                // Measure text up to cursor
+                XGlyphInfo cursor_extents;
+                XGlyphInfo space_info;
+                XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
+                
+                if (field->cursor_pos >= visible_start) {
+                    // Measure from visible_start to cursor position
+                    int chars_to_measure = field->cursor_pos - visible_start;
+                    if (chars_to_measure > 0) {
+                        XftTextExtentsUtf8(dpy, font, 
+                                         (FcChar8*)&field->text[visible_start],
+                                         chars_to_measure, &cursor_extents);
+                    } else {
+                        cursor_extents.width = 0;
+                    }
+                    
+                    // Add space for cursor if at end of text
+                    int total_width = cursor_extents.width;
+                    if (field->cursor_pos == text_len) {
+                        total_width += space_info.width;
+                    }
+                    
+                    // If cursor is beyond visible area, scroll right
+                    while (total_width > available_width && visible_start < field->cursor_pos) {
+                        visible_start++;
+                        if (field->cursor_pos > visible_start) {
+                            XftTextExtentsUtf8(dpy, font,
+                                             (FcChar8*)&field->text[visible_start],
+                                             field->cursor_pos - visible_start, &cursor_extents);
+                            total_width = cursor_extents.width;
+                            if (field->cursor_pos == text_len) {
+                                total_width += space_info.width;
+                            }
+                        }
+                    }
+                } else if (field->cursor_pos < visible_start) {
+                    // Cursor is before visible area, scroll left
+                    visible_start = field->cursor_pos;
+                }
+                field->visible_start = visible_start;
             }
             
-            // Draw cursor line
-            XRenderFillRectangle(dpy, PictOpSrc, dest, &black,
-                               text_x, y + 3, 1, h - 6);
+            // Draw text character by character
+            int draw_x = text_x;
+            for (int i = visible_start; i < text_len; i++) {
+                // Check if we've exceeded available width
+                if (draw_x - text_x >= available_width) break;
+                
+                char ch[2] = {field->text[i], '\0'};
+                XGlyphInfo glyph_info;
+                XftTextExtentsUtf8(dpy, font, (FcChar8*)ch, 1, &glyph_info);
+                
+                // Check if this is the cursor position
+                bool is_cursor = (field->has_focus && i == field->cursor_pos);
+                
+                if (is_cursor) {
+                    // Draw blue background for cursor
+                    XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
+                                       draw_x, y + 3, glyph_info.width, h - 6);
+                    // Draw white text on blue background
+                    XftDrawStringUtf8(xft_draw, &white_color, font,
+                                    draw_x, text_y, (FcChar8*)ch, 1);
+                } else {
+                    // Draw black text normally
+                    XftDrawStringUtf8(xft_draw, &black_color, font,
+                                    draw_x, text_y, (FcChar8*)ch, 1);
+                }
+                
+                draw_x += glyph_info.width;
+            }
+            
+            // Draw cursor at end if it's past the last character
+            if (field->has_focus && field->cursor_pos == text_len) {
+                XGlyphInfo space_info;
+                XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
+                // Use minimum width of 8 pixels if space has no width
+                int cursor_width = space_info.width > 0 ? space_info.width : 8;
+                // Add 1 pixel of padding before cursor when at end of text
+                int cursor_x = draw_x + (text_len > 0 ? 1 : 0);
+                // Always draw the cursor at the end when field has focus
+                XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
+                                   cursor_x, y + 3, cursor_width, h - 6);
+            }
         }
         
         XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                    DefaultColormap(dpy, DefaultScreen(dpy)), &text_color);
+                    DefaultColormap(dpy, DefaultScreen(dpy)), &black_color);
+        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                    DefaultColormap(dpy, DefaultScreen(dpy)), &white_color);
     }
 }
 
@@ -163,7 +257,10 @@ bool inputfield_handle_click(InputField *field, int click_x, int click_y) {
     if (click_x >= field->x && click_x < field->x + field->width &&
         click_y >= field->y && click_y < field->y + field->height) {
         field->has_focus = true;
-        // TODO: Calculate cursor position from click position
+        // Always position cursor at end when field gets focus from click
+        field->cursor_pos = strlen(field->text);
+        // Reset visible_start to show the end of the text
+        field->visible_start = 0;  // Will be adjusted in draw to show cursor
         return true;
     }
     
