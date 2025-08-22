@@ -1,0 +1,38 @@
+/* Immediate gray background to prevent white flash */
+:root, html {
+  background-color: #a0a2a0 !important;
+  background: #a0a2a0 !important;
+}
+
+body {
+  background-color: #a0a2a0 !important;
+  background: #a0a2a0 !important;
+}
+
+/* Common app containers */
+#root, #app, #content, #page, #main, .app, .main {
+  background-color: #a0a2a0 !important;
+}
+
+/* YouTube specific early containers */
+ytd-app, ytd-page-manager, #container, #page-manager {
+  background-color: #a0a2a0 !important;
+}
+
+/* Fallback gray layer */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: #a0a2a0;
+  z-index: -999999;
+  pointer-events: none;
+}
+
+/* Hide content initially until JS processes it */
+html {
+  visibility: hidden !important;
+}
