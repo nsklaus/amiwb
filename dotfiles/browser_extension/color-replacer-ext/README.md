@@ -35,8 +35,9 @@ A browser extension that makes the web look like AmigaOS from the 1990s.
 - **GitHub**: Preserves syntax highlighting with custom colors
 - **Claude.ai**: Maintains code syntax colors
 - **YouTube**: Disables video preview overlays
+- **CrowdBunker**: Custom rules for proper gray backgrounds and removes play overlays
 - **Local files**: Fixes gray-on-gray text in documentation
 
 ## Version
 
-Current: v1.61
+Current: v1.80

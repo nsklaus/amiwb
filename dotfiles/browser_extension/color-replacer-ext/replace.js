@@ -1,4 +1,4 @@
-const EXTENSION_VERSION = '1.61';
+const EXTENSION_VERSION = '1.73';
 console.log(`Color replacer extension v${EXTENSION_VERSION} loaded!`);
 
 // Note: Initial gray background and hiding is now handled by inject.css
@@ -105,12 +105,190 @@ function processAllStyles() {
     document.documentElement.style.visibility = 'visible';
     // Add a style to override the CSS hiding
     const showStyle = document.createElement('style');
-    showStyle.textContent = 'html { visibility: visible !important; }';
+    // CrowdBunker needs everything visible
+    if (window.location.hostname.includes('crowdbunker')) {
+      showStyle.textContent = `
+        html, body, * { visibility: visible !important; }
+      `;
+    } else {
+      showStyle.textContent = 'html { visibility: visible !important; }';
+    }
     document.head.appendChild(showStyle);
   }, delay); // Small delay to ensure styles are applied
 }
 
 function applySmartColorForcing() {
+  // Special handling for CrowdBunker - gray background everywhere
+  if (window.location.hostname.includes('crowdbunker')) {
+    const style = document.createElement('style');
+    style.textContent = `
+      /* Gray background for all main containers */
+      html, body, #app, .v-application, .container, main, div.v-main {
+        background-color: #a0a2a0 !important;
+        background: #a0a2a0 !important;
+        background-image: none !important;
+      }
+      
+      /* Remove white/dark/blue backgrounds from Vue components */
+      .white, .grey, .black, .blue, .primary, .secondary,
+      [class*="lighten"], [class*="darken"], [class*="accent"] {
+        background-color: #a0a2a0 !important;
+      }
+      
+      /* Headers and cards */
+      .v-card, .v-sheet, .v-toolbar, header, footer {
+        background-color: #a0a2a0 !important;
+      }
+      
+      /* Links and video titles should be blue */
+      a, a span, a div,
+      .v-card__title, .v-card__subtitle,
+      .v-card-title, .v-card-subtitle,
+      [class*="title"], [class*="subtitle"] {
+        color: #000cda !important;
+      }
+      
+      /* Override white text specifically */
+      .white--text, [class*="white--text"] {
+        color: #000cda !important;
+      }
+      
+      /* Target blue backgrounds more aggressively */
+      .primary, .secondary, .blue, .info,
+      [class*="primary"], [class*="secondary"], [class*="blue"] {
+        background-color: #a0a2a0 !important;
+        background: #a0a2a0 !important;
+      }
+      
+      /* Fix specific CrowdBunker blue areas */
+      .background-gradient {
+        background: #a0a2a0 !important;
+        background-image: none !important;
+      }
+      
+      .transparent-header, .header-bar {
+        background: #a0a2a0 !important;
+        background-color: #a0a2a0 !important;
+      }
+      
+      /* Navigation drawer on left */
+      .v-navigation-drawer {
+        background-color: #a0a2a0 !important;
+      }
+      
+      /* Bottom area of navbar */
+      .v-navigation-drawer .secondary,
+      .v-navigation-drawer.secondary {
+        background-color: #a0a2a0 !important;
+        background: #a0a2a0 !important;
+      }
+      
+      /* Fix header when scrolled - Vuetify adds classes on scroll */
+      .v-app-bar--is-scrolled,
+      .v-toolbar--prominent,
+      .v-app-bar.v-app-bar--is-scrolled,
+      .v-toolbar.v-app-bar--is-scrolled,
+      header.v-app-bar--is-scrolled,
+      [class*="scrolled"] {
+        background-color: #a0a2a0 !important;
+        background: #a0a2a0 !important;
+        background-image: none !important;
+      }
+      
+      /* Override any elevation/shadow styles that come with scroll */
+      .v-app-bar--is-scrolled.v-sheet--outlined,
+      .elevation-4, .elevation-8, .elevation-12,
+      [class*="elevation-"] {
+        background-color: #a0a2a0 !important;
+        background: #a0a2a0 !important;
+        box-shadow: none !important;
+      }
+      
+      /* Channel header area with blue secondary background */
+      .channel-block.secondary,
+      .top-block.secondary,
+      div.secondary.top-block {
+        background-color: #a0a2a0 !important;
+        background: #a0a2a0 !important;
+      }
+      
+      /* Hide play overlay on video thumbnails */
+      .play-wrapper,
+      .play-wrapper .poster-icon,
+      .poster-icon,
+      .mdi-play-circle,
+      .mdi-play-circle-outline,
+      .player-poster:hover .play-wrapper,
+      .v-responsive__content .v-icon.mdi-play-circle,
+      .v-image .v-icon.mdi-play-circle {
+        display: none !important;
+        opacity: 0 !important;
+        visibility: hidden !important;
+      }
+    `;
+    document.head.appendChild(style);
+    console.log('Applied CrowdBunker styling with gray backgrounds and blue links');
+    
+    // Remove play overlays and prevent hover effects
+    const fixVideoThumbnails = () => {
+      // Find all video thumbnail links/images and disable hover effects
+      document.querySelectorAll('a[href*="/video/"], a[href*="/v/"]').forEach(link => {
+        // Remove any play icons inside video links
+        link.querySelectorAll('[class*="play"], [class*="mdi-play"]').forEach(el => el.remove());
+        
+        // Disable pointer events on overlays
+        const overlays = link.querySelectorAll('.v-responsive__content > *');
+        overlays.forEach(overlay => {
+          if (!overlay.querySelector('img')) {
+            overlay.style.display = 'none';
+          }
+        });
+      });
+      
+      // Remove any elements that look like play buttons
+      document.querySelectorAll('i[class*="mdi-play"]').forEach(icon => {
+        const parent = icon.closest('.v-responsive__content');
+        if (parent) {
+          icon.parentElement?.remove() || icon.remove();
+        }
+      });
+      
+      // Hide any overlay divs that appear on hover
+      document.querySelectorAll('.v-responsive__content > div:not(:has(img))').forEach(div => {
+        if (div.querySelector('.v-icon') || div.className.includes('overlay')) {
+          div.style.display = 'none';
+        }
+      });
+    };
+    
+    // Add CSS to prevent hover overlays
+    const hoverFix = document.createElement('style');
+    hoverFix.textContent = `
+      /* Block all hover overlays on video thumbnails */
+      a[href*="/video/"] .v-responsive__content > *:not(img),
+      a[href*="/v/"] .v-responsive__content > *:not(img),
+      .v-responsive:hover .v-responsive__content > div,
+      .v-image:hover .v-responsive__content > div {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+    `;
+    document.head.appendChild(hoverFix);
+    
+    // Run the fix multiple times
+    fixVideoThumbnails();
+    setTimeout(fixVideoThumbnails, 500);
+    setTimeout(fixVideoThumbnails, 1500);
+    setTimeout(fixVideoThumbnails, 3000);
+    
+    // Watch for changes
+    const observer = new MutationObserver(fixVideoThumbnails);
+    observer.observe(document.body, { childList: true, subtree: true });
+    
+    return; // Skip all other aggressive rules
+  }
+  
   // Special handling for GitHub
   if (window.location.hostname === 'github.com') {
     const githubStyle = document.createElement('style');
