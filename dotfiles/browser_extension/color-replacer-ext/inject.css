@@ -36,3 +36,52 @@ body::before {
 html {
   visibility: hidden !important;
 }
+
+/* AmigaOS-style scrollbars */
+::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+
+::-webkit-scrollbar-track {
+  background: #808080;
+  border: 1px solid #000000;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #000000;
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #202020;
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: #000000;
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: #808080;
+}
+
+/* Remove scrollbar buttons completely */
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* Text selection colors - faint light blue */
+::selection {
+  background-color: #b0c4de !important;  /* Light steel blue */
+  color: #000000 !important;
+}
+
+::-moz-selection {
+  background-color: #b0c4de !important;  /* Light steel blue */
+  color: #000000 !important;
+}

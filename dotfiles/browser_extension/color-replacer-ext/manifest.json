@@ -1,11 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Simple Color Replacer",
-  "version": "1.80",
+  "version": "1.96",
   "content_scripts": [{
     "matches": ["<all_urls>", "file:///*"],
     "css": ["inject.css"],
     "js": ["replace.js"],
+    "run_at": "document_start"
+  }, {
+    "matches": ["*://github.com/*"],
+    "css": ["github.css"],
     "run_at": "document_start"
   }]
 }

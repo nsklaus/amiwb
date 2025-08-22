@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "AmigaOS Workbench Theme",
+  "version": "1.0",
+  "description": "Classic Amiga Workbench gray theme for your browser",
+  "theme": {
+    "colors": {
+      "frame": [128, 130, 128],
+      "frame_inactive": [96, 98, 96],
+      "toolbar": [160, 162, 160],
+      "tab_text": [0, 0, 0],
+      "tab_background_text": [0, 0, 0],
+      "bookmark_text": [0, 0, 0],
+      "ntp_background": [160, 162, 160],
+      "ntp_text": [0, 0, 0],
+      "toolbar_field": [192, 194, 192],
+      "toolbar_field_text": [0, 0, 0],
+      "toolbar_field_border": [64, 64, 64],
+      "toolbar_top_separator": [64, 64, 64],
+      "toolbar_bottom_separator": [192, 194, 192],
+      "toolbar_vertical_separator": [128, 130, 128]
+    }
+  }
+}

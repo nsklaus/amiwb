@@ -1,0 +1,111 @@
+/* Fix GitHub code blocks white blobs */
+.snippet-clipboard-content.notranslate.position-relative.overflow-auto {
+  overflow: visible !important;
+  background: #a0a2a0 !important;
+  background-color: #a0a2a0 !important;
+  border: 1px solid #000000 !important;
+}
+
+.snippet-clipboard-content pre,
+.snippet-clipboard-content code {
+  background: #a0a2a0 !important;
+  background-color: #a0a2a0 !important;
+}
+
+/* Remove any pseudo elements that might create white areas */
+.snippet-clipboard-content::before,
+.snippet-clipboard-content::after {
+  display: none !important;
+  content: none !important;
+}
+
+/* Aggressively fix ALL white backgrounds on GitHub */
+* {
+  --color-canvas-default: #a0a2a0 !important;
+  --color-canvas-subtle: #a0a2a0 !important;
+  --color-canvas-inset: #a0a2a0 !important;
+  --bgColor-default: #a0a2a0 !important;
+  --bgColor-muted: #a0a2a0 !important;
+  --bgColor-inset: #a0a2a0 !important;
+}
+
+/* Fix all Box components */
+[class*="Box"] {
+  background: #a0a2a0 !important;
+  background-color: #a0a2a0 !important;
+}
+
+/* Fix all elements with white background */
+[style*="background-color: white"],
+[style*="background-color:#fff"],
+[style*="background-color: #fff"],
+[style*="background-color:white"],
+[style*="background: white"],
+[style*="background:#fff"],
+[style*="background: #fff"],
+[style*="background:white"] {
+  background: #a0a2a0 !important;
+  background-color: #a0a2a0 !important;
+}
+
+/* Specific targeting for the commit bar and README header */
+.Box-header {
+  background: #a0a2a0 !important;
+  background-color: #a0a2a0 !important;
+}
+
+.Box-row {
+  background: #a0a2a0 !important;
+  background-color: #a0a2a0 !important;
+}
+
+/* Force gray on any element that might be white */
+div[class*="bg-"],
+div[class*="Box"],
+header[class*="Box"],
+div[class*="Header"] {
+  background: #a0a2a0 !important;
+  background-color: #a0a2a0 !important;
+}
+
+/* Fix the black header background */
+.Header,
+.Header-old,
+header.Header,
+[class*="Header"],
+.js-header-wrapper,
+.header-logged-out,
+.header-logged-in,
+div[style*="background-color:#010409"],
+div[style*="background-color: #010409"],
+div[style*="background:#010409"],
+div[style*="background: #010409"],
+header[style*="background"] {
+  background: #a0a2a0 !important;
+  background-color: #a0a2a0 !important;
+}
+
+/* Override GitHub's dark header color variable */
+* {
+  --color-header-bg: #a0a2a0 !important;
+  --bgColor-emphasis: #a0a2a0 !important;
+}
+
+/* Hide the left side navigation items */
+.Header-nav,
+nav[aria-label="Global"],
+.Header-link:not(.Header-link--sign-in):not(.Header-link--sign-up),
+.js-site-header-nav {
+  display: none !important;
+}
+
+/* Keep the search and right side items visible */
+.Header-item--full,
+.Header-search,
+.Header-item:has(.Header-search),
+.Header-item:has([aria-label*="notification"]),
+.Header-item:has([aria-label*="account"]),
+.Header-link--sign-in,
+.Header-link--sign-up {
+  display: flex !important;
+}

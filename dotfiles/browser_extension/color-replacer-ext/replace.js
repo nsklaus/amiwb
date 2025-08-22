@@ -654,6 +654,7 @@ function fixGrayOnGrayText() {
   console.log('Fixed gray-on-gray text');
 }
 
+
 function fixGitHubCode() {
   // Wait for GitHub code to actually load
   const observer = new MutationObserver((mutations, obs) => {
