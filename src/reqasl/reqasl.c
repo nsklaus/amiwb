@@ -322,6 +322,10 @@ void reqasl_navigate_to(ReqASL *req, const char *path) {
         req->current_path[sizeof(req->current_path) - 1] = '\0';
         strncpy(req->drawer_text, req->current_path, sizeof(req->drawer_text) - 1);
         req->drawer_text[sizeof(req->drawer_text) - 1] = '\0';
+        
+        // Clear the File field when changing directories
+        req->file_text[0] = '\0';
+        
         req->selected_index = -1;
         req->scroll_offset = 0;
         scan_directory(req, req->current_path);  // Use copied path, not original which may be freed
@@ -906,15 +910,27 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     
                     if (x >= open_x && x < open_x + BUTTON_WIDTH &&
                         y >= button_y && y < button_y + BUTTON_HEIGHT) {
-                        if (req->on_open) {
-                            char full_path[2048];
-                            if (req->file_text[0]) {
-                                snprintf(full_path, sizeof(full_path), "%s/%s",
-                                       req->current_path, req->file_text);
-                            } else {
-                                strcpy(full_path, req->current_path);
+                        char full_path[2048];
+                        if (req->file_text[0]) {
+                            // File selected - use callback if available
+                            snprintf(full_path, sizeof(full_path), "%s/%s",
+                                   req->current_path, req->file_text);
+                            if (req->on_open) {
+                                req->on_open(full_path);
                             }
-                            req->on_open(full_path);
+                        } else {
+                            // No file selected - send IPC to AmiWB to open directory
+                            strcpy(full_path, req->current_path);
+                            
+                            // Set property on root window for AmiWB to read
+                            Atom amiwb_open_dir = XInternAtom(req->display, 
+                                                             "AMIWB_OPEN_DIRECTORY", False);
+                            Window root = DefaultRootWindow(req->display);
+                            
+                            XChangeProperty(req->display, root, amiwb_open_dir,
+                                          XA_STRING, 8, PropModeReplace,
+                                          (unsigned char *)full_path, strlen(full_path));
+                            XFlush(req->display);
                         }
                         reqasl_hide(req);
                         return true;
@@ -1016,6 +1032,25 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                                 event->xconfigurerequest.value_mask, &changes);
             }
             return true;
+            
+        case KeyPress:
+            // Handle keyboard input
+            {
+                KeySym keysym = XLookupKeysym(&event->xkey, 0);
+                
+                // Handle Escape key - quit ReqASL
+                if (keysym == XK_Escape) {
+                    if (req->on_cancel) {
+                        req->on_cancel();
+                    }
+                    reqasl_hide(req);
+                    return true;
+                }
+                
+                // TODO: Add proper input field keyboard handling
+                // Currently input fields are created locally for drawing only
+            }
+            break;
             
         case ConfigureNotify:
             // Handle window resize

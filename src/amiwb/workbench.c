@@ -1460,6 +1460,19 @@ static void open_directory(FileIcon *icon, Canvas *current_canvas) {
     }
 }
 
+// Public function to open directory by path (for IPC from ReqASL)
+void workbench_open_directory(const char *path) {
+    if (!path || !path[0]) return;
+    
+    // Create temporary icon just to reuse open_directory
+    FileIcon temp_icon = {0};
+    temp_icon.path = (char *)path;
+    temp_icon.type = TYPE_DRAWER;
+    
+    // Call existing function
+    open_directory(&temp_icon, NULL);
+}
+
 FileIcon *find_icon(Window win, int x, int y) {
     if (!icon_array || icon_count <= 0) return NULL;
     Canvas *c = find_canvas(win);

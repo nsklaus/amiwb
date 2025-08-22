@@ -1323,6 +1323,32 @@ void intuition_handle_expose(XExposeEvent *event) {
 }
 
 void intuition_handle_property_notify(XPropertyEvent *event) {
+    // Check for IPC from ReqASL to open directory
+    static Atom amiwb_open_dir = None;
+    if (amiwb_open_dir == None) {
+        amiwb_open_dir = XInternAtom(display, "AMIWB_OPEN_DIRECTORY", False);
+    }
+    
+    if (event->atom == amiwb_open_dir && event->window == root) {
+        // Read the path from the property
+        Atom actual_type;
+        int actual_format;
+        unsigned long nitems, bytes_after;
+        unsigned char *data = NULL;
+        
+        if (XGetWindowProperty(display, root, amiwb_open_dir,
+                              0, PATH_SIZE, True, XA_STRING,
+                              &actual_type, &actual_format,
+                              &nitems, &bytes_after, &data) == Success) {
+            if (data && nitems > 0) {
+                // Open the directory
+                workbench_open_directory((char *)data);
+                XFree(data);
+            }
+        }
+        return;
+    }
+    
     // Track EWMH fullscreen changes via property updates on the client
     Atom net_wm_state = XInternAtom(display, "_NET_WM_STATE", False);
     if (event->atom != net_wm_state) return;
