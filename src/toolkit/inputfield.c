@@ -7,7 +7,10 @@
 
 InputField* inputfield_create(int x, int y, int width, int height) {
     InputField *field = malloc(sizeof(InputField));
-    if (!field) return NULL;
+    if (!field) {
+        printf("[ERROR] malloc failed for InputField structure (size=%zu)\n", sizeof(InputField));
+        return NULL;
+    }
     
     field->x = x;
     field->y = y;
@@ -27,12 +30,16 @@ InputField* inputfield_create(int x, int y, int width, int height) {
 }
 
 void inputfield_destroy(InputField *field) {
-    if (!field) return;
+    if (!field) {
+        return;  // Not fatal - cleanup function
+    }
     free(field);
 }
 
 void inputfield_set_text(InputField *field, const char *text) {
-    if (!field || !text) return;
+    if (!field || !text) {
+        return;
+    }
     
     strncpy(field->text, text, INPUTFIELD_MAX_LENGTH);
     field->text[INPUTFIELD_MAX_LENGTH] = '\0';
@@ -46,21 +53,28 @@ void inputfield_set_text(InputField *field, const char *text) {
 }
 
 const char* inputfield_get_text(InputField *field) {
-    return field ? field->text : "";
+    if (!field) {
+        return NULL;
+    }
+    return field->text;
 }
 
 void inputfield_set_callbacks(InputField *field, 
                              void (*on_enter)(const char*, void*),
                              void (*on_change)(const char*, void*),
                              void *user_data) {
-    if (!field) return;
+    if (!field) {
+        return;
+    }
     field->on_enter = on_enter;
     field->on_change = on_change;
     field->user_data = user_data;
 }
 
 void inputfield_set_focus(InputField *field, bool has_focus) {
-    if (!field) return;
+    if (!field) {
+        return;
+    }
     field->has_focus = has_focus;
     if (!has_focus) {
         field->selection_start = -1;
@@ -69,7 +83,9 @@ void inputfield_set_focus(InputField *field, bool has_focus) {
 }
 
 void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft_draw, XftFont *font) {
-    if (!field || !dpy) return;
+    if (!field || !dpy || dest == None) {
+        return;
+    }
     
     int x = field->x;
     int y = field->y;
@@ -140,7 +156,9 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
 }
 
 bool inputfield_handle_click(InputField *field, int click_x, int click_y) {
-    if (!field) return false;
+    if (!field) {
+        return false;
+    }
     
     if (click_x >= field->x && click_x < field->x + field->width &&
         click_y >= field->y && click_y < field->y + field->height) {
@@ -154,7 +172,13 @@ bool inputfield_handle_click(InputField *field, int click_x, int click_y) {
 }
 
 bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
-    if (!field || !field->has_focus) return false;
+    if (!field) {
+        return false;
+    }
+    if (!event) {
+        return false;
+    }
+    if (!field->has_focus) return false;  // Not an error - field doesn't have focus
     
     KeySym keysym = XLookupKeysym(event, 0);
     
@@ -216,7 +240,9 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
 }
 
 void inputfield_insert_char(InputField *field, char c) {
-    if (!field) return;
+    if (!field) {
+        return;
+    }
     
     int len = strlen(field->text);
     if (len >= INPUTFIELD_MAX_LENGTH) return;
@@ -250,7 +276,9 @@ void inputfield_insert_char(InputField *field, char c) {
 }
 
 void inputfield_delete_char(InputField *field) {
-    if (!field) return;
+    if (!field) {
+        return;
+    }
     
     int len = strlen(field->text);
     if (field->cursor_pos < len) {
@@ -265,7 +293,9 @@ void inputfield_delete_char(InputField *field) {
 }
 
 void inputfield_backspace(InputField *field) {
-    if (!field) return;
+    if (!field) {
+        return;
+    }
     
     if (field->cursor_pos > 0) {
         int len = strlen(field->text);
@@ -281,7 +311,9 @@ void inputfield_backspace(InputField *field) {
 }
 
 void inputfield_move_cursor(InputField *field, int delta) {
-    if (!field) return;
+    if (!field) {
+        return;
+    }
     
     int new_pos = field->cursor_pos + delta;
     int len = strlen(field->text);

@@ -129,6 +129,9 @@ int main(int argc, char *argv[]) {
     
     // Intuition first: sets up X Display and RenderContext
     init_intuition();
+    
+    // Grab global shortcuts so applications can't intercept them
+    grab_global_shortcuts(get_display(), DefaultRootWindow(get_display()));
 
     // Rendering second: needs the RenderContext built by intuition
     init_render();

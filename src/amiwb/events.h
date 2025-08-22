@@ -9,6 +9,7 @@
 
 // Function prototypes
 void init_events(void);									// Initialize event handling
+void grab_global_shortcuts(Display *display, Window root); // Grab global keys
 void handle_events(void); 								// Main event loop
 void handle_button_press(XButtonEvent *event);			// Dispatch button press
 void handle_button_release(XButtonEvent *event);		// Dispatch button release

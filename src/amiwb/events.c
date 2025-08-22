@@ -9,13 +9,14 @@
 #include "dialogs.h"
 #include "config.h"
 #include <X11/extensions/Xrandr.h>
-
+#include <X11/XF86keysym.h> // media keys
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <stdio.h> // For fprintf
 #include <sys/stat.h>
 #include <unistd.h>
 #include <string.h>
+#include <strings.h> // strcasecmp
 #include <stdlib.h> // getenv
 #include <time.h>
 
@@ -35,6 +36,53 @@ extern void trigger_select_contents_action(void);
 // release are routed consistently, even if X delivers them elsewhere.
 static Window g_press_target = 0;
 
+// Grab global shortcuts at X11 level so applications can't intercept them
+void grab_global_shortcuts(Display *display, Window root) {
+    // Super key combinations for window management
+    XGrabKey(display, XKeysymToKeycode(display, XK_q),
+             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+Q
+    XGrabKey(display, XKeysymToKeycode(display, XK_r),
+             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+R
+    XGrabKey(display, XKeysymToKeycode(display, XK_s),
+             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+S
+    
+    // Super-only combinations
+    XGrabKey(display, XKeysymToKeycode(display, XK_e),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+E
+    XGrabKey(display, XKeysymToKeycode(display, XK_l),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+L
+    XGrabKey(display, XKeysymToKeycode(display, XK_r),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+R
+    XGrabKey(display, XKeysymToKeycode(display, XK_semicolon),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+;
+    XGrabKey(display, XKeysymToKeycode(display, XK_q),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Q
+    XGrabKey(display, XKeysymToKeycode(display, XK_p),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+P
+    XGrabKey(display, XKeysymToKeycode(display, XK_o),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+O
+    XGrabKey(display, XKeysymToKeycode(display, XK_c),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+C
+    XGrabKey(display, XKeysymToKeycode(display, XK_d),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+D
+    XGrabKey(display, XKeysymToKeycode(display, XK_n),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+N
+    XGrabKey(display, XKeysymToKeycode(display, XK_a),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+A
+    
+    // Media keys - grab with AnyModifier so they work everywhere
+    XGrabKey(display, XKeysymToKeycode(display, XF86XK_MonBrightnessUp),
+             AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, XKeysymToKeycode(display, XF86XK_MonBrightnessDown),
+             AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, XKeysymToKeycode(display, XF86XK_AudioRaiseVolume),
+             AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, XKeysymToKeycode(display, XF86XK_AudioLowerVolume),
+             AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, XKeysymToKeycode(display, XF86XK_AudioMute),
+             AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+}
+
 // Clear the press target when a window is being destroyed
 void clear_press_target_if_matches(Window win) {
     if (g_press_target == win) {
@@ -44,8 +92,16 @@ void clear_press_target_if_matches(Window win) {
 
 bool running = true;
 
+
 // Gated debug helper (wire to env later if needed)
 static inline int wb_dbg(void) { return 0; }
+
+// Helper to check if a window is still valid
+static inline bool is_window_valid(Display *dpy, Window win) {
+    if (win == None) return false;
+    XWindowAttributes attrs;
+    return XGetWindowAttributes(dpy, win, &attrs) == True;
+}
 
 // Helper function to create event copy with translated coordinates
 static XButtonEvent create_translated_button_event(XButtonEvent *original, Window target_window, int new_x, int new_y) {
@@ -211,11 +267,127 @@ void handle_events(void) {
             case MapNotify: {
                 // Catch unmanaged toplevels when SubstructureRedirect was not granted
                 XMapEvent *map_event = &event.xmap;
+                
+                // Check if it's a client window OR a frame window
                 Canvas *canvas = find_canvas_by_client(map_event->window);
+                if (!canvas) {
+                    // Maybe it's a frame window?
+                    canvas = find_canvas(map_event->window);
+                    if (canvas) {
+                        fprintf(stderr, "[DEBUG] Found canvas by FRAME window 0x%lx\n", 
+                                (unsigned long)map_event->window);
+                    }
+                }
                 if (canvas) {
-                    // Clear consecutive unmap counter - window is healthy again
+                    
+                    // ALWAYS force transient dialogs to correct position on EVERY MapNotify
+                    // Simple, brutal, effective - no negotiation with GTK
+                    if (canvas->is_transient) {
+                        // Center dialog on screen
+                        int screen_width = DisplayWidth(get_display(), DefaultScreen(get_display()));
+                        int screen_height = DisplayHeight(get_display(), DefaultScreen(get_display()));
+                        int frame_x = (screen_width - canvas->width) / 2;
+                        int frame_y = (screen_height - canvas->height) / 2;
+                        if (frame_y < MENUBAR_HEIGHT) frame_y = MENUBAR_HEIGHT;
+                        
+                        // Get ACTUAL position of frame window - not the lies in canvas
+                        int real_x = 0, real_y = 0;
+                        Window child;
+                        XTranslateCoordinates(get_display(), canvas->win, 
+                                            DefaultRootWindow(get_display()),
+                                            0, 0, &real_x, &real_y, &child);
+                        
+                        printf("[INFO] ACTUAL position: %d,%d | Canvas THINKS: %d,%d | WANT: %d,%d\n", 
+                               real_x, real_y, canvas->x, canvas->y, frame_x, frame_y);
+                        
+                        // ALWAYS force move - don't trust canvas position
+                        XMoveWindow(get_display(), canvas->win, frame_x, frame_y);
+                        XSync(get_display(), False);
+                        
+                        canvas->x = frame_x;
+                        canvas->y = frame_y;
+                        
+                        // Force client to correct position within frame (only if this IS the client)
+                        if (map_event->window == canvas->client_win) {
+                            XMoveWindow(get_display(), map_event->window, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
+                            XSync(get_display(), False);
+                        }
+                        
+                        // Debug: What window are we actually verifying?
+                        fprintf(stderr, "[DEBUG] Verifying window 0x%lx (map_event->window)\n", 
+                                (unsigned long)map_event->window);
+                        fprintf(stderr, "[DEBUG] Canvas client_win is 0x%lx\n", 
+                                (unsigned long)canvas->client_win);
+                        fprintf(stderr, "[DEBUG] Canvas frame win is 0x%lx\n", 
+                                (unsigned long)canvas->win);
+                        
+                        // Only verify if it's really the client window
+                        if (map_event->window == canvas->client_win) {
+                            // Client should be at correct position
+                        } else {
+                            fprintf(stderr, "[WARNING] map_event->window != canvas->client_win, skipping verification\n");
+                        }
+                        
+                        // Verify it actually moved
+                        XTranslateCoordinates(get_display(), canvas->win, 
+                                            DefaultRootWindow(get_display()),
+                                            0, 0, &real_x, &real_y, &child);
+                        if (real_x != frame_x || real_y != frame_y) {
+                            printf("[ERROR] Move FAILED! Still at %d,%d instead of %d,%d\n",
+                                   real_x, real_y, frame_x, frame_y);
+                        }
+                    }
+                    
+                    // Reset unmap counter if it was previously hidden
                     if (canvas->is_transient && canvas->consecutive_unmaps > 0) {
                         canvas->consecutive_unmaps = 0;
+                        
+                        // Re-show frame if it was hidden
+                        if (canvas->win != None) {
+                            XWindowAttributes frame_attrs;
+                            if (XGetWindowAttributes(get_display(), canvas->win, &frame_attrs) &&
+                                frame_attrs.map_state == IsUnmapped) {
+                                
+                                // Map the window first
+                                XMapWindow(get_display(), canvas->win);
+                                XSync(get_display(), False);
+                                
+                                // Calculate center position
+                                int screen_width = DisplayWidth(get_display(), DefaultScreen(get_display()));
+                                int screen_height = DisplayHeight(get_display(), DefaultScreen(get_display()));
+                                int center_x = (screen_width - canvas->width) / 2;
+                                int center_y = (screen_height - canvas->height) / 2;
+                                if (center_y < MENUBAR_HEIGHT) center_y = MENUBAR_HEIGHT;
+                                
+                                // Move to center
+                                XMoveWindow(get_display(), canvas->win, center_x, center_y);
+                                XSync(get_display(), False);
+                                
+                                // VERIFY it moved - if not, the client is the culprit
+                                int actual_x = 0, actual_y = 0;
+                                Window child;
+                                XTranslateCoordinates(get_display(), canvas->win,
+                                                    DefaultRootWindow(get_display()),
+                                                    0, 0, &actual_x, &actual_y, &child);
+                                
+                                if (actual_x != center_x || actual_y != center_y) {
+                                    // Client is at wrong position
+                                    printf("[WARNING] Client at %d,%d instead of %d,%d\n",
+                                           actual_x, actual_y, center_x, center_y);
+                                }
+                                
+                                // Update canvas with verified position
+                                canvas->x = center_x;
+                                canvas->y = center_y;
+                            }
+                        }
+                    }
+                    
+                    // Always raise and activate transient dialogs when they map
+                    if (canvas->is_transient && canvas->win != None) {
+                        XRaiseWindow(get_display(), canvas->win);
+                        XSetInputFocus(get_display(), map_event->window, RevertToParent, CurrentTime);
+                        set_active_window(canvas);
                     }
                 }
                 intuition_handle_map_notify(map_event);
@@ -460,6 +632,29 @@ void handle_key_press(XKeyEvent *event) {
     
     // Check for global shortcuts (Super/Windows key + letter)
     KeySym keysym = XLookupKeysym(event, 0);
+    
+    // Handle media keys first - they should work regardless of other modifiers
+    if (keysym == XF86XK_MonBrightnessUp) {
+        system("brightnessctl set +10%");
+        return;
+    }
+    if (keysym == XF86XK_MonBrightnessDown) {
+        system("brightnessctl set 10%-");
+        return;
+    }
+    if (keysym == XF86XK_AudioRaiseVolume) {
+        system("amixer -c 2 set Master 5%+");
+        return;
+    }
+    if (keysym == XF86XK_AudioLowerVolume) {
+        system("amixer -c 2 set Master 5%-");
+        return;
+    }
+    if (keysym == XF86XK_AudioMute) {
+        system("amixer -c 2 set Master toggle");
+        return;
+    }
+    
     if (event->state & Mod4Mask) {  // Super/Windows key is pressed
         if (event->state & ShiftMask) {
             // Super+Shift combinations
@@ -642,13 +837,38 @@ void handle_configure_notify(XConfigureEvent *event) {
 void handle_unmap_notify(XUnmapEvent *event) {
     Canvas *canvas = find_canvas_by_client(event->window);
     if (canvas) {
-        // Zombie detection for transient windows
+        
+        // For transient windows, track unmaps
+        // GTK file picker dialogs unmap themselves multiple times when finishing
         if (canvas->is_transient) {
             canvas->consecutive_unmaps++;
             
-            // If this is the second consecutive unmap without a remap, it's a zombie
-            if (canvas->consecutive_unmaps >= 2) {
-                destroy_canvas(canvas);
+            // Check if this is a GTK dialog and handle after 3 unmaps
+            if (canvas->consecutive_unmaps >= 3 && !canvas->cleanup_scheduled) {
+                canvas->cleanup_scheduled = true;
+                
+                // Save parent before hiding
+                Window parent_win = canvas->transient_for;
+                
+                // Just hide our frame, don't destroy anything
+                // GTK dialogs will send DestroyNotify when they're really done
+                if (canvas->win != None) {
+                    XUnmapWindow(get_display(), canvas->win);
+                }
+                
+                // Restore focus to parent window when dialog is hidden
+                if (parent_win != None) {
+                    Canvas *parent_canvas = find_canvas_by_client(parent_win);
+                    if (parent_canvas) {
+                        set_active_window(parent_canvas);
+                        XSetInputFocus(get_display(), parent_win, RevertToParent, CurrentTime);
+                    }
+                }
+                
+                // Reset the counter so it can be shown again
+                canvas->consecutive_unmaps = 0;
+                canvas->cleanup_scheduled = false;
+                return;
             }
         }
     }

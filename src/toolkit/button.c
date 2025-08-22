@@ -6,13 +6,26 @@
 
 Button* button_create(int x, int y, int width, int height, const char *label) {
     Button *button = malloc(sizeof(Button));
-    if (!button) return NULL;
+    if (!button) {
+        printf("[ERROR] malloc failed for Button structure (size=%zu)\n", sizeof(Button));
+        return NULL;
+    }
     
     button->x = x;
     button->y = y;
     button->width = width;
     button->height = height;
-    button->label = label ? strdup(label) : NULL;
+    
+    if (label) {
+        button->label = strdup(label);
+        if (!button->label) {
+            free(button);
+            return NULL;
+        }
+    } else {
+        button->label = NULL;
+    }
+    
     button->pressed = false;
     button->hover = false;
     button->on_click = NULL;
@@ -22,24 +35,32 @@ Button* button_create(int x, int y, int width, int height, const char *label) {
 }
 
 void button_destroy(Button *button) {
-    if (!button) return;
+    if (!button) {
+        return;  // Not fatal - cleanup function
+    }
     if (button->label) free(button->label);
     free(button);
 }
 
 void button_set_callback(Button *button, void (*on_click)(void*), void *user_data) {
-    if (!button) return;
+    if (!button) {
+        return;
+    }
     button->on_click = on_click;
     button->user_data = user_data;
 }
 
 void button_set_pressed(Button *button, bool pressed) {
-    if (!button) return;
+    if (!button) {
+        return;
+    }
     button->pressed = pressed;
 }
 
 void button_draw(Button *button, Picture dest, Display *dpy, XftDraw *xft_draw, XftFont *font) {
-    if (!button || !dpy) return;
+    if (!button || !dpy || dest == None) {
+        return;
+    }
     
     int x = button->x;
     int y = button->y;
@@ -105,7 +126,9 @@ void button_draw(Button *button, Picture dest, Display *dpy, XftDraw *xft_draw, 
 }
 
 bool button_handle_click(Button *button, int click_x, int click_y) {
-    if (!button) return false;
+    if (!button) {
+        return false;
+    }
     
     if (click_x >= button->x && click_x < button->x + button->width &&
         click_y >= button->y && click_y < button->y + button->height) {
@@ -116,7 +139,9 @@ bool button_handle_click(Button *button, int click_x, int click_y) {
 }
 
 bool button_handle_release(Button *button, int click_x, int click_y) {
-    if (!button) return false;
+    if (!button) {
+        return false;
+    }
     
     bool was_pressed = button->pressed;
     button->pressed = false;

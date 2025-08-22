@@ -557,10 +557,11 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
     XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &text_color, &xft_text);
     
     if (dialog->dialog_type == DIALOG_DELETE_CONFIRM) {
-        int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+        //int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
         int line_y = BORDER_HEIGHT_TOP + 30;
         int text_left_x = BORDER_WIDTH_LEFT + 15;  // Left margin inside inner window
         
+        /*
         // Line 1: "Warning" centered
         const char *warning = "Warning";
         XGlyphInfo warning_ext;
@@ -569,30 +570,47 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, warning_x, line_y, 
                          (FcChar8*)warning, strlen(warning));
         line_y += 30;
-        
-        // Line 2: "Once something is deleted it's" - left aligned
-        const char *line2 = "Once something is deleted it's";
+        */
+
+
+        const char *line1 = "Last call before Willoughby. Beyond this point,";
+        const char *line2 = "no return service is available. Files wishing to";
+        const char *line3 = "preserve structural integrity should disembark";
+        const char *line4 = "immediately. Dear Files and Dirs: Last call,";
+        const char *line5 = "Terminus inbound..";
+
+
+        XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_left_x, line_y,
+                 (FcChar8*)line1, strlen(line1));
+        line_y += 14;
+
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_left_x, line_y,
                          (FcChar8*)line2, strlen(line2));
-        line_y += 18;
-        
-        // Line 3: "going straight to willoughby!" - left aligned
-        const char *line3 = "going straight to willoughby!";
+        line_y += 14;
+
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_left_x, line_y,
                          (FcChar8*)line3, strlen(line3));
-        line_y += 25;
-        
-        // Line 4: "Is it really Ok to delete:" - left aligned
-        const char *line4 = "Is it really Ok to delete:";
+        line_y += 14;
+
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_left_x, line_y,
                          (FcChar8*)line4, strlen(line4));
-        line_y += 18;
+        line_y += 14;
+
+        XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_left_x, line_y,
+                 (FcChar8*)line5, strlen(line5));
+        line_y += 35;
+        
+        const char *line6 = "Is it really Ok to delete:";
+        XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_left_x, line_y,
+                         (FcChar8*)line6, strlen(line6));
+        line_y += 14;
         
         // Line 5: The delete summary (stored in text_buffer) - left aligned
         // This contains formatted text like "3 files and 4 directories?"
         const char *msg = dialog->text_buffer;
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_left_x, line_y,
                          (FcChar8*)msg, strlen(msg));
+
     } else if (dialog->dialog_type == DIALOG_EXECUTE_COMMAND) {
         // For execute dialog, show the command prompt
         const char *title_text = "Enter Command and its Arguments:";
@@ -880,8 +898,12 @@ void render_dialog_content(Canvas *canvas) {
     Display *dpy = get_display();
     Picture dest = canvas->canvas_render;
     
-    // Clear background to dialog gray
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, 0, 0, canvas->width, canvas->height);
+    // Clear only the content area inside the borders to dialog gray
+    int content_x = BORDER_WIDTH_LEFT;
+    int content_y = BORDER_HEIGHT_TOP;
+    int content_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+    int content_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, content_x, content_y, content_w, content_h);
     
     // Calculate element positions
     int input_x, input_y, input_w, ok_x, ok_y, cancel_x, cancel_y;
@@ -1366,7 +1388,7 @@ void show_delete_confirmation(const char *message,
     dialog->completion_prefix_len = 0;
     
     // Create canvas window (400x219 for delete, taller to fit warning text + checker + decorations)  
-    dialog->canvas = create_canvas(NULL, 200, 150, 400, 219, DIALOG);
+    dialog->canvas = create_canvas(NULL, 200, 150, 450, 220, DIALOG);
     if (!dialog->canvas) {
         free(dialog);
         return;

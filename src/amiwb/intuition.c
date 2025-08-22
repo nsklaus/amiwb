@@ -16,6 +16,7 @@
 #include <X11/extensions/Xdamage.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>  // For strcasecmp
 #include <stdio.h>
 #include <sys/stat.h>
 #include "resize.h"
@@ -30,6 +31,7 @@ static bool get_window_attributes_safely(Window win, XWindowAttributes *attrs);
 static void calculate_content_area_inside_frame(const Canvas *canvas, int *content_width, int *content_height);
 static void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height);
 static inline void move_and_resize_frame(Canvas *c, int x, int y, int w, int h);
+static void remove_canvas_from_array(Canvas *target_canvas);
 
 // Global state for intuition
 // Display, render context, and canvas registry live here so window
@@ -60,7 +62,10 @@ static long long now_ms(void) {
 
 // Send close request to client window (WM_DELETE_WINDOW or XKillClient)
 static bool send_close_request_to_client(Window client_window) {
-    if (!is_window_valid(display, client_window)) return false;
+    
+    if (!is_window_valid(display, client_window)) {
+        return false;
+    }
     
     Atom wm_protocols = XInternAtom(display, "WM_PROTOCOLS", False);
     Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
@@ -95,37 +100,19 @@ static bool send_close_request_to_client(Window client_window) {
     }
 }
 
-// Handle close request for canvas (special logic for transient windows)
+// Handle close request for canvas - simple and forceful
 static void request_client_close(Canvas *canvas) {
-    if (!canvas) return;
-           
+    if (!canvas) {
+        printf("[ERROR] request_client_close called with NULL canvas\n");
+        return;
+    }
+    
     if (canvas->client_win && is_window_valid(display, canvas->client_win)) {
-        // For transient windows that already had a close request, destroy completely
-        if (canvas->is_transient && canvas->close_request_sent) {
-            destroy_canvas(canvas);
-            return;
-        }
-        
-        // Quick responsiveness test for transient windows
-        if (canvas->is_transient) {
-            Atom wm_name = XInternAtom(display, "WM_NAME", False);
-            Atom actual_type; int actual_format; unsigned long nitems, bytes_after;
-            unsigned char *prop_return = NULL;
-            
-            int result = XGetWindowProperty(display, canvas->client_win, wm_name, 0, 0, False, AnyPropertyType,
-                                           &actual_type, &actual_format, &nitems, &bytes_after, &prop_return);
-            if (prop_return) XFree(prop_return);
-            
-            if (result != Success) {
-                destroy_canvas(canvas); // Client is dead
-                return;
-            }
-        }
-        
-        if (send_close_request_to_client(canvas->client_win) && canvas->is_transient) {
-            canvas->close_request_sent = true;
-        }
+        // Always send close request to client - no special handling
+        // If client doesn't respond, user can click again
+        send_close_request_to_client(canvas->client_win);
     } else {
+        // No client window - destroy the frame
         destroy_canvas(canvas);
     }
 }
@@ -136,12 +123,22 @@ static void request_client_close(Canvas *canvas) {
 
 // Check if window is a top-level window (direct child of root window)
 static bool is_toplevel_under_root(Window w) {
+    if (w == None) {
+        printf("[ERROR] is_toplevel_under_root called with None window\n");
+        return false;
+    }
     XWindowAttributes attrs;
-    if (!get_window_attributes_safely(w, &attrs)) return false;
+    if (!get_window_attributes_safely(w, &attrs)) {
+        // Window no longer exists - that's a real answer, not an error
+        return false;
+    }
     Window root_return, parent_return, *children = NULL; unsigned int n = 0;
     bool ok = XQueryTree(display, w, &root_return, &parent_return, &children, &n);
     if (children) XFree(children);
-    if (!ok) return false;
+    if (!ok) {
+        printf("[ERROR] XQueryTree failed for window 0x%lx\n", (unsigned long)w);
+        return false;
+    }
     return parent_return == RootWindow(display, DefaultScreen(display));
 }
 
@@ -163,7 +160,13 @@ static bool is_window_valid(Display *dpy, Window win) {
 
 // Get window attributes with validation - returns false if window is invalid
 static bool get_window_attributes_safely(Window win, XWindowAttributes *attrs) {
-    if (win == None || !attrs) return false;
+    if (win == None) {
+        return false;  // None window is a valid case - window doesn't exist
+    }
+    if (!attrs) {
+        printf("[ERROR] get_window_attributes_safely called with NULL attrs\n");
+        return false;
+    }
     return XGetWindowAttributes(display, win, attrs) == True;
 }
 
@@ -188,9 +191,9 @@ static inline void move_and_resize_frame(Canvas *c, int x, int y, int w, int h) 
 
 // Calculate frame window size needed to contain client area with borders
 static inline void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height) {
-    // Client windows always get thin 8px right border
-    if (frame_width) *frame_width = max(1, client_width) + BORDER_WIDTH_LEFT + 8;
-    if (frame_height) *frame_height = max(1, client_height) + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+    // Client windows use 8px left, 8px right, 20px top, 20px bottom
+    if (frame_width) *frame_width = max(1, client_width) + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT_CLIENT;  // 8+8=16px horizontal
+    if (frame_height) *frame_height = max(1, client_height) + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;  // 20+20=40px vertical
 }
 
 // Calculate usable content area inside window frame (excluding borders)
@@ -351,14 +354,20 @@ static Canvas *add_new_canvas_to_array(void) {
     if (canvas_count >= canvas_array_size) {
         int new_size = canvas_array_size ? canvas_array_size * 2 : INITIAL_CANVAS_CAPACITY;
         Canvas **expanded_array = realloc(canvas_array, new_size * sizeof(Canvas *));
-        if (!expanded_array) return NULL;
+        if (!expanded_array) {
+            printf("[ERROR] realloc failed for canvas_array (new size=%d)\n", new_size);
+            exit(1);
+        }
         canvas_array = expanded_array;
         canvas_array_size = new_size;
     }
     
     // Allocate new canvas
     Canvas *new_canvas = malloc(sizeof(Canvas));
-    if (!new_canvas) return NULL;
+    if (!new_canvas) {
+        printf("[ERROR] malloc failed for Canvas structure (size=%zu)\n", sizeof(Canvas));
+        return NULL;
+    }
     
     canvas_array[canvas_count++] = new_canvas;
     return new_canvas;
@@ -486,8 +495,20 @@ static void apply_resize_and_redraw(Canvas *c, int nw, int nh) {
     if (c->client_win != None) { 
         int client_width, client_height; 
         calculate_content_area_inside_frame(c, &client_width, &client_height);
-        XWindowChanges ch = { .width = client_width, .height = client_height };
-        XConfigureWindow(display, c->client_win, CWWidth | CWHeight, &ch);
+        
+        // DEBUG: Check if client height is correct
+        printf("[DEBUG] Frame height=%d, client_height=%d, TOP=%d, BOTTOM=%d, sum=%d\n",
+               c->height, client_height, BORDER_HEIGHT_TOP, BORDER_HEIGHT_BOTTOM,
+               client_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM);
+        
+        // MUST also set position to ensure client stays within borders!
+        XWindowChanges ch = { 
+            .x = BORDER_WIDTH_LEFT, 
+            .y = BORDER_HEIGHT_TOP,
+            .width = client_width, 
+            .height = client_height 
+        };
+        XConfigureWindow(display, c->client_win, CWX | CWY | CWWidth | CWHeight, &ch);
     } else if (c->type == WINDOW) compute_max_scroll(c);
     
     // Always redraw to show resize visually
@@ -565,7 +586,10 @@ static Bool setup_visual_and_window(Canvas *c, CanvasType t,
     // InputOutput means this window can both display content and receive input
     c->win = XCreateWindow(display, root, win_x, win_y, win_w, win_h,
                            0, vinfo.depth, InputOutput, c->visual, mask, &attrs);
-    if (!c->win) return False;
+    if (c->win == None) {
+        printf("[ERROR] XCreateWindow failed for frame at %d,%d size %dx%d\n", win_x, win_y, win_w, win_h);
+        return False;
+    }
     c->colormap = attrs.colormap;
 
     // No internal tagging
@@ -575,7 +599,12 @@ static Bool setup_visual_and_window(Canvas *c, CanvasType t,
 
     // Backing pixmap for offscreen rendering
     c->canvas_buffer = XCreatePixmap(ctx->dpy, c->win, w, h, vinfo.depth);
-    return c->canvas_buffer ? True : False;
+    if (c->canvas_buffer == None) {
+        printf("[ERROR] XCreatePixmap failed for canvas buffer %dx%d depth=%d\n", w, h, vinfo.depth);
+        XDestroyWindow(ctx->dpy, c->win);
+        return False;
+    }
+    return True;
 }
 
 static Bool init_render_pictures(Canvas *c, CanvasType t) {
@@ -619,13 +648,49 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
     
     int fw, fh;
     calculate_frame_size_from_client_size(attrs->width, attrs->height, &fw, &fh);
-    Canvas *frame = create_canvas(NULL, fx, fy, fw, fh, WINDOW); if (!frame) return NULL;
+    
+    
+    // Use create_canvas_with_client to set client_win BEFORE any rendering
+    Canvas *frame = create_canvas_with_client(NULL, fx, fy, fw, fh, WINDOW, client);
+    if (!frame) return NULL;
     
     // Check if this is a transient window (modal dialog) and mark it
     Window transient_for = None;
     if (XGetTransientForHint(display, client, &transient_for)) {
         frame->is_transient = true;
         frame->transient_for = transient_for;
+        
+        // Force transient dialogs to center of screen - don't trust GTK's position
+        int screen_width = DisplayWidth(display, DefaultScreen(display));
+        int screen_height = DisplayHeight(display, DefaultScreen(display));
+        fx = (screen_width - fw) / 2;
+        fy = (screen_height - fh) / 2;
+        if (fy < MENUBAR_HEIGHT) fy = MENUBAR_HEIGHT;
+        
+        // Move the frame to the forced position AND update canvas position
+        XMoveWindow(display, frame->win, fx, fy);
+        frame->x = fx;
+        frame->y = fy;
+        
+        // Get window class and name for debugging
+        XClassHint class_hint;
+        if (XGetClassHint(display, client, &class_hint)) {
+            if (class_hint.res_name) XFree(class_hint.res_name);
+            if (class_hint.res_class) XFree(class_hint.res_class);
+        }
+        
+        // Check window protocols
+        Atom *protocols;
+        int count;
+        if (XGetWMProtocols(display, client, &protocols, &count)) {
+            for (int i = 0; i < count; i++) {
+                char *atom_name = XGetAtomName(display, protocols[i]);
+                if (atom_name) {
+                    XFree(atom_name);
+                }
+            }
+            XFree(protocols);
+        }
     } else {
         frame->is_transient = false;
         frame->transient_for = None;
@@ -657,7 +722,7 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
         }
     }
     if (attrs->border_width != 0) { XWindowChanges b = { .border_width = 0 }; XConfigureWindow(display, client, CWBorderWidth, &b); }
-    frame->client_win = client;
+    // client_win already set earlier to ensure correct border rendering
     
     // Read window size hints from client
     if (frame->client_win != None) {
@@ -670,10 +735,35 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
         XSizeHints *hints = XAllocSizeHints();
         long supplied_hints;
         if (hints && XGetWMNormalHints(display, client, hints, &supplied_hints)) {
-            // Apply minimum size constraints (add frame decorations to client minimums)
+            
+            // Apply minimum size constraints per ICCCM (like dwm does)
+            // First determine base size
+            int base_width = 0, base_height = 0;
+            if (hints->flags & PBaseSize) {
+                base_width = hints->base_width;
+                base_height = hints->base_height;
+            } else if (hints->flags & PMinSize) {
+                base_width = hints->min_width;
+                base_height = hints->min_height;
+            }
+            
+            // Then determine minimum size
+            int min_width = 0, min_height = 0;
             if (hints->flags & PMinSize) {
-                frame->min_width = hints->min_width + BORDER_WIDTH_LEFT + 8;  // Client windows get 8px right border
-                frame->min_height = hints->min_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+                min_width = hints->min_width;
+                min_height = hints->min_height;
+            } else if (hints->flags & PBaseSize) {
+                min_width = hints->base_width;
+                min_height = hints->base_height;
+            }
+            
+            // Use the LARGER of base and min for actual minimum (ICCCM compliance)
+            int actual_min_width = (base_width > min_width) ? base_width : min_width;
+            int actual_min_height = (base_height > min_height) ? base_height : min_height;
+            
+            if (actual_min_width > 0 || actual_min_height > 0) {
+                frame->min_width = actual_min_width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT_CLIENT;
+                frame->min_height = actual_min_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
             } else {
                 frame->min_width = 150;  // Default minimum
                 frame->min_height = 150;
@@ -681,7 +771,7 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
             
             // Apply maximum size constraints (add frame decorations to client maximums)
             if (hints->flags & PMaxSize) {
-                frame->max_width = hints->max_width + BORDER_WIDTH_LEFT + 8;  // Client windows get 8px right border
+                frame->max_width = hints->max_width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT_CLIENT;
                 frame->max_height = hints->max_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
             } else {
                 frame->max_width = max_frame_width;
@@ -1098,8 +1188,15 @@ void iconify_canvas(Canvas *c) {
 }
 
 // Create new window
+// Original create_canvas - delegates to create_canvas_with_client
 Canvas *create_canvas(const char *path, int x, int y, int width, 
         int height, CanvasType type) {
+    return create_canvas_with_client(path, x, y, width, height, type, None);
+}
+
+// Helper function for creating canvas with client window already set
+Canvas *create_canvas_with_client(const char *path, int x, int y, int width, 
+        int height, CanvasType type, Window client_win) {
     
     RenderContext *ctx = get_render_context();
     if (!ctx) return NULL;
@@ -1107,6 +1204,9 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
     Canvas *canvas = manage_canvases(true, NULL);
     if (!canvas) return NULL;
     init_canvas_metadata(canvas, path, type, x, y, width, height);
+    
+    // Set client_win immediately to prevent wrong rendering
+    canvas->client_win = client_win;
     // Initialize all button armed states
     canvas->close_armed = false;
     canvas->iconify_armed = false;
@@ -1122,6 +1222,7 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
     canvas->transient_for = None;
     canvas->close_request_sent = false;
     canvas->consecutive_unmaps = 0;
+    canvas->cleanup_scheduled = false;
     canvas->disable_scrollbars = false;
     // Initialize maximize toggle support
     canvas->maximized = false;
@@ -1724,13 +1825,57 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
 }
 
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
-    Canvas *canvas = find_canvas_by_client(event->window) ?: find_canvas(event->window);
-    if (!canvas) {
+    
+    // First check if this is one of our frame windows being destroyed
+    Canvas *canvas = find_canvas(event->window);
+    if (canvas) {
+        // Our frame window was destroyed - clean up everything
+        canvas->close_request_sent = false;
+        destroy_canvas(canvas);
         return;
     }
-    // Clear any pending close request flag
-    canvas->close_request_sent = false;
-    destroy_canvas(canvas);
+    
+    // Check if this is a client window destroying itself
+    canvas = find_canvas_by_client(event->window);
+    if (canvas) {
+        
+        // Only handle specially for transient windows (dialogs)
+        // Normal windows should go through the regular destroy process
+        if (canvas->is_transient) {
+            
+            // Save the parent window before cleanup
+            Window parent_win = canvas->transient_for;
+            
+            // The dialog destroyed itself - just clean up our tracking
+            canvas->client_win = None;
+            
+            // Remove from canvas list
+            remove_canvas_from_array(canvas);
+            
+            // Free our frame window if it exists
+            if (canvas->win != None && is_window_valid(display, canvas->win)) {
+                XDestroyWindow(display, canvas->win);
+            }
+            
+            // Free resources
+            free(canvas->path);
+            free(canvas->title);
+            free(canvas);
+            
+            // Restore focus to parent window if it exists
+            if (parent_win != None) {
+                Canvas *parent_canvas = find_canvas_by_client(parent_win);
+                if (parent_canvas) {
+                    set_active_window(parent_canvas);
+                    XSetInputFocus(display, parent_win, RevertToParent, CurrentTime);
+                }
+            }
+        } else {
+            // Normal window - client destroyed itself, proceed with normal cleanup
+            canvas->close_request_sent = false;
+            destroy_canvas(canvas);
+        }
+    }
 }
 
 void intuition_handle_button_release(XButtonEvent *event) {
@@ -1885,6 +2030,7 @@ static void frame_and_activate(Window client, XWindowAttributes *attrs, bool map
     set_active_window(frame);
     redraw_canvas(frame);
     XSync(display, False);
+    
 }
 
 void intuition_handle_map_request(XMapRequestEvent *event) {
@@ -1944,11 +2090,16 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
 
     if (event->value_mask & (CWWidth | CWHeight)) {
         calculate_frame_size_from_client_size(event->width, event->height, &frame_changes.width, &frame_changes.height);
+        
         frame_mask |= (event->value_mask & CWWidth) ? CWWidth : 0;
         frame_mask |= (event->value_mask & CWHeight) ? CWHeight : 0;
     }
-    if (event->value_mask & CWX) { frame_changes.x = event->x; frame_mask |= CWX; }
-    if (event->value_mask & CWY) { frame_changes.y = max(event->y, MENUBAR_HEIGHT); frame_mask |= CWY; }
+    
+    // IGNORE position requests from transient windows - WE decide where they go!
+    if (!canvas->is_transient) {
+        if (event->value_mask & CWX) { frame_changes.x = event->x; frame_mask |= CWX; }
+        if (event->value_mask & CWY) { frame_changes.y = max(event->y, MENUBAR_HEIGHT); frame_mask |= CWY; }
+    }
 
     if ((event->value_mask & (CWStackMode | CWSibling)) == (CWStackMode | CWSibling) &&
         event->detail >= 0 && event->detail <= 4) {
@@ -1959,7 +2110,12 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
             frame_mask |= CWStackMode | CWSibling;
         }
     }
-    if (frame_mask) XConfigureWindow(display, canvas->win, frame_mask, &frame_changes);
+    if (frame_mask) {
+        XConfigureWindow(display, canvas->win, frame_mask, &frame_changes);
+        // Update canvas position if we moved the frame
+        if (frame_mask & CWX) canvas->x = frame_changes.x;
+        if (frame_mask & CWY) canvas->y = frame_changes.y;
+    }
 
     // Configure client window within frame borders
     XWindowChanges client_changes = { .x = BORDER_WIDTH_LEFT, .y = BORDER_HEIGHT_TOP };
@@ -1974,6 +2130,7 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
 void intuition_handle_configure_request(XConfigureRequestEvent *event) {
     Canvas *canvas = find_canvas_by_client(event->window);
     if (!canvas) { handle_configure_unmanaged(event); return; }
+    
     handle_configure_managed(canvas, event);
     apply_resize_and_redraw(canvas, event->width, event->height);
     // allow natural batching; no XSync here
@@ -1998,8 +2155,9 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
         desktop->width = width;
         desktop->height = height;
         
-        // Reload wallpapers at the NEW screen size from the event
-        // render_load_wallpapers_at_size(width, height);  // TODO: implement
+        // Reload wallpapers at the NEW screen size
+        // This will free old cached Pictures and create new ones at current screen size
+        render_load_wallpapers();
         
         // Now recreate surfaces and redraw with new wallpaper
         render_recreate_canvas_surfaces(desktop);
@@ -2136,4 +2294,60 @@ void cleanup_intuition(void) {
 
     XCloseDisplay(render_context->dpy);
     free(render_context); render_context = NULL; display = NULL;
+}
+
+// Function to clean up GTK dialog frames without sending messages
+void cleanup_gtk_dialog_frame(Canvas* canvas) {
+    if (!canvas) return;
+    
+    // If this was a transient dialog, find the parent and activate it
+    Window parent_client = None;
+    Window parent_frame = None;
+    if (canvas->is_transient && canvas->transient_for != None) {
+        // Find the parent canvas
+        Canvas *parent_canvas = find_canvas_by_client(canvas->transient_for);
+        if (parent_canvas) {
+            parent_client = parent_canvas->client_win;
+            parent_frame = parent_canvas->win;
+        }
+    }
+    
+    // Don't touch the client window - GTK manages it
+    // Clean up our frame
+    if (canvas->win != None) {
+        XUnmapWindow(get_display(), canvas->win);
+        XDestroyWindow(get_display(), canvas->win);
+    }
+    
+    // Remove from our management
+    for (int i = 0; i < canvas_count; i++) {
+        if (canvas_array[i] == canvas) {
+            // Shift remaining canvases down
+            for (int j = i; j < canvas_count - 1; j++) {
+                canvas_array[j] = canvas_array[j + 1];
+            }
+            canvas_count--;
+            break;
+        }
+    }
+    
+    // Free canvas resources
+    if (canvas->path) free(canvas->path);
+    if (canvas->title) free(canvas->title);
+    free(canvas);
+    
+    // Now activate the parent window if we found one
+    if (parent_client != None && parent_frame != None) {
+        
+        // Raise the frame window to bring it to front
+        XRaiseWindow(get_display(), parent_frame);
+        
+        // Set input focus to the client window
+        XSetInputFocus(get_display(), parent_client, RevertToParent, CurrentTime);
+        
+        // Also make the frame active in our window manager's view
+        set_active_window(find_canvas_by_client(parent_client));
+        
+        XFlush(get_display());
+    }
 }

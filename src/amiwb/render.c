@@ -515,12 +515,13 @@ void redraw_canvas(Canvas *canvas) {
     // Skip validation - canvas lifecycle is properly managed
     // This eliminates a synchronous X11 call on every redraw
 
-    // If canvas is WINDOW type with a client window, 
+    // If canvas is WINDOW type with a client window,
     // dest is window_render; otherwise, canvas_render.
-    bool is_client_frame = (canvas->type == WINDOW && 
-        canvas->client_win != None);
+    // Note: DIALOG windows use canvas_render, not window_render
+    bool is_client_frame = (canvas->type == WINDOW && canvas->client_win != None);
     bool has_bg_image = false;
     Picture dest = is_client_frame ? canvas->window_render : canvas->canvas_render;
+    
 
     // set background pictures or fill background for non-client canvas
     // (desktop or empty windows and not clients, not menus)

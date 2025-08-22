@@ -7,6 +7,7 @@
  * 3. Smart buffer management (create once, reuse)
  */
 
+#include "config.h"
 #include "resize.h"
 #include "intuition.h"
 #include "render.h"
@@ -15,11 +16,9 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdbool.h>
+#include <X11/Xutil.h> // For XSizeHints
 
-// Simple max function
-static inline int max(int a, int b) {
-    return (a > b) ? a : b;
-}
+// max() is already defined as a macro in config.h
 
 // Simple resize state - just what we need, nothing more
 typedef struct {
@@ -83,6 +82,47 @@ static void create_initial_resize_buffers(Canvas *canvas, int start_width, int s
 void resize_begin(Canvas *canvas, int mouse_x, int mouse_y) {
     if (!canvas) return;
     
+    // Update size hints at start of resize (like dwm does)
+    if (canvas->client_win != None) {
+        // Refresh size hints from client
+        XSizeHints hints;
+        long supplied_return;
+        if (XGetWMNormalHints(get_display(), canvas->client_win, &hints, &supplied_return)) {
+            // Apply minimum size constraints per ICCCM
+            int min_width = 0, min_height = 0;
+            if (hints.flags & PMinSize) {
+                min_width = hints.min_width;
+                min_height = hints.min_height;
+            } else if (hints.flags & PBaseSize) {
+                min_width = hints.base_width;
+                min_height = hints.base_height;
+            }
+            
+            // Add our borders to get frame minimums
+            if (min_width > 0) {
+                canvas->min_width = min_width + BORDER_WIDTH_LEFT + get_right_border_width(canvas);
+            }
+            if (min_height > 0) {
+                canvas->min_height = min_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+            }
+        }
+        
+        // Check if client is already violating its advertised hints (GIMP does this)
+        XWindowAttributes client_attrs;
+        if (XGetWindowAttributes(get_display(), canvas->client_win, &client_attrs)) {
+            int expected_height = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+            
+            // If client is bigger than expected based on frame size, adjust our minimum
+            if (client_attrs.height > expected_height) {
+                int real_min_frame_height = client_attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+                if (real_min_frame_height > canvas->min_height) {
+                    printf("[INFO] Client wants %d height but advertised minimum %d - adjusting\n", 
+                           client_attrs.height, expected_height);
+                    canvas->min_height = real_min_frame_height;
+                }
+            }
+        }
+    }
     
     // Simple state setup
     g_resize.canvas = canvas;
@@ -194,8 +234,18 @@ void resize_motion(int mouse_x, int mouse_y) {
         int client_width = max(1, new_width - BORDER_WIDTH_LEFT - get_right_border_width(g_resize.canvas));
         int client_height = max(1, new_height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);
         
-        XWindowChanges client_changes = { .width = client_width, .height = client_height };
-        XConfigureWindow(get_display(), g_resize.canvas->client_win, CWWidth | CWHeight, &client_changes);
+        // Set what we WANT
+        XWindowChanges client_changes = { 
+            .x = BORDER_WIDTH_LEFT,
+            .y = BORDER_HEIGHT_TOP,
+            .width = client_width, 
+            .height = client_height 
+        };
+        
+        // Resize the client window
+        XConfigureWindow(get_display(), g_resize.canvas->client_win, 
+                        CWX | CWY | CWWidth | CWHeight, &client_changes);
+        XFlush(get_display());
         
     }
     
@@ -225,6 +275,27 @@ void resize_end(void) {
     
     // printf("[RESIZE] Finished resize at %dx%d\n", 
     //        g_resize.canvas->width, g_resize.canvas->height);
+    
+    // Check if this is GIMP with incorrect size hints
+    if (g_resize.canvas->client_win != None) {
+        XWindowAttributes client_attrs;
+        if (XGetWindowAttributes(get_display(), g_resize.canvas->client_win, &client_attrs)) {
+            int expected_height = g_resize.canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+            
+            // GIMP advertises 331 min height but enforces 565 internally
+            if (client_attrs.height > expected_height && client_attrs.height > 550 && client_attrs.height < 600) {
+                printf("[INFO] GIMP detected: wants %d height, advertised %d\n", 
+                       client_attrs.height, g_resize.canvas->min_height - 40);
+                
+                // Adjust our minimum to match GIMP's reality
+                int real_min_frame_height = client_attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+                if (real_min_frame_height > g_resize.canvas->min_height) {
+                    printf("[INFO] Adjusting frame minimum to %d to match GIMP\n", real_min_frame_height);
+                    g_resize.canvas->min_height = real_min_frame_height;
+                }
+            }
+        }
+    }
     
     // Mark resize as complete
     g_resize.canvas->resizing_interactive = false;

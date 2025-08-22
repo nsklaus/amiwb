@@ -1,7 +1,12 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>  // XRenderColor
+
 
 
 // global colors
@@ -27,10 +32,14 @@
 #define NAME_SIZE 128           // Buffer size for file names (most names are <50 chars)
 
 // frame sizes
-#define BORDER_HEIGHT_TOP 20 	// height of titlebar.
-#define BORDER_WIDTH_LEFT 8 	// width of left border
-#define BORDER_WIDTH_RIGHT 20  	// width of right border
-#define BORDER_HEIGHT_BOTTOM 20 // height of bottom border
+// NOTE: Border sizes differ by window type:
+// - Workbench windows (file manager): 20px all borders (for scrollbar/resize gadget)  
+// - Client windows & dialogs: 8px left/right, 20px top/bottom
+#define BORDER_HEIGHT_TOP 20 	// height of titlebar (all windows)
+#define BORDER_WIDTH_LEFT 8 	// width of left border (all windows)
+#define BORDER_WIDTH_RIGHT 20  	// width of right border (workbench windows only)
+#define BORDER_WIDTH_RIGHT_CLIENT 8  // width of right border (client windows)
+#define BORDER_HEIGHT_BOTTOM 20 // height of bottom border (all windows)
 
 // frame buttons sizes
 #define BUTTON_CLOSE_SIZE 30 
@@ -43,6 +52,7 @@
 // TYPE_ICONIFIED is defined as enum in icons.h
 #define MAX_WINDOWS 100 		// Max open windows.
 #define ICON_HEADER_SIZE 20 	// Size of icon file header.
+#define ICON_RENDER_DEPTH 32    // Icons need 32-bit for alpha channel
 // TYPE_TOOL and TYPE_DRAWER are defined as enum in icons.h
 #define MENUBAR_HEIGHT 20 		// Height of menubar.
 #define MENU_ITEM_HEIGHT 20 	// Height of menu item.

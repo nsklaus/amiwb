@@ -107,6 +107,10 @@ static void load_one_deficon(const char *basename, char **out_storage) {
     if (stat(path, &st) == 0) {
         if (*out_storage) free(*out_storage);
         *out_storage = strdup(path);
+        if (!*out_storage) {
+            printf("[ERROR] strdup failed for path: %s\n", path);
+            return;
+        }
         printf("[deficons] present: %s -> %s\n", basename, path);
     } else {
         printf("[deficons] missing: %s -> %s/?!)\n", basename, deficons_dir);
@@ -222,6 +226,10 @@ static bool use_floating_window = false;   // Always use ARGB top-level drag win
 static char *replace_string(char **str, const char *new_str) {
     if (*str) free(*str);
     *str = strdup(new_str);
+    if (!*str) {
+        printf("[ERROR] strdup failed for string: %s\n", new_str);
+        return NULL;
+    }
     return *str;
 }
 
@@ -646,6 +654,10 @@ static void create_drag_window(void) {
                              32, InputOutput, vinfo.visual,
                              CWOverrideRedirect | CWColormap | CWBorderPixel | CWBackPixel | CWBackPixmap,
                              &attrs);
+    if (drag_win == None) {
+        printf("[ERROR] XCreateWindow failed for drag window (%dx%d)\n", drag_win_w, drag_win_h);
+        return;
+    }
     // Make drag window input-transparent so hit-testing ignores it
     int shape_event_base, shape_error_base;
     if (XShapeQueryExtension(dpy, &shape_event_base, &shape_error_base)) {
@@ -948,11 +960,17 @@ static FileIcon *manage_icons(bool add, FileIcon *icon_to_remove) {
         if (icon_count >= icon_array_size) {
             icon_array_size = icon_array_size ? icon_array_size * 2 : INITIAL_ICON_CAPACITY;
             FileIcon **new_icons = realloc(icon_array, icon_array_size * sizeof(FileIcon *));
-            if (!new_icons) return NULL;
+            if (!new_icons) {
+                printf("[ERROR] realloc failed for icon_array (new size=%d)\n", icon_array_size);
+                return NULL;
+            }
             icon_array = new_icons;
         }
         FileIcon *new_icon = calloc(1, sizeof(FileIcon));
-        if (!new_icon) return NULL;
+        if (!new_icon) {
+            printf("[ERROR] calloc failed for FileIcon structure\n");
+            return NULL;
+        }
         icon_array[icon_count++] = new_icon;
         return new_icon;
     } else if (icon_to_remove) {
@@ -994,17 +1012,35 @@ FileIcon *get_selected_icon_from_canvas(Canvas *canvas) {
 
 // Collect icons displayed on a given canvas into a newly allocated array; returns count via out param
 static FileIcon **icons_for_canvas(Canvas *canvas, int *out_count) {
-    if (!canvas || !out_count) return NULL;
+    if (!canvas) {
+        printf("[ERROR] icons_for_canvas called with NULL canvas\n");
+        return NULL;
+    }
+    if (!out_count) {
+        printf("[ERROR] icons_for_canvas called with NULL out_count\n");
+        return NULL;
+    }
     int count = 0; for (int i = 0; i < icon_count; ++i) if (icon_array[i] && icon_array[i]->display_window == canvas->win) ++count;
     *out_count = count; if (count == 0) return NULL;
-    FileIcon **list = (FileIcon**)malloc(sizeof(FileIcon*) * count); if (!list) { *out_count = 0; return NULL; }
+    FileIcon **list = (FileIcon**)malloc(sizeof(FileIcon*) * count);
+    if (!list) {
+        printf("[ERROR] malloc failed for icon list (count=%d)\n", count);
+        return NULL;
+    }
     int k = 0; for (int i = 0; i < icon_count; ++i) { FileIcon *ic = icon_array[i]; if (ic && ic->display_window == canvas->win) list[k++] = ic; }
     return list;
 }
 
 // Remove first icon on a given canvas whose absolute path matches
 static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas) {
-    if (!abs_path || !canvas) return;
+    if (!abs_path) {
+        printf("[ERROR] remove_icon_by_path_on_canvas called with NULL abs_path\n");
+        return;
+    }
+    if (!canvas) {
+        printf("[ERROR] remove_icon_by_path_on_canvas called with NULL canvas\n");
+        return;
+    }
     for (int i = 0; i < icon_count; ++i) {
         FileIcon *ic = icon_array[i];
         if (!ic) continue;
@@ -1015,10 +1051,24 @@ static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas) 
 
 void create_icon(const char *path, Canvas *canvas, int x, int y) {
     FileIcon *icon = manage_icons(true, NULL);
-    if (!icon) return;
+    if (!icon) {
+        printf("[ERROR] manage_icons failed to create new icon\n");
+        return;
+    }
     icon->path = strdup(path);
+    if (!icon->path) {
+        printf("[ERROR] strdup failed for icon path '%s'\n", path);
+        free(icon);
+        return;
+    }
     const char *base = strrchr(path, '/');
     icon->label = strdup(base ? base + 1 : path);
+    if (!icon->label) {
+        printf("[ERROR] strdup failed for icon label\n");
+        free(icon->path);
+        free(icon);
+        return;
+    }
     struct stat st;
     if (stat(path, &st) == 0) icon->type = S_ISDIR(st.st_mode) ? TYPE_DRAWER : TYPE_FILE; else icon->type = TYPE_FILE;
     icon->x = x; icon->y = y;
@@ -1197,7 +1247,11 @@ void icon_cleanup(Canvas *canvas) {
         int num_rows = max(1, (visible_h - start_y - 0) / cell_h);
         int num_columns = (count + num_rows - 1) / num_rows;
         // WINDOW canvases: keep centered columns sized by max label width for readability
-        int *col_widths = malloc(num_columns * sizeof(int)); if (!col_widths) { free(list); return; }
+        int *col_widths = malloc(num_columns * sizeof(int)); 
+        if (!col_widths) { 
+            printf("[ERROR] malloc failed for col_widths (num_columns=%d)\n", num_columns);
+            return;
+        }
         for (int col = 0; col < num_columns; col++) {
             int max_w_in_col = 0;
             for (int row = 0; row < num_rows; row++) {
@@ -1447,7 +1501,7 @@ void open_file(FileIcon *icon) {
     }
     pid_t pid = fork();
     if (pid == -1) {
-        perror("fork failed in open_file");
+        printf("[ERROR] fork failed in open_file for path: %s\n", icon->path);
         return;
     } else if (pid == 0) {
         // Child: replace with xdg-open
@@ -1584,7 +1638,11 @@ void workbench_handle_button_release(XButtonEvent *event) {
 // ========================
 
 void init_workbench(void) {
-    icon_array = malloc(INITIAL_ICON_CAPACITY * sizeof(FileIcon *)); if (!icon_array) return;
+    icon_array = malloc(INITIAL_ICON_CAPACITY * sizeof(FileIcon *)); 
+    if (!icon_array) {
+        printf("[ERROR] malloc failed for icon_array (capacity=%d)\n", INITIAL_ICON_CAPACITY);
+        exit(1);
+    }
     icon_array_size = INITIAL_ICON_CAPACITY; icon_count = 0;
     // Avoid zombie processes from file launches
     signal(SIGCHLD, SIG_IGN);

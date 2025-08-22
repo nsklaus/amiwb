@@ -93,6 +93,7 @@ typedef struct {
     Window transient_for;                // Parent window for transient windows
     bool close_request_sent;             // True if WM_DELETE_WINDOW was sent (for single-click close)
     int consecutive_unmaps;              // Count of unmaps without remap (for zombie detection)
+    bool cleanup_scheduled;              // True when dialog frame should be cleaned up
     bool disable_scrollbars;             // True to disable scrollbar rendering (for dialogs)
     XftDraw *xft_draw;                    // Cached XftDraw for text rendering (avoids recreation)
     // Pre-allocated Xft colors to avoid repeated allocation in render loops
@@ -125,7 +126,8 @@ Canvas  *find_canvas(Window win);           // Find canvas by its frame window
 // Canvas array management (for timer loop access)
 extern Canvas **canvas_array;
 extern int canvas_count;
-Canvas  *create_canvas(const char *path, int x, int y, int width, int height, CanvasType type); 
+Canvas  *create_canvas(const char *path, int x, int y, int width, int height, CanvasType type);
+Canvas  *create_canvas_with_client(const char *path, int x, int y, int width, int height, CanvasType type, Window client_win); 
 Canvas  *get_active_window(void);           // Currently active WINDOW canvas
 Canvas  *find_canvas_by_client(Window client_win); // Lookup by client window
 Canvas  *find_window_by_path(const char *path);   // Find WINDOW by directory path
@@ -191,13 +193,18 @@ extern int resizing_canvas_index;   // -1 for none*/
 
 // Helper function to determine the actual right border width for a window
 static inline int get_right_border_width(const Canvas *canvas) {
-    // Workbench windows with scrollbars need full width for scrollbar
+    // Border sizes differ based on window type:
+    // - Workbench windows (file manager): 20px all borders (for scrollbar)
+    // - Client windows & dialogs: 8px left/right, 20px top/bottom
     if (canvas->type == WINDOW && 
         canvas->client_win == None && 
         !canvas->disable_scrollbars) {
-        return BORDER_WIDTH_RIGHT;  // 20px for scrollbar
+        return BORDER_WIDTH_RIGHT;  // 20px for workbench windows with scrollbar
     }
-    return 8;  // 8px for clients, dialogs, and windows without scrollbars
+    return 8;  // 8px for client windows and dialogs
 }
+
+// Function to clean up GTK dialog frames without sending messages
+void cleanup_gtk_dialog_frame(Canvas* canvas);
 
 #endif

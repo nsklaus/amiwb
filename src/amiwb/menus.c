@@ -530,7 +530,10 @@ void execute_custom_command(const char *cmd) {
     if (!cmd || !*cmd) return;
     
     pid_t pid = fork();
-    if (pid == 0) {
+    if (pid == -1) {
+        printf("[ERROR] fork failed for launch_command: %s\n", cmd);
+        return;
+    } else if (pid == 0) {
         // Child process
         // Close file descriptors to detach from parent
         for (int i = 3; i < 256; i++) {
@@ -1758,7 +1761,10 @@ static void execute_command_ok_callback(const char *command) {
     
     // Fork and execute command - fire and forget
     pid_t pid = fork();
-    if (pid == 0) {
+    if (pid == -1) {
+        printf("[ERROR] fork failed for execute dialog command: %s\n", command);
+        return;
+    } else if (pid == 0) {
         // Child process - execute the command
         // Use shell to handle arguments and environment
         execl("/bin/sh", "sh", "-c", command, NULL);

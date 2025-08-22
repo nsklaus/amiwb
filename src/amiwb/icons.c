@@ -1,4 +1,5 @@
 // File: icons.c
+#include "config.h"
 #include "intuition.h"
 #include "icons.h"
 #include <X11/Xlib.h>
@@ -10,8 +11,7 @@
 
 // Icon parsing constants. We render into a 32-bit pixmap so XRender
 // can alpha-composite icons consistently across visuals.
-#define ICON_HEADER_SIZE 20
-#define GLOBAL_DEPTH 32 // Match global depth
+// ICON_HEADER_SIZE and ICON_RENDER_DEPTH are defined in config.h
 
 // TODO: refactor the file to use def_dir and def_foo
 static char *def_tool_path = "/usr/local/share/amiwb/icons/def_icons/def_foo.info";
@@ -98,14 +98,14 @@ static int parse_icon_header(const uint8_t *header, long size, uint16_t *width, 
 // Colors are basic and can be refined later; keep it fast and simple.
 static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth) {
     XVisualInfo vinfo;
-    if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), GLOBAL_DEPTH, TrueColor, &vinfo)) {
-        fprintf(stderr, "No %d-bit TrueColor visual found for icon\n", GLOBAL_DEPTH);
+    if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
+        fprintf(stderr, "No %d-bit TrueColor visual found for icon\n", ICON_RENDER_DEPTH);
         return 1;
     }
-    Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), width, height, GLOBAL_DEPTH);
+    Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), width, height, ICON_RENDER_DEPTH);
     if (!pixmap) return 1;
 
-    XImage *image = XCreateImage(dpy, vinfo.visual, GLOBAL_DEPTH, ZPixmap, 0, malloc(width * height * 4), width, height, 32, 0);
+    XImage *image = XCreateImage(dpy, vinfo.visual, ICON_RENDER_DEPTH, ZPixmap, 0, malloc(width * height * 4), width, height, 32, 0);
     if (!image) {
         XFreePixmap(dpy, pixmap);
         return 1;
