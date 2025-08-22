@@ -9,6 +9,8 @@ A browser extension that makes the web look like AmigaOS from the 1990s.
 - **Preserves important content** - images, videos, and syntax highlighting remain visible
 - **Fixes readability issues** - automatically fixes gray-on-gray text
 - **Respects user font settings** - uses your browser's configured fonts
+- **AmigaOS-style scrollbars** - black thumb with gray track, no arrow buttons
+- **Custom text selection** - faint light blue selection color instead of harsh blue
 
 ## Installation
 
@@ -32,7 +34,11 @@ A browser extension that makes the web look like AmigaOS from the 1990s.
 
 ## Special Handling
 
-- **GitHub**: Preserves syntax highlighting with custom colors
+- **GitHub**: 
+  - Preserves syntax highlighting with custom colors
+  - Fixes white backgrounds on code blocks with black borders
+  - Removes navigation menu clutter
+  - Applies gray theme to all UI elements
 - **Claude.ai**: Maintains code syntax colors
 - **YouTube**: Disables video preview overlays
 - **CrowdBunker**: Custom rules for proper gray backgrounds and removes play overlays
@@ -40,4 +46,12 @@ A browser extension that makes the web look like AmigaOS from the 1990s.
 
 ## Version
 
-Current: v1.80
+Current: v1.96
+
+### Recent Updates
+- v1.96: Added custom text selection color (faint light blue)
+- v1.95: Refined scrollbar design (black thumb, no 3D effects)
+- v1.91: Fixed GitHub header backgrounds
+- v1.88: Aggressive GitHub white background removal
+- v1.85: GitHub-specific CSS injection for code blocks
+- v1.80: CrowdBunker video overlay fixes
