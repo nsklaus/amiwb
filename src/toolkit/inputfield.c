@@ -4,6 +4,7 @@
 #include <string.h>
 #include <X11/keysym.h>
 #include <X11/Xft/Xft.h>
+#include <X11/Xatom.h>
 
 InputField* inputfield_create(int x, int y, int width, int height) {
     InputField *field = malloc(sizeof(InputField));
@@ -46,6 +47,9 @@ void inputfield_set_text(InputField *field, const char *text) {
     field->cursor_pos = strlen(field->text);
     field->selection_start = -1;
     field->selection_end = -1;
+    
+    // Reset visible_start to force recalculation to show rightmost part
+    field->visible_start = 0;
     
     if (field->on_change) {
         field->on_change(field->text, field->user_data);
@@ -152,52 +156,86 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
             XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
                                text_x, y + 3, cursor_width, h - 6);
         } else if (text_len > 0) {
-            // Calculate visible text range based on cursor position
-            int visible_start = field->visible_start;
+            // Calculate visible text range
+            int visible_start = 0;
+            XGlyphInfo text_extents;
+            XGlyphInfo space_info;
+            XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
             
-            // Adjust visible_start to keep cursor in view
-            if (field->has_focus && field->cursor_pos >= 0) {
-                // Measure text up to cursor
-                XGlyphInfo cursor_extents;
-                XGlyphInfo space_info;
-                XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
+            // First, check if the entire text fits
+            XftTextExtentsUtf8(dpy, font, (FcChar8*)field->text, text_len, &text_extents);
+            
+            if (text_extents.width > available_width) {
+                // Text doesn't fit - we need to scroll
                 
-                if (field->cursor_pos >= visible_start) {
-                    // Measure from visible_start to cursor position
-                    int chars_to_measure = field->cursor_pos - visible_start;
-                    if (chars_to_measure > 0) {
-                        XftTextExtentsUtf8(dpy, font, 
-                                         (FcChar8*)&field->text[visible_start],
-                                         chars_to_measure, &cursor_extents);
-                    } else {
-                        cursor_extents.width = 0;
-                    }
+                if (field->has_focus) {
+                    // When focused, keep cursor in view
+                    visible_start = field->visible_start;
                     
-                    // Add space for cursor if at end of text
-                    int total_width = cursor_extents.width;
-                    if (field->cursor_pos == text_len) {
-                        total_width += space_info.width;
-                    }
-                    
-                    // If cursor is beyond visible area, scroll right
-                    while (total_width > available_width && visible_start < field->cursor_pos) {
-                        visible_start++;
-                        if (field->cursor_pos > visible_start) {
-                            XftTextExtentsUtf8(dpy, font,
+                    if (field->cursor_pos >= visible_start) {
+                        // Measure from visible_start to cursor position
+                        int chars_to_measure = field->cursor_pos - visible_start;
+                        if (chars_to_measure > 0) {
+                            XftTextExtentsUtf8(dpy, font, 
                                              (FcChar8*)&field->text[visible_start],
-                                             field->cursor_pos - visible_start, &cursor_extents);
-                            total_width = cursor_extents.width;
-                            if (field->cursor_pos == text_len) {
-                                total_width += space_info.width;
+                                             chars_to_measure, &text_extents);
+                        } else {
+                            text_extents.width = 0;
+                        }
+                        
+                        // Add space for cursor if at end of text
+                        int total_width = text_extents.width;
+                        if (field->cursor_pos == text_len) {
+                            total_width += space_info.width;
+                        }
+                        
+                        // If cursor is beyond visible area, scroll right
+                        while (total_width > available_width && visible_start < field->cursor_pos) {
+                            visible_start++;
+                            if (field->cursor_pos > visible_start) {
+                                XftTextExtentsUtf8(dpy, font,
+                                                 (FcChar8*)&field->text[visible_start],
+                                                 field->cursor_pos - visible_start, &text_extents);
+                                total_width = text_extents.width;
+                                if (field->cursor_pos == text_len) {
+                                    total_width += space_info.width;
+                                }
                             }
                         }
+                    } else if (field->cursor_pos < visible_start) {
+                        // Cursor is before visible area, scroll left
+                        visible_start = field->cursor_pos;
                     }
-                } else if (field->cursor_pos < visible_start) {
-                    // Cursor is before visible area, scroll left
-                    visible_start = field->cursor_pos;
+                } else {
+                    // When not focused, show the rightmost part of the text
+                    // Start from the end and work backwards until it fits
+                    visible_start = text_len;
+                    
+                    while (visible_start > 0) {
+                        XftTextExtentsUtf8(dpy, font, 
+                                         (FcChar8*)&field->text[visible_start],
+                                         text_len - visible_start, &text_extents);
+                        if (text_extents.width <= available_width) {
+                            // This portion fits, try including one more character
+                            if (visible_start > 0) {
+                                XftTextExtentsUtf8(dpy, font, 
+                                                 (FcChar8*)&field->text[visible_start - 1],
+                                                 text_len - visible_start + 1, &text_extents);
+                                if (text_extents.width <= available_width) {
+                                    visible_start--;
+                                } else {
+                                    break;  // Can't fit any more
+                                }
+                            }
+                        } else {
+                            visible_start++;  // Too much, go back one
+                            break;
+                        }
+                    }
                 }
-                field->visible_start = visible_start;
             }
+            
+            field->visible_start = visible_start;
             
             // Draw text character by character
             int draw_x = text_x;
@@ -278,6 +316,100 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
     if (!field->has_focus) return false;  // Not an error - field doesn't have focus
     
     KeySym keysym = XLookupKeysym(event, 0);
+    
+    // Handle Ctrl+C for copy
+    if ((event->state & ControlMask) && (keysym == XK_c || keysym == XK_C)) {
+        // Copy entire field content to clipboard
+        Display *dpy = event->display;
+        Window root = DefaultRootWindow(dpy);
+        
+        // Set the clipboard (CLIPBOARD selection)
+        Atom clipboard = XInternAtom(dpy, "CLIPBOARD", False);
+        XSetSelectionOwner(dpy, clipboard, root, CurrentTime);
+        
+        // Also set PRIMARY selection for middle-click paste
+        XSetSelectionOwner(dpy, XA_PRIMARY, root, CurrentTime);
+        
+        // Store the text in a property
+        Atom utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
+        
+        XChangeProperty(dpy, root, clipboard,
+                       utf8_string, 8, PropModeReplace,
+                       (unsigned char *)field->text, strlen(field->text));
+        
+        XChangeProperty(dpy, root, XA_PRIMARY,
+                       XA_STRING, 8, PropModeReplace,
+                       (unsigned char *)field->text, strlen(field->text));
+        
+        XFlush(dpy);
+        return true;
+    }
+    
+    // Handle Ctrl+V for paste
+    if ((event->state & ControlMask) && (keysym == XK_v || keysym == XK_V)) {
+        Display *dpy = event->display;
+        Window root = DefaultRootWindow(dpy);
+        
+        // Try CLIPBOARD first, then PRIMARY
+        Atom clipboard = XInternAtom(dpy, "CLIPBOARD", False);
+        Atom utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
+        
+        Window owner = XGetSelectionOwner(dpy, clipboard);
+        if (owner == None) {
+            // Try PRIMARY selection as fallback
+            owner = XGetSelectionOwner(dpy, XA_PRIMARY);
+            clipboard = XA_PRIMARY;
+        }
+        
+        if (owner != None) {
+            // Request the selection
+            Atom actual_type;
+            int actual_format;
+            unsigned long nitems, bytes_after;
+            unsigned char *data = NULL;
+            
+            // Try to get UTF8_STRING first
+            if (XGetWindowProperty(dpy, root, clipboard,
+                                 0, INPUTFIELD_MAX_LENGTH, False,
+                                 utf8_string, &actual_type, &actual_format,
+                                 &nitems, &bytes_after, &data) == Success) {
+                if (data) {
+                    // Clear current text and set to clipboard content
+                    strncpy(field->text, (char *)data, INPUTFIELD_MAX_LENGTH);
+                    field->text[INPUTFIELD_MAX_LENGTH] = '\0';
+                    field->cursor_pos = strlen(field->text);
+                    field->visible_start = 0;  // Reset scroll
+                    XFree(data);
+                    
+                    if (field->on_change) {
+                        field->on_change(field->text, field->user_data);
+                    }
+                    return true;
+                }
+            }
+            
+            // Fallback to XA_STRING
+            if (XGetWindowProperty(dpy, root, clipboard,
+                                 0, INPUTFIELD_MAX_LENGTH, False,
+                                 XA_STRING, &actual_type, &actual_format,
+                                 &nitems, &bytes_after, &data) == Success) {
+                if (data) {
+                    // Clear current text and set to clipboard content
+                    strncpy(field->text, (char *)data, INPUTFIELD_MAX_LENGTH);
+                    field->text[INPUTFIELD_MAX_LENGTH] = '\0';
+                    field->cursor_pos = strlen(field->text);
+                    field->visible_start = 0;  // Reset scroll
+                    XFree(data);
+                    
+                    if (field->on_change) {
+                        field->on_change(field->text, field->user_data);
+                    }
+                    return true;
+                }
+            }
+        }
+        return true;
+    }
     
     // Handle special keys
     switch (keysym) {
@@ -421,4 +553,29 @@ void inputfield_move_cursor(InputField *field, int delta) {
     field->cursor_pos = new_pos;
     field->selection_start = -1;
     field->selection_end = -1;
+}
+
+void inputfield_scroll_to_end(InputField *field) {
+    if (!field) {
+        return;
+    }
+    
+    // Set cursor to end of text
+    int len = strlen(field->text);
+    field->cursor_pos = len;
+    
+    // Reset visible_start so draw function will recalculate to show the end
+    field->visible_start = 0;
+}
+
+void inputfield_update_size(InputField *field, int new_width) {
+    if (!field || new_width <= 0) {
+        return;
+    }
+    
+    field->width = new_width;
+    
+    // Reset visible_start to trigger recalculation in draw
+    // This will ensure the rightmost part stays visible
+    field->visible_start = 0;
 }

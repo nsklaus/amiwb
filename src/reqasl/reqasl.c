@@ -198,6 +198,8 @@ ReqASL* reqasl_create(Display *display) {
     // Sync InputFields with text buffers
     if (req->drawer_field) {
         inputfield_set_text(req->drawer_field, req->drawer_text);
+        // Ensure the end of the path is visible
+        inputfield_scroll_to_end(req->drawer_field);
     }
     
     // Create window
@@ -365,6 +367,12 @@ void reqasl_navigate_to(ReqASL *req, const char *path) {
         req->file_text[0] = '\0';
         if (req->file_field) {
             inputfield_set_text(req->file_field, "");
+        }
+        
+        // Update drawer field and ensure end is visible
+        if (req->drawer_field) {
+            inputfield_set_text(req->drawer_field, req->drawer_text);
+            inputfield_scroll_to_end(req->drawer_field);
         }
         
         req->selected_index = -1;
@@ -1003,29 +1011,48 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     
                     if (x >= open_x && x < open_x + BUTTON_WIDTH &&
                         y >= button_y && y < button_y + BUTTON_HEIGHT) {
-                        char full_path[2048];
-                        if (req->file_text[0]) {
-                            // File selected - use callback if available
-                            snprintf(full_path, sizeof(full_path), "%s/%s",
-                                   req->current_path, req->file_text);
-                            if (req->on_open) {
-                                req->on_open(full_path);
-                            }
-                        } else {
-                            // No file selected - send IPC to AmiWB to open directory
-                            strcpy(full_path, req->current_path);
+                        
+                        // Check if something is selected in the listview
+                        if (req->listview && req->listview->selected_index >= 0 && 
+                            req->listview->selected_index < req->entry_count) {
                             
-                            // Set property on root window for AmiWB to read
+                            FileEntry *entry = req->entries[req->listview->selected_index];
+                            
+                            if (entry->type == TYPE_DRAWER) {
+                                // Directory selected - open it in workbench window via IPC
+                                Atom amiwb_open_dir = XInternAtom(req->display, 
+                                                                 "AMIWB_OPEN_DIRECTORY", False);
+                                Window root = DefaultRootWindow(req->display);
+                                
+                                XChangeProperty(req->display, root, amiwb_open_dir,
+                                              XA_STRING, 8, PropModeReplace,
+                                              (unsigned char *)entry->path, 
+                                              strlen(entry->path));
+                                XFlush(req->display);
+                            } else {
+                                // File selected - open with xdg-open
+                                pid_t pid = fork();
+                                if (pid == 0) {
+                                    // Child process
+                                    execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
+                                    perror("execlp failed for xdg-open");
+                                    _exit(EXIT_FAILURE);
+                                }
+                            }
+                            reqasl_hide(req);
+                        } else {
+                            // Nothing selected - open current directory in workbench window
                             Atom amiwb_open_dir = XInternAtom(req->display, 
                                                              "AMIWB_OPEN_DIRECTORY", False);
                             Window root = DefaultRootWindow(req->display);
                             
                             XChangeProperty(req->display, root, amiwb_open_dir,
                                           XA_STRING, 8, PropModeReplace,
-                                          (unsigned char *)full_path, strlen(full_path));
+                                          (unsigned char *)req->current_path, 
+                                          strlen(req->current_path));
                             XFlush(req->display);
+                            reqasl_hide(req);
                         }
-                        reqasl_hide(req);
                         return true;
                     }
                 }
@@ -1131,12 +1158,114 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
             {
                 KeySym keysym = XLookupKeysym(&event->xkey, 0);
                 
-                // Handle Escape key - quit ReqASL
+                // Handle Escape key - clear selection first, then quit
                 if (keysym == XK_Escape) {
-                    if (req->on_cancel) {
-                        req->on_cancel();
+                    // If something is selected, clear the selection
+                    if (req->listview && req->listview->selected_index >= 0) {
+                        req->listview->selected_index = -1;
+                        // Clear file text field when deselecting
+                        req->file_text[0] = '\0';
+                        if (req->file_field) {
+                            inputfield_set_text(req->file_field, "");
+                        }
+                        draw_window(req);
+                        return true;
+                    } else {
+                        // Nothing selected - quit ReqASL
+                        if (req->on_cancel) {
+                            req->on_cancel();
+                        }
+                        reqasl_hide(req);
+                        return true;
                     }
-                    reqasl_hide(req);
+                }
+                
+                // Handle arrow keys for listview navigation
+                if (keysym == XK_Up || keysym == XK_Down) {
+                    if (req->listview && req->listview->item_count > 0) {
+                        // Check if Shift is pressed - scroll view without changing selection
+                        if (event->xkey.state & ShiftMask) {
+                            // Shift+Arrow: scroll view only
+                            if (keysym == XK_Up) {
+                                if (req->listview->scroll_offset > 0) {
+                                    req->listview->scroll_offset--;
+                                    listview_update_scrollbar(req->listview);
+                                    draw_window(req);
+                                }
+                            } else { // XK_Down
+                                int max_scroll = req->listview->item_count - req->listview->visible_items;
+                                if (max_scroll < 0) max_scroll = 0;
+                                if (req->listview->scroll_offset < max_scroll) {
+                                    req->listview->scroll_offset++;
+                                    listview_update_scrollbar(req->listview);
+                                    draw_window(req);
+                                }
+                            }
+                        } else {
+                            // Regular arrow keys: change selection
+                            int new_index = req->listview->selected_index;
+                            
+                            if (keysym == XK_Up) {
+                                new_index--;
+                                if (new_index < 0) new_index = 0;
+                            } else { // XK_Down
+                                new_index++;
+                                if (new_index >= req->listview->item_count) {
+                                    new_index = req->listview->item_count - 1;
+                                }
+                            }
+                            
+                            listview_set_selected(req->listview, new_index);
+                            listview_ensure_visible(req->listview, new_index);
+                            draw_window(req);
+                        }
+                        return true;
+                    }
+                }
+                
+                // Handle Return key for opening files/directories
+                if (keysym == XK_Return) {
+                    if (req->listview && req->listview->selected_index >= 0 && 
+                        req->listview->selected_index < req->entry_count) {
+                        
+                        FileEntry *entry = req->entries[req->listview->selected_index];
+                        
+                        if (entry->type == TYPE_DRAWER) {
+                            // Navigate into directory (same as double-click)
+                            reqasl_navigate_to(req, entry->path);
+                        } else {
+                            // Open file with xdg-open (like workbench.c does)
+                            pid_t pid = fork();
+                            if (pid == 0) {
+                                // Child process
+                                execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
+                                perror("execlp failed for xdg-open");
+                                _exit(EXIT_FAILURE);
+                            } else if (pid > 0) {
+                                // Parent - file opened, hide reqasl
+                                reqasl_hide(req);
+                            }
+                        }
+                        return true;
+                    } else {
+                        // No selection or invalid selection - open current directory in workbench window
+                        Atom amiwb_open_dir = XInternAtom(req->display, 
+                                                         "AMIWB_OPEN_DIRECTORY", False);
+                        Window root = DefaultRootWindow(req->display);
+                        
+                        XChangeProperty(req->display, root, amiwb_open_dir,
+                                      XA_STRING, 8, PropModeReplace,
+                                      (unsigned char *)req->current_path, 
+                                      strlen(req->current_path));
+                        XFlush(req->display);
+                        reqasl_hide(req);
+                        return true;
+                    }
+                }
+                
+                // Handle Backspace key - go to parent directory
+                if (keysym == XK_BackSpace) {
+                    reqasl_navigate_parent(req);
                     return true;
                 }
                 
@@ -1195,6 +1324,31 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                         req->listview->width = req->width - 2 * MARGIN;
                         req->listview->height = req->list_height;
                         listview_update_scrollbar(req->listview);
+                    }
+                    
+                    // Update InputField dimensions and positions
+                    int input_width = req->width - MARGIN * 2 - LABEL_WIDTH;
+                    int input_y = req->list_y + req->list_height + SPACING;
+                    
+                    if (req->pattern_field) {
+                        req->pattern_field->y = input_y;
+                        inputfield_update_size(req->pattern_field, input_width);
+                    }
+                    
+                    if (req->drawer_field) {
+                        req->drawer_field->y = input_y + INPUT_HEIGHT + SPACING;
+                        inputfield_update_size(req->drawer_field, input_width);
+                        // Ensure drawer path stays visible at the right
+                        inputfield_scroll_to_end(req->drawer_field);
+                    }
+                    
+                    if (req->file_field) {
+                        req->file_field->y = input_y + 2 * (INPUT_HEIGHT + SPACING);
+                        inputfield_update_size(req->file_field, input_width);
+                        // Ensure file name stays visible at the right if it's long
+                        if (strlen(req->file_field->text) > 20) {
+                            inputfield_scroll_to_end(req->file_field);
+                        }
                     }
                     
                     // Redraw everything with new layout

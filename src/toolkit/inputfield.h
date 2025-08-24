@@ -38,5 +38,7 @@ void inputfield_insert_char(InputField *field, char c);
 void inputfield_delete_char(InputField *field);
 void inputfield_backspace(InputField *field);
 void inputfield_move_cursor(InputField *field, int delta);
+void inputfield_scroll_to_end(InputField *field);
+void inputfield_update_size(InputField *field, int new_width);
 
 #endif

@@ -32,24 +32,22 @@ REQASL_EXEC = reqasl
 TOOLKIT_LIB = libamiwb-toolkit.a
 
 # Default target
-all: toolkit amiwb reqasl
+all: $(TOOLKIT_LIB) amiwb reqasl
 
-# Toolkit library (built first as others depend on it)
-toolkit: $(TOOLKIT_LIB)
-
+# Toolkit library (built for installation)
 $(TOOLKIT_LIB): $(TOOLKIT_OBJS)
 	$(AR) rcs $@ $(TOOLKIT_OBJS)
 	@echo "Toolkit library built: $(TOOLKIT_LIB)"
 
 # amiwb window manager
-amiwb: toolkit $(AMIWB_EXEC)
+amiwb: $(AMIWB_EXEC)
 
 $(AMIWB_EXEC): $(AMIWB_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(AMIWB_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
 	@echo "amiwb executable built: $(AMIWB_EXEC)"
 
 # ReqASL file requester
-reqasl: toolkit $(REQASL_EXEC)
+reqasl: $(REQASL_EXEC)
 
 $(REQASL_EXEC): $(REQASL_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(REQASL_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
@@ -82,8 +80,21 @@ clean-reqasl:
 	rm -f $(REQASL_OBJS) $(REQASL_EXEC)
 
 # Install targets
-install: install-amiwb install-reqasl
+# Order is important:
+# 1st: toolkit needs to be installed first (amiwb and reqasl depend on it)
+# 2nd: amiwb needs to be installed second (main window manager)
+# 3rd: reqasl needs to be installed third (uses amiwb for window management)
+install: install-toolkit install-amiwb install-reqasl
 
+# 1st: Install toolkit library and headers (required by amiwb and reqasl)
+install-toolkit: $(TOOLKIT_LIB)
+	mkdir -p /usr/local/lib
+	cp $(TOOLKIT_LIB) /usr/local/lib/
+	mkdir -p /usr/local/include/amiwb/toolkit
+	cp $(TOOLKIT_DIR)/*.h /usr/local/include/amiwb/toolkit/
+	@echo "Toolkit library installed"
+
+# 2nd: Install amiwb window manager (requires toolkit to be installed)
 install-amiwb: amiwb
 	mkdir -p /usr/local/bin
 	cp $(AMIWB_EXEC) /usr/local/bin/amiwb.new
@@ -98,6 +109,7 @@ install-amiwb: amiwb
 	cp -r dotfiles/* /usr/local/share/amiwb/dotfiles/ 2>/dev/null || true
 	@echo "AmiWB installed"
 
+# 3rd: Install reqasl file requester (requires toolkit and works with amiwb)
 install-reqasl: reqasl
 	mkdir -p /usr/local/bin
 	cp $(REQASL_EXEC) /usr/local/bin/
@@ -106,6 +118,8 @@ install-reqasl: reqasl
 uninstall:
 	rm -f /usr/local/bin/amiwb
 	rm -f /usr/local/bin/reqasl
+	rm -f /usr/local/lib/libamiwb-toolkit.a
+	rm -rf /usr/local/include/amiwb
 	rm -rf /usr/local/share/amiwb
 	@echo "AMIWB uninstalled"
 
