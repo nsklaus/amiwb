@@ -980,9 +980,28 @@ void cycle_next_window(void) {
     
     // Calculate next index (wrap around)
     int next_index = (current_index + 1) % window_count;
+    Canvas *next_window = windows[next_index];
     
-    // Activate next window
-    set_active_window(windows[next_index]);
+    // Check if window is iconified (not visible)
+    XWindowAttributes attrs;
+    if (XGetWindowAttributes(display, next_window->win, &attrs)) {
+        if (attrs.map_state != IsViewable) {
+            // Window is iconified - find and restore it
+            FileIcon **icon_array = get_icon_array();
+            int icon_count = get_icon_count();
+            for (int i = 0; i < icon_count; i++) {
+                FileIcon *ic = icon_array[i];
+                if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == next_window) {
+                    restore_iconified(ic);
+                    return;
+                }
+            }
+        }
+    }
+    
+    // Window is visible - activate it
+    set_active_window(next_window);
+    XRaiseWindow(display, next_window->win);
 }
 
 void cycle_prev_window(void) {
@@ -1007,9 +1026,28 @@ void cycle_prev_window(void) {
     
     // Calculate previous index (wrap around)
     int prev_index = (current_index - 1 + window_count) % window_count;
+    Canvas *prev_window = windows[prev_index];
     
-    // Activate previous window
-    set_active_window(windows[prev_index]);
+    // Check if window is iconified (not visible)
+    XWindowAttributes attrs;
+    if (XGetWindowAttributes(display, prev_window->win, &attrs)) {
+        if (attrs.map_state != IsViewable) {
+            // Window is iconified - find and restore it
+            FileIcon **icon_array = get_icon_array();
+            int icon_count = get_icon_count();
+            for (int i = 0; i < icon_count; i++) {
+                FileIcon *ic = icon_array[i];
+                if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == prev_window) {
+                    restore_iconified(ic);
+                    return;
+                }
+            }
+        }
+    }
+    
+    // Window is visible - activate it
+    set_active_window(prev_window);
+    XRaiseWindow(display, prev_window->win);
 }
 
 void compute_max_scroll(Canvas *c) {
