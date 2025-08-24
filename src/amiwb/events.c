@@ -69,6 +69,10 @@ void grab_global_shortcuts(Display *display, Window root) {
              Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+N
     XGrabKey(display, XKeysymToKeycode(display, XK_a),
              Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+A
+    XGrabKey(display, XKeysymToKeycode(display, XK_m),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+M (cycle next)
+    XGrabKey(display, XKeysymToKeycode(display, XK_m),
+             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+M (cycle prev)
     
     // Media keys - grab with AnyModifier so they work everywhere
     XGrabKey(display, XKeysymToKeycode(display, XF86XK_MonBrightnessUp),
@@ -674,6 +678,11 @@ void handle_key_press(XKeyEvent *event) {
                 handle_suspend_request();
                 return;
             }
+            // Super+Shift+M: Cycle to previous window
+            if (keysym == XK_m || keysym == XK_M) {
+                cycle_prev_window();
+                return;
+            }
         } else {
             // Super-only combinations (no Shift)
             // Super+E: Execute command
@@ -729,6 +738,11 @@ void handle_key_press(XKeyEvent *event) {
             // Super+A: Select Contents
             if (keysym == XK_a || keysym == XK_A) {
                 trigger_select_contents_action();
+                return;
+            }
+            // Super+M: Cycle to next window
+            if (keysym == XK_m || keysym == XK_M) {
+                cycle_next_window();
                 return;
             }
         }

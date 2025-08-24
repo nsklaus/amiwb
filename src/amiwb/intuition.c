@@ -958,6 +958,60 @@ Canvas *get_active_window(void) {
     return active_window;
 }
 
+void cycle_next_window(void) {
+    // Build list of eligible windows (WINDOW and DIALOG types)
+    Canvas *windows[256];  // Max 256 windows should be enough
+    int window_count = 0;
+    int current_index = -1;
+    
+    for (int i = 0; i < canvas_count; i++) {
+        Canvas *c = canvas_array[i];
+        if (c && (c->type == WINDOW || c->type == DIALOG)) {
+            if (c == active_window) {
+                current_index = window_count;
+            }
+            windows[window_count++] = c;
+            if (window_count >= 256) break;  // Safety limit
+        }
+    }
+    
+    // Need at least 2 windows to cycle
+    if (window_count < 2) return;
+    
+    // Calculate next index (wrap around)
+    int next_index = (current_index + 1) % window_count;
+    
+    // Activate next window
+    set_active_window(windows[next_index]);
+}
+
+void cycle_prev_window(void) {
+    // Build list of eligible windows (WINDOW and DIALOG types)
+    Canvas *windows[256];  // Max 256 windows should be enough
+    int window_count = 0;
+    int current_index = -1;
+    
+    for (int i = 0; i < canvas_count; i++) {
+        Canvas *c = canvas_array[i];
+        if (c && (c->type == WINDOW || c->type == DIALOG)) {
+            if (c == active_window) {
+                current_index = window_count;
+            }
+            windows[window_count++] = c;
+            if (window_count >= 256) break;  // Safety limit
+        }
+    }
+    
+    // Need at least 2 windows to cycle
+    if (window_count < 2) return;
+    
+    // Calculate previous index (wrap around)
+    int prev_index = (current_index - 1 + window_count) % window_count;
+    
+    // Activate previous window
+    set_active_window(windows[prev_index]);
+}
+
 void compute_max_scroll(Canvas *c) {
     if (!c) return;
     int content_width, content_height;

@@ -245,7 +245,7 @@ void init_menus(void) {
     // Window submenu (index 1)
     // Window management and content view controls.
     Menu *win_submenu = malloc(sizeof(Menu));
-    win_submenu->item_count = 7;
+    win_submenu->item_count = 8;
     win_submenu->items = malloc(win_submenu->item_count * sizeof(char*));
     win_submenu->items[0] = strdup("New Drawer");
     win_submenu->items[1] = strdup("Open Parent");
@@ -254,6 +254,7 @@ void init_menus(void) {
     win_submenu->items[4] = strdup("Clean Up");
     win_submenu->items[5] = strdup("Show Hidden");
     win_submenu->items[6] = strdup("View By ..");
+    win_submenu->items[7] = strdup("Cycle");
     
     // Initialize shortcuts for Window menu
     win_submenu->shortcuts = malloc(win_submenu->item_count * sizeof(char*));
@@ -264,6 +265,7 @@ void init_menus(void) {
     win_submenu->shortcuts[4] = strdup(";");  // Clean Up - Super+;
     win_submenu->shortcuts[5] = NULL;  // Show Hidden - no shortcut yet
     win_submenu->shortcuts[6] = NULL;  // View By .. - no shortcut yet
+    win_submenu->shortcuts[7] = NULL;  // Cycle - submenu with shortcuts
     init_menu_enabled(win_submenu);  // Initialize all items as enabled
     win_submenu->selected_item = -1;
     win_submenu->parent_menu = menubar;
@@ -300,6 +302,23 @@ void init_menus(void) {
     view_by_sub->submenus = NULL;
     view_by_sub->canvas = NULL;
     win_submenu->submenus[6] = view_by_sub;
+    // Create nested submenu for "Cycle" (index 7)
+    // Cycle through open windows with Next/Previous
+    Menu *cycle_sub = malloc(sizeof(Menu));
+    cycle_sub->item_count = 2;
+    cycle_sub->items = malloc(cycle_sub->item_count * sizeof(char*));
+    cycle_sub->items[0] = strdup("Next");
+    cycle_sub->items[1] = strdup("Previous");
+    cycle_sub->shortcuts = malloc(cycle_sub->item_count * sizeof(char*));
+    cycle_sub->shortcuts[0] = strdup("M");         // Next - Super+M
+    cycle_sub->shortcuts[1] = strdup("^M");   // Previous - Super+Shift+M  
+    init_menu_enabled(cycle_sub);  // Initialize all items as enabled
+    cycle_sub->selected_item = -1;
+    cycle_sub->parent_menu = win_submenu;
+    cycle_sub->parent_index = 7;
+    cycle_sub->submenus = NULL;
+    cycle_sub->canvas = NULL;
+    win_submenu->submenus[7] = cycle_sub;
     menubar->submenus[1] = win_submenu;
 
     // Icons submenu (index 2)
@@ -1028,6 +1047,7 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
             active_menu->enabled[4] = is_workbench_window || desktop_focused;  // Clean Up - workbench or desktop
             active_menu->enabled[5] = is_workbench_window || desktop_focused;  // Show Hidden - workbench or desktop  
             active_menu->enabled[6] = is_workbench_window;                     // View By - only for workbench windows (not desktop)
+            active_menu->enabled[7] = true;                                    // Cycle - always enabled
         }
     }
     
@@ -1088,6 +1108,12 @@ void handle_menu_selection(Menu *menu, int item_index) {
             if (aw) {
                 if (strcmp(item, "Icons") == 0) set_canvas_view_mode(aw, VIEW_ICONS);
                 else if (strcmp(item, "Names") == 0) set_canvas_view_mode(aw, VIEW_NAMES);
+            }
+        } else if (menu->parent_index == 7) { // Cycle
+            if (strcmp(item, "Next") == 0) {
+                cycle_next_window();
+            } else if (strcmp(item, "Previous") == 0) {
+                cycle_prev_window();
             }
         }
         return;

@@ -742,6 +742,17 @@ void redraw_canvas(Canvas *canvas) {
                 XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, shortcut_x, item_y + y_base, (FcChar8 *)shortcut_text, strlen(shortcut_text));
             }
             
+            // Draw ">>" indicator for items that have submenus
+            if (menu->submenus && menu->submenus[i]) {
+                const char *submenu_indicator = ">>";
+                XGlyphInfo indicator_extents;
+                XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)submenu_indicator, strlen(submenu_indicator), &indicator_extents);
+                
+                // Right-align indicator with same padding as shortcuts
+                int indicator_x = canvas->width - indicator_extents.xOff - 10;  // 10 pixels padding from right
+                XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, indicator_x, item_y + y_base, (FcChar8 *)submenu_indicator, strlen(submenu_indicator));
+            }
+            
             // Check if this is a submenu under Window menu (not a custom menu)
             bool is_window_submenu = menu->parent_menu && 
                                      menu->parent_menu->parent_menu == get_menubar_menu() &&

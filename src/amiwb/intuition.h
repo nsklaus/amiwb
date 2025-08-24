@@ -139,6 +139,10 @@ void deactivate_all_windows(void);          // Deactivate all windows
 // Temporarily suppress desktop deactivation on empty clicks (used after restore)
 void suppress_desktop_deactivate_for_ms(int ms);
 
+// Window cycling functions
+void cycle_next_window(void);               // Cycle to next window (Super+M)
+void cycle_prev_window(void);               // Cycle to previous window (Super+Shift+M)
+
 // Compute scroll limits from content and clamp current scroll.
 void compute_max_scroll(Canvas *canvas);
 
