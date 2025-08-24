@@ -92,7 +92,18 @@ static void cleanup_partial_icon(Display *dpy, FileIcon *icon, Pixmap normal_pix
     }
 }
 
-// Helper function to get default icon color palette
+// Icon format detection  
+typedef enum {
+    AMIGA_ICON_UNKNOWN = 0,
+    AMIGA_ICON_OS13,      // OS 1.3 (userData = 0)
+    AMIGA_ICON_OS3,       // OS 3.x (userData = 1, no FORM)
+    AMIGA_ICON_MWB,       // MagicWB (OS3 with specific palette)
+    AMIGA_ICON_GLOWICON,  // Has FORM/ICON chunk
+    AMIGA_ICON_NEWICON,   // Has IM1=/IM2= in tooltypes
+    AMIGA_ICON_OS4        // OS4 (future)
+} AmigaIconFormat;
+
+// Helper function to get OS3/MWB icon color palette
 static void get_icon_color_palette(unsigned long colors[8]) {
     // Icons use gray fill instead of transparency  
     colors[0] = 0xFFA0A2A0UL; // Background gray
@@ -103,6 +114,56 @@ static void get_icon_color_palette(unsigned long colors[8]) {
     colors[5] = 0xFFBBBBBB;   // Light gray
     colors[6] = 0xFFBBAA99;   // Brown
     colors[7] = 0xFFFFAA22;   // Orange
+}
+
+// Helper function to get OS1.3 icon color palette
+// Based on WB13Palette from Amiga-Icon-converter-master/icon.js line 40-45
+// IMPORTANT: Index 0 is transparent in WB icons (see line 330 in icon.js)!
+static void get_os13_color_palette(unsigned long colors[4]) {
+    // WB1.3 palette - corrected for AmiWB appearance:
+    // Index 0 is always transparent in rendered icons
+    // Swapped black and white for correct appearance
+    // Using AmiWB's BLUE color from config.h for consistency
+    colors[0] = 0x00000000;   // Transparent (alpha=0)
+    colors[1] = 0xFF000000;   // Black: RGB(0,0,0) - was white in original
+    colors[2] = 0xFFFFFFFF;   // White: RGB(255,255,255) - was black in original  
+    colors[3] = 0xFF486FB0;   // AmiWB Blue: RGB(72,111,176) from config.h BLUE
+}
+
+// Detect icon format by examining the file structure
+static AmigaIconFormat detect_icon_format(const uint8_t *data, long size) {
+    if (size < 78) return AMIGA_ICON_UNKNOWN;
+    
+    // Check magic number
+    if (read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
+        return AMIGA_ICON_UNKNOWN;
+    }
+    
+    // Get userData field (offset 0x2C)
+    uint32_t user_data = read_be32(data + 0x2C);
+    
+    // Check for FORM/ICON (GlowIcon)
+    // Need to calculate where it would be based on icon structure
+    // For now, scan for FORM signature
+    for (long i = 78; i < size - 8; i++) {
+        if (read_be32(data + i) == 0x464F524D) { // "FORM"
+            if (i + 12 <= size && read_be32(data + i + 8) == 0x49434F4E) { // "ICON"
+                return AMIGA_ICON_GLOWICON;
+            }
+        }
+    }
+    
+    // TODO: Check tooltypes for NewIcon (IM1=/IM2=)
+    // TODO: Check for MWB palette
+    
+    // Distinguish by userData
+    if (user_data == 0) {
+        return AMIGA_ICON_OS13;
+    } else if (user_data == 1) {
+        return AMIGA_ICON_OS3;
+    }
+    
+    return AMIGA_ICON_UNKNOWN;
 }
 
 // Load entire .info file into memory so we can parse planes quickly.
@@ -133,9 +194,69 @@ static int parse_icon_header(const uint8_t *header, long size, uint16_t *width, 
     return 0;
 }
 
+// Render OS1.3 icon (2 bitplanes, 4 colors, transparent background)
+static int render_os13_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height) {
+    XVisualInfo vinfo;
+    if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
+        fprintf(stderr, "No %d-bit TrueColor visual found for icon\n", ICON_RENDER_DEPTH);
+        return 1;
+    }
+    Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), width, height, ICON_RENDER_DEPTH);
+    if (!pixmap) return 1;
+
+    XImage *image = XCreateImage(dpy, vinfo.visual, ICON_RENDER_DEPTH, ZPixmap, 0, malloc(width * height * 4), width, height, 32, 0);
+    if (!image) {
+        XFreePixmap(dpy, pixmap);
+        return 1;
+    }
+    memset(image->data, 0, width * height * 4);
+
+    // OS1.3 color palette
+    unsigned long colors[4];
+    get_os13_color_palette(colors);
+    
+    // OS1.3 icons always have 2 bitplanes
+    int row_bytes = ((width + 15) >> 4) << 1;
+    long plane_size = row_bytes * height;
+    
+    // The JavaScript reads ALL bytes sequentially, including padding
+    // But we need to know where plane 1 starts after plane 0 + padding
+    // For Trashcan2: plane 0 at 0x9A-0x192, plane 1 at 0x1D0
+    // That's 0x1D0 - 0x9A = 0x136 = 310 bytes offset for plane 1
+    
+    // For OS1.3 icons, the second bitplane immediately follows the first
+    long second_plane_offset = plane_size;
+    
+    
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int color = 0;
+            
+            // Read plane 0
+            long offset = y * row_bytes + (x >> 3);
+            uint8_t byte = data[offset];
+            if (byte & (1 << (7 - (x & 7)))) color |= 1;
+            
+            // Read plane 1 from adjusted offset
+            offset = second_plane_offset + y * row_bytes + (x >> 3);
+            byte = data[offset];
+            if (byte & (1 << (7 - (x & 7)))) color |= 2;
+            
+            XPutPixel(image, x, y, colors[color]);
+        }
+    }
+
+    GC gc = XCreateGC(dpy, pixmap, 0, NULL);
+    XPutImage(dpy, pixmap, gc, image, 0, 0, 0, 0, width, height);
+    XFreeGC(dpy, gc);
+    XDestroyImage(image);
+    *pixmap_out = pixmap;
+    return 0;
+}
+
 // Convert Amiga planar icon data to an ARGB pixmap the server can use.
 // Colors are basic and can be refined later; keep it fast and simple.
-static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth) {
+static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth, AmigaIconFormat format) {
     XVisualInfo vinfo;
     if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
         fprintf(stderr, "No %d-bit TrueColor visual found for icon\n", ICON_RENDER_DEPTH);
@@ -155,9 +276,20 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
     // gray fill for now to match classic look; adjust when alpha lands.
     // unsigned long colors[8] = {0x00000000UL, 0xFF000000UL, 0xFFFFFFFFUL, 0xFF6666BBUL, 0xFF999999UL, 0xFFBBBBBBUL, 0xFFBBAA99UL, 0xFFFFAA22UL};
 
-    // Get standard icon color palette
+    // Get appropriate color palette based on icon format
     unsigned long colors[8];
-    get_icon_color_palette(colors);
+    if (format == AMIGA_ICON_OS13) {
+        // OS1.3 icons use only 4 colors
+        get_os13_color_palette(colors);
+        // Fill remaining slots with black for safety
+        colors[4] = 0xFF000000;
+        colors[5] = 0xFF000000;
+        colors[6] = 0xFF000000;
+        colors[7] = 0xFF000000;
+    } else {
+        // OS3/MWB icons use 8 colors
+        get_icon_color_palette(colors);
+    }
     int row_bytes;
     long plane_size, total_data_size;
     calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &total_data_size);
@@ -599,39 +731,64 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         icon_path = (icon->type == TYPE_DRAWER || icon->type == TYPE_ICONIFIED) ?
                     def_drawer_path : def_tool_path;
     }
+    
 
     uint8_t *data;
     long size;
-    if (load_icon_file(icon_path, &data, &size)) return;
+    if (load_icon_file(icon_path, &data, &size)) {
+        return;
+    }
+    
 
     if (size < 78 || read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
         free(data);
         return;
     }
 
+    // Detect icon format
+    AmigaIconFormat format = detect_icon_format(data, size);
+
     int ic_type = data[0x30];
     int has_drawer_data = (ic_type == 1 || ic_type == 2);
     int header_offset = 78 + (has_drawer_data ? 56 : 0);
+    
+    
     if (header_offset + ICON_HEADER_SIZE > size) {
         free(data);
         return;
     }
 
     uint16_t width, height, depth;
-    if (parse_icon_header(data + header_offset, size - header_offset, &width, &height, &depth)) {
-        free(data);
-        return;
+    Pixmap normal_pixmap = None;
+    
+    // Read the icon header values - but first check depth to see if header is valid
+    depth = read_be16(data + header_offset + 8);
+    
+    // If depth is invalid, the entire header is likely garbage
+    if (depth == 0xFFFF || depth == 0 || depth > 8) {
+        width = 0;
+        height = 0;
+    } else {
+        width = read_be16(data + header_offset + 4);
+        height = read_be16(data + header_offset + 6);
     }
-
-    Pixmap normal_pixmap;
-    if (render_icon(ctx->dpy, &normal_pixmap, data + header_offset + ICON_HEADER_SIZE, width, height, depth)) {
-        free(data);
-        return;
+    
+    // Check if this is a valid classic icon or just placeholder data
+    if (depth == 0xFFFF || depth == 0 || depth > 8 || width == 0 || height == 0 || width > 256 || height > 256) {
+        // No valid classic icon
+        icon->normal_picture = None;
+        icon->selected_picture = None;
+    } else {
+        normal_pixmap = None;
+        if (render_icon(ctx->dpy, &normal_pixmap, data + header_offset + ICON_HEADER_SIZE, width, height, depth, format)) {
+            free(data);
+            return;
+        }
+        icon->normal_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);
     }
-    icon->normal_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);
 
     uint32_t has_selected = read_be32(data + 0x1A);
-    if (has_selected) {
+    if (has_selected && icon->normal_picture) {
         int row_bytes;
         long plane_size, first_data_size;
         calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &first_data_size);
@@ -651,7 +808,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
         // Allow different sized selected images
         Pixmap selected_pixmap;
-        if (render_icon(ctx->dpy, &selected_pixmap, data + second_header_offset + ICON_HEADER_SIZE, sel_width, sel_height, sel_depth)) {
+        if (render_icon(ctx->dpy, &selected_pixmap, data + second_header_offset + ICON_HEADER_SIZE, sel_width, sel_height, sel_depth, format)) {
             cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
             free(data);
             return;
@@ -659,7 +816,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
         icon->sel_width = sel_width;
         icon->sel_height = sel_height;
-    } else {
+    } else if (icon->normal_picture) {
         // No selected image - create darkened version like AmigaOS
         Pixmap dark_pixmap = create_darkened_pixmap(ctx->dpy, normal_pixmap, width, height);
         if (dark_pixmap) {
@@ -673,18 +830,45 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         icon->sel_height = height;
     }
 
-    XFreePixmap(ctx->dpy, normal_pixmap);
+    if (normal_pixmap != None) {
+        XFreePixmap(ctx->dpy, normal_pixmap);
+    }
 
-    icon->width = width;
-    icon->height = height;
+    // Only set dimensions if they're valid
+    if (width > 0 && width <= 256 && height > 0 && height <= 256) {
+        icon->width = width;
+        icon->height = height;
+    } else {
+        // Will get dimensions from GlowIcon if present
+        icon->width = 0;
+        icon->height = 0;
+    }
     
     // Check for ColorIcon/GlowIcon after the classic icon data
     // Calculate where we are in the file after classic icon(s)
     long classic_end = header_offset + ICON_HEADER_SIZE;
     int row_bytes;
     long plane_size, first_data_size;
-    calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &first_data_size);
-    classic_end += first_data_size;
+    
+    // Calculate the size of classic icon data
+    if (width > 0 && height > 0 && depth > 0 && depth <= 8 && width <= 256 && height <= 256) {
+        // Valid classic icon dimensions
+        calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &first_data_size);
+        classic_end += first_data_size;
+    } else {
+        // Invalid or no classic icon data
+        // Icons with depth=0xFFFF may still have dummy space reserved
+        // Search for FORM signature to find actual GlowIcon data
+        first_data_size = 0;
+        
+        // Scan for FORM signature starting from current position
+        for (long offset = classic_end; offset + 12 <= size; offset++) {
+            if (read_be32(data + offset) == 0x464F524D) { // "FORM"
+                classic_end = offset;
+                break;
+            }
+        }
+    }
     
     if (has_selected) {
         // Skip second classic icon
@@ -746,24 +930,25 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     // Now check for ColorIcon
     if (classic_end + 12 <= size) {
         uint32_t form_id = read_iff_id(data + classic_end);
+        
+        
         if (form_id == IFF_FORM_ID) {
-            uint32_t form_size = read_be32(data + classic_end + 4);
-            uint32_t icon_id = read_iff_id(data + classic_end + 8);
-            printf("[INFO] *** GLOWICON FOUND *** in %s\n", icon_path);
-            printf("[INFO]   FORM size: %u bytes, type: %s\n", form_size, 
-                   icon_id == IFF_ICON_ID ? "ICON" : "OTHER");
+            // Skip form_size and icon_id - not currently used
+            // uint32_t form_size = read_be32(data + classic_end + 4);
+            // uint32_t icon_id = read_iff_id(data + classic_end + 8);
             
             Pixmap color_normal = 0, color_selected = 0;
             uint16_t color_width = 0, color_height = 0;
             uint16_t color_sel_width = 0, color_sel_height = 0;
             
-            if (!parse_coloricon(ctx->dpy, data, size, classic_end, 
+            int parse_result = parse_coloricon(ctx->dpy, data, size, classic_end, 
                                &color_normal, &color_selected,
                                &color_width, &color_height,
                                &color_sel_width, &color_sel_height,
-                               ctx->fmt, icon_path)) {
-                printf("[INFO]   GlowIcon parsed: %ux%u (selected: %ux%u)\n",
-                       color_width, color_height, color_sel_width, color_sel_height);
+                               ctx->fmt, icon_path);
+            
+            
+            if (parse_result == 0) {
             
             // Use ColorIcon instead of classic icon
             if (color_normal) {
@@ -800,17 +985,257 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
                 }
                 
                 XFreePixmap(ctx->dpy, color_normal);
-                printf("[INFO]   GlowIcon ACTIVE for %s\n", icon_path);
-            } else {
-                printf("[ERROR]   GlowIcon parse FAILED - using classic icon\n");
+                
+                // Set current_picture for GlowIcon
+                icon->current_picture = icon->normal_picture;
             }
-        } else {
-            printf("[ERROR]   GlowIcon parse returned error\n");
+        }
         }
     }
-}
     
-    icon->current_picture = icon->normal_picture;
+    // Set current_picture if not already set (classic icon case)
+    if (!icon->current_picture) {
+        icon->current_picture = icon->normal_picture;
+    }
+    
+    // Handle special case: OS3 icons with depth=0xFFFF but valid bitmap data
+    // These icons have no FORM chunk but do have bitmap data at fixed offset
+    if (!icon->normal_picture && !icon->current_picture) {
+        
+        // Check if this might be an old-style icon with non-standard header
+        uint32_t user_data = read_be32(data + 0x2C);  // userData field at offset 0x2C indicates OS version
+        
+        
+        // Handle both OS1.x (userData=0) and OS3.x (userData=1) icons
+        if (user_data == 0 || user_data == 1) {  // OS 1.x or OS 2.x/3.x icon
+            // Get dimensions from DiskObject Gadget structure (always valid)
+            // These are the actual icon dimensions shown in Workbench
+            uint16_t do_width = read_be16(data + 0x0C);
+            uint16_t do_height = read_be16(data + 0x0E);
+            
+            // For OS1.3 icons, the actual icon dimensions come from the Gadget structure
+            // The Image structure may not exist or may have invalid data
+            uint16_t img_width = do_width;  // Use Gadget dimensions
+            uint16_t img_height = do_height;
+            uint16_t img_depth = 2;  // OS1.3 icons typically have 2 bitplanes  
+            uint32_t has_image_data = 1;  // Assume we have data
+            
+            // Check if we have a valid Image structure at the expected location
+            // For OS1.3, the structure might be at 0x86 even for non-drawer icons
+            bool has_image_at_86 = false;
+            
+            // Check if there's a valid Image structure at 0x86
+            if (user_data == 0 && size >= 0x86 + 20) {
+                uint16_t test_width = read_be16(data + 0x8A);
+                uint16_t test_height = read_be16(data + 0x8C);
+                uint16_t test_depth = read_be16(data + 0x8E);
+                // Check if these look like valid dimensions
+                if (test_width > 0 && test_width <= 256 &&
+                    test_height > 0 && test_height <= 256 &&
+                    test_depth > 0 && test_depth <= 8) {
+                    has_image_at_86 = true;
+                }
+            }
+            
+            if (user_data == 0 && has_image_at_86) {
+                // For OS1.x icons with Image structure at 0x86
+                // Use the Image structure dimensions as they're more accurate
+                img_width = read_be16(data + 0x8A);
+                img_height = read_be16(data + 0x8C);
+                img_depth = read_be16(data + 0x8E);
+                has_image_data = read_be32(data + 0x90);
+                
+            } else if (user_data == 1 && size >= 98) {
+                // OS2.x/3.x: Image structure at offset 78 (0x4E) is valid
+                img_width = read_be16(data + 82);  // 0x52
+                img_height = read_be16(data + 84); // 0x54
+                img_depth = read_be16(data + 86);  // 0x56
+                has_image_data = read_be32(data + 88); // 0x58
+            }
+            
+            // Validate dimensions and check if we have image data
+            if (img_width > 0 && img_width <= 256 && 
+                img_height > 0 && img_height <= 256 && 
+                has_image_data != 0) {
+                
+                // Spec says: Image data follows Image structure
+                const uint8_t *bitmap_start;
+                
+                if (user_data == 0 && has_image_at_86 && size >= 0x9A) {
+                    // For icons with DrawerData, first Image is at 0x86
+                    // Bitmap data starts at 0x9A (0x86 + 20 byte Image structure)
+                    bitmap_start = data + 0x9A;
+                } else if (user_data == 0) {
+                    // OS1.3 icon without DrawerData - bitmap starts directly at 0x4E
+                    // There's no Image structure header for OS1.3 icons!
+                    bitmap_start = data + 0x4E;
+                } else {
+                    // OS2.x/3.x icon - bitmap follows the Image header at 0x4E
+                    bitmap_start = data + 0x62;  // 0x4E + 20 (Image structure size)
+                }
+                
+                Pixmap icon_pixmap = None;
+                int render_result = 1;
+                
+                if (user_data == 0) {
+                    // OS1.3 icon - use special renderer with transparent background
+                    render_result = render_os13_icon(ctx->dpy, &icon_pixmap, bitmap_start, img_width, img_height);
+                    } else {
+                        // OS3 icon - use standard renderer
+                        render_result = render_icon(ctx->dpy, &icon_pixmap, bitmap_start, img_width, img_height, img_depth, format);
+                    }
+                    
+                    if (!render_result) {
+                        icon->normal_picture = XRenderCreatePicture(ctx->dpy, icon_pixmap, ctx->fmt, 0, NULL);
+                        icon->width = img_width;
+                        icon->height = img_height;
+                        
+                        // Check for selected image
+                        uint32_t has_sel = read_be32(data + 0x1A);
+                        if (has_sel) {
+                            // Calculate offset for second image
+                            // First image bitmap size depends on actual dimensions
+                            int row_bytes = ((img_width + 15) >> 4) << 1;
+                            long plane_size = row_bytes * img_height;
+                            long first_img_size = plane_size * img_depth;
+                            
+                            // For OS1.x icon with Image at 0x86: second Image follows first image's data
+                            if (user_data == 0 && has_image_at_86) {
+                                // Spec says: second image follows first image's bitmap data
+                                // First image bitmap at 0x9A, size = plane_size * depth = 248 * 2 = 496
+                                // Second Image structure at 0x9A + 496 = 0x28A
+                                long selected_offset = 0x9A + first_img_size;
+                                
+                                
+                                // Check if there's another Image structure or just raw bitmap
+                                if (selected_offset + 20 <= size) {
+                                    // Try to read as Image structure
+                                    uint16_t sel_width = read_be16(data + selected_offset + 4);
+                                    uint16_t sel_height = read_be16(data + selected_offset + 6);  
+                                    uint16_t sel_depth = read_be16(data + selected_offset + 8);
+                                    uint32_t sel_has_data = read_be32(data + selected_offset + 10);
+                                    
+                                    
+                                    // Check if it looks like a valid Image structure
+                                    if (sel_width > 0 && sel_width <= 256 && 
+                                        sel_height > 0 && sel_height <= 256 &&
+                                        sel_depth > 0 && sel_depth < 9 && sel_has_data) {
+                                        // It's an Image structure, bitmap follows it
+                                        // Bitmap starts immediately after the Image structure
+                                        const uint8_t *sel_bitmap = data + selected_offset + 20;
+                                        
+                                        
+                                        Pixmap sel_pixmap = None;
+                                        int sel_result = render_os13_icon(ctx->dpy, &sel_pixmap, sel_bitmap, 
+                                                                         sel_width, sel_height);
+                                        if (!sel_result) {
+                                            icon->selected_picture = XRenderCreatePicture(ctx->dpy, sel_pixmap, 
+                                                                                         ctx->fmt, 0, NULL);
+                                            icon->sel_width = sel_width;
+                                            icon->sel_height = sel_height;
+                                            XFreePixmap(ctx->dpy, sel_pixmap);
+                                        }
+                                    } else {
+                                        // Not an Image structure, try as raw bitmap with same dimensions
+                                        const uint8_t *sel_bitmap = data + selected_offset;
+                                        
+                                        
+                                        Pixmap sel_pixmap = None;
+                                        int sel_result = render_os13_icon(ctx->dpy, &sel_pixmap, sel_bitmap,
+                                                                         img_width, img_height);
+                                        if (!sel_result) {
+                                            icon->selected_picture = XRenderCreatePicture(ctx->dpy, sel_pixmap,
+                                                                                         ctx->fmt, 0, NULL);
+                                            icon->sel_width = img_width;
+                                            icon->sel_height = img_height;
+                                            XFreePixmap(ctx->dpy, sel_pixmap);
+                                        }
+                                    }
+                                }
+                            } else if (user_data == 0 && img_depth == 2 && has_image_data == 1) {
+                                // Original code for other OS1.3 icons
+                                long second_bitmap_offset = 0x2B4;
+                                
+                                
+                                if (second_bitmap_offset + first_img_size <= size) {
+                                    // Verify there's actual data there (not all zeros/FFs)
+                                    const uint8_t *sel_bitmap = data + second_bitmap_offset;
+                                    int has_valid_data = 0;
+                                    
+                                    // Check if it looks like valid bitmap data
+                                    for (int i = 0; i < 32 && i < first_img_size; i++) {
+                                        if (sel_bitmap[i] != 0x00 && sel_bitmap[i] != 0xFF) {
+                                            has_valid_data = 1;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    // Also check the pattern at 0x2A8 matches expected (from hex dump)
+                                    if (!has_valid_data && size > 0x2B0) {
+                                        // The hex dump shows: 0000 0000 ffff fffe at 0x2A8
+                                        if (sel_bitmap[0] == 0x00 && sel_bitmap[1] == 0x00 &&
+                                            sel_bitmap[4] == 0xFF && sel_bitmap[5] == 0xFF) {
+                                            has_valid_data = 1;
+                                        }
+                                    }
+                                    
+                                    if (has_valid_data) {
+                                        
+                                        Pixmap sel_pixmap = None;
+                                        int sel_result = render_os13_icon(ctx->dpy, &sel_pixmap, sel_bitmap, img_width, img_height);
+                                        
+                                        if (!sel_result) {
+                                            icon->selected_picture = XRenderCreatePicture(ctx->dpy, sel_pixmap, ctx->fmt, 0, NULL);
+                                            icon->sel_width = img_width;
+                                            icon->sel_height = img_height;
+                                            XFreePixmap(ctx->dpy, sel_pixmap);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Normal case - second image has Image header
+                                long second_img_offset = 98 + first_img_size;
+                                
+                                // Second image also has a 20-byte Image header
+                                if (second_img_offset + 20 <= size) {
+                                    uint16_t sel_width = read_be16(data + second_img_offset + 4);
+                                    uint16_t sel_height = read_be16(data + second_img_offset + 6);
+                                    uint16_t sel_depth = read_be16(data + second_img_offset + 8);
+                                    uint32_t sel_has_data = read_be32(data + second_img_offset + 10);
+                                    
+                                    if (sel_width > 0 && sel_width <= 256 && 
+                                        sel_height > 0 && sel_height <= 256 && 
+                                        sel_has_data != 0) {
+                                        
+                                        const uint8_t *sel_bitmap = data + second_img_offset + 20;
+                                        Pixmap sel_pixmap = None;
+                                        int sel_result = render_icon(ctx->dpy, &sel_pixmap, sel_bitmap, sel_width, sel_height, sel_depth, format);
+                                        
+                                        if (!sel_result) {
+                                            icon->selected_picture = XRenderCreatePicture(ctx->dpy, sel_pixmap, ctx->fmt, 0, NULL);
+                                            icon->sel_width = sel_width;
+                                            icon->sel_height = sel_height;
+                                            XFreePixmap(ctx->dpy, sel_pixmap);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (!icon->selected_picture) {
+                            icon->selected_picture = icon->normal_picture;
+                            icon->sel_width = img_width;
+                            icon->sel_height = img_height;
+                        }
+                        
+                        icon->current_picture = icon->normal_picture;
+                        XFreePixmap(ctx->dpy, icon_pixmap);
+                    }
+                }
+            }
+        }
+    
+    
     free(data);
 }
 
