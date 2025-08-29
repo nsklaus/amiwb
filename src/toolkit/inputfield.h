@@ -17,6 +17,7 @@ typedef struct InputField {
     int selection_end;
     int visible_start;
     bool has_focus;
+    bool disabled;  // New field for disabled state
     void (*on_enter)(const char *text, void *user_data);
     void (*on_change)(const char *text, void *user_data);
     void *user_data;
@@ -40,5 +41,6 @@ void inputfield_backspace(InputField *field);
 void inputfield_move_cursor(InputField *field, int delta);
 void inputfield_scroll_to_end(InputField *field);
 void inputfield_update_size(InputField *field, int new_width);
+void inputfield_set_disabled(InputField *field, bool disabled);
 
 #endif

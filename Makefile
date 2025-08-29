@@ -30,9 +30,10 @@ REQASL_OBJS = $(REQASL_SRCS:.c=.o)
 AMIWB_EXEC = amiwb
 REQASL_EXEC = reqasl
 TOOLKIT_LIB = libamiwb-toolkit.a
+REQASL_HOOK = reqasl_hook.so
 
 # Default target
-all: $(TOOLKIT_LIB) amiwb reqasl
+all: $(TOOLKIT_LIB) amiwb reqasl $(REQASL_HOOK)
 
 # Toolkit library (built for installation)
 $(TOOLKIT_LIB): $(TOOLKIT_OBJS)
@@ -53,6 +54,11 @@ $(REQASL_EXEC): $(REQASL_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(REQASL_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
 	@echo "ReqASL executable built: $(REQASL_EXEC)"
 
+# ReqASL hook library for intercepting file dialogs
+$(REQASL_HOOK): $(REQASL_DIR)/reqasl_hook.c
+	$(CC) -fPIC -shared -ldl -Wall -O2 -o $@ $<
+	@echo "ReqASL hook library built: $(REQASL_HOOK)"
+
 # Pattern rules for object files
 $(AMIWB_DIR)/%.o: $(AMIWB_DIR)/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
@@ -66,7 +72,7 @@ $(REQASL_DIR)/%.o: $(REQASL_DIR)/%.c
 # Clean targets
 clean:
 	rm -f $(AMIWB_OBJS) $(TOOLKIT_OBJS) $(REQASL_OBJS)
-	rm -f $(AMIWB_EXEC) $(REQASL_EXEC) $(TOOLKIT_LIB)
+	rm -f $(AMIWB_EXEC) $(REQASL_EXEC) $(TOOLKIT_LIB) $(REQASL_HOOK)
 	rm -f src/*.o  # Clean any stray object files
 	@echo "Clean complete"
 
@@ -77,7 +83,7 @@ clean-toolkit:
 	rm -f $(TOOLKIT_OBJS) $(TOOLKIT_LIB)
 
 clean-reqasl:
-	rm -f $(REQASL_OBJS) $(REQASL_EXEC)
+	rm -f $(REQASL_OBJS) $(REQASL_EXEC) $(REQASL_HOOK)
 
 # Install targets
 # Order is important:
@@ -110,15 +116,18 @@ install-amiwb: amiwb
 	@echo "AmiWB installed"
 
 # 3rd: Install reqasl file requester (requires toolkit and works with amiwb)
-install-reqasl: reqasl
+install-reqasl: reqasl $(REQASL_HOOK)
 	mkdir -p /usr/local/bin
 	cp $(REQASL_EXEC) /usr/local/bin/
+	mkdir -p /usr/local/lib
+	cp $(REQASL_HOOK) /usr/local/lib/
 	@echo "ReqASL installed"
 
 uninstall:
 	rm -f /usr/local/bin/amiwb
 	rm -f /usr/local/bin/reqasl
 	rm -f /usr/local/lib/libamiwb-toolkit.a
+	rm -f /usr/local/lib/reqasl_hook.so
 	rm -rf /usr/local/include/amiwb
 	rm -rf /usr/local/share/amiwb
 	@echo "AMIWB uninstalled"

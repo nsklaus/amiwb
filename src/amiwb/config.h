@@ -99,4 +99,9 @@ extern char *iconify_path;
 #define LOG_FILE_PATH "$HOME/Sources/amiwb/amiwb.log" //"$HOME/.config/amiwb/amiwb.log"
 #define LOG_CAP_ENABLED 0
 #define LOG_CAP_BYTES (5 * 1024 * 1024)
+
+// ReqASL file dialog hook - replaces native file choosers with ReqASL
+// This will intercept GTK3, Qt, and other toolkit file dialogs
+#define REQASL_HOOK_PATH "/usr/local/lib/reqasl_hook.so"
+
 #endif

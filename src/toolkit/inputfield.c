@@ -23,6 +23,7 @@ InputField* inputfield_create(int x, int y, int width, int height) {
     field->selection_end = -1;
     field->visible_start = 0;
     field->has_focus = false;
+    field->disabled = false;  // Initialize disabled state
     field->on_enter = NULL;
     field->on_change = NULL;
     field->user_data = NULL;
@@ -121,8 +122,35 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
     XRenderFillRectangle(dpy, PictOpSrc, dest, &black, x+w-1, y, 1, h);     // Right black
     XRenderFillRectangle(dpy, PictOpSrc, dest, &black, x, y+h-1, w, 1);     // Bottom black
     
-    // Gray fill for input area
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &gray, x+2, y+2, w-4, h-4);
+    // Fill input area - checker pattern if disabled, solid gray if enabled
+    if (field->disabled) {
+        // First fill the 2-pixel padding area with gray
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &gray, x+2, y+2, w-4, h-4);
+        
+        // Draw checker pattern like workbench inactive scrollbar - 2x2 blocks
+        // Fill with 2x2 alternating blocks, with 2px padding from borders
+        for (int py = y + 4; py < y + h - 4; py += 2) {
+            for (int px = x + 4; px < x + w - 4; px += 2) {
+                // Determine if this 2x2 block should be gray or black
+                // Based on block position (not pixel position)
+                int block_x = (px - x - 4) / 2;
+                int block_y = (py - y - 4) / 2;
+                
+                // Alternate blocks: when block x+y is even, gray; odd, black
+                if ((block_x + block_y) % 2 == 0) {
+                    // Gray block - already filled, skip
+                } else {
+                    // Black block
+                    XRenderFillRectangle(dpy, PictOpSrc, dest, &black, px, py,
+                                       (px + 2 <= x + w - 4) ? 2 : (x + w - 4 - px),
+                                       (py + 2 <= y + h - 4) ? 2 : (y + h - 4 - py));
+                }
+            }
+        }
+    } else {
+        // Normal gray fill for enabled field
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &gray, x+2, y+2, w-4, h-4);
+    }
     
     // Draw text content with cursor if we have a font
     if (font && xft_draw) {
@@ -146,8 +174,8 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
         
         int text_len = strlen(field->text);
         
-        // Handle empty text with cursor
-        if (text_len == 0 && field->has_focus && field->cursor_pos == 0) {
+        // Handle empty text with cursor (but not if disabled)
+        if (text_len == 0 && field->has_focus && field->cursor_pos == 0 && !field->disabled) {
             // Draw blue rectangle cursor the size of a space
             XGlyphInfo space_info;
             XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
@@ -168,7 +196,7 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
             if (text_extents.width > available_width) {
                 // Text doesn't fit - we need to scroll
                 
-                if (field->has_focus) {
+                if (field->has_focus && !field->disabled) {
                     // When focused, keep cursor in view
                     visible_start = field->visible_start;
                     
@@ -248,7 +276,7 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
                 XftTextExtentsUtf8(dpy, font, (FcChar8*)ch, 1, &glyph_info);
                 
                 // Check if this is the cursor position
-                bool is_cursor = (field->has_focus && i == field->cursor_pos);
+                bool is_cursor = (field->has_focus && !field->disabled && i == field->cursor_pos);
                 
                 if (is_cursor) {
                     // Draw blue background for cursor
@@ -267,7 +295,7 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
             }
             
             // Draw cursor at end if it's past the last character
-            if (field->has_focus && field->cursor_pos == text_len) {
+            if (field->has_focus && !field->disabled && field->cursor_pos == text_len) {
                 XGlyphInfo space_info;
                 XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
                 // Use minimum width of 8 pixels if space has no width
@@ -292,6 +320,11 @@ bool inputfield_handle_click(InputField *field, int click_x, int click_y) {
         return false;
     }
     
+    // Disabled fields cannot receive focus
+    if (field->disabled) {
+        return false;
+    }
+    
     if (click_x >= field->x && click_x < field->x + field->width &&
         click_y >= field->y && click_y < field->y + field->height) {
         field->has_focus = true;
@@ -311,6 +344,11 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
         return false;
     }
     if (!event) {
+        return false;
+    }
+    
+    // Disabled fields cannot handle keyboard input
+    if (field->disabled) {
         return false;
     }
     if (!field->has_focus) return false;  // Not an error - field doesn't have focus
@@ -578,4 +616,17 @@ void inputfield_update_size(InputField *field, int new_width) {
     // Reset visible_start to trigger recalculation in draw
     // This will ensure the rightmost part stays visible
     field->visible_start = 0;
+}
+
+void inputfield_set_disabled(InputField *field, bool disabled) {
+    if (!field) {
+        return;
+    }
+    
+    field->disabled = disabled;
+    
+    // If disabling, remove focus
+    if (disabled) {
+        field->has_focus = false;
+    }
 }

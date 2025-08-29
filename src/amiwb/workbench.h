@@ -48,4 +48,7 @@ void open_file(FileIcon *icon);                 // Open file with xdg-open
 void restore_iconified(FileIcon *icon);         // Restore iconified window
 void workbench_open_directory(const char *path); // Open directory in new workbench window
 
+// Launch programs with ReqASL hook
+void launch_with_hook(const char *command);     // Execute command with LD_PRELOAD set
+
 #endif

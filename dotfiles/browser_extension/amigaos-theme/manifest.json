@@ -6,7 +6,7 @@
   "theme": {
     "colors": {
       "frame": [128, 130, 128],
-      "frame_inactive": [96, 98, 96],
+      "frame_inactive": [128, 130, 128],
       "toolbar": [160, 162, 160],
       "tab_text": [0, 0, 0],
       "tab_background_text": [0, 0, 0],

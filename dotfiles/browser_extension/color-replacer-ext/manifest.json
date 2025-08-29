@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Simple Color Replacer",
-  "version": "1.96",
+  "version": "2.06",
   "content_scripts": [{
     "matches": ["<all_urls>", "file:///*"],
     "css": ["inject.css"],

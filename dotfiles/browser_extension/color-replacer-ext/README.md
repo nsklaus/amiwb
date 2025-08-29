@@ -26,11 +26,25 @@ A browser extension that makes the web look like AmigaOS from the 1990s.
 
 ## Color Replacements
 
+The extension uses the `hexColorMap` in `replace.js` to define color replacements:
+
+### How it works:
+1. **Regular website colors** - Always replaced if they're in hexColorMap
+2. **Syntax highlighting colors** - By default PRESERVED, but ONLY replaced if that specific color is in hexColorMap
+
+### The logic:
+- If a syntax color (e.g., #FF5733 for strings) is NOT in hexColorMap → it stays as-is
+- If a syntax color (e.g., #DB3279) IS in hexColorMap → it gets replaced with your chosen color (#9d5f76)
+
+### Current mappings:
 - Green (#77BB77) → Darker green (#009619)
 - Light blue (#88BBFF, #53BFFC) → Amiga blue (#000cda)
 - Grays (#D9D9D9, #C3C3C3) → Amiga gray (#a0a2a0)
 - Gray comments (#a0a1a7) → Purple (#9d5f76)
 - Black backgrounds → Gray (#a0a2a0)
+- Pink (#DB3279) → Purple (#9d5f76)
+
+To add new color replacements, edit the `hexColorMap` object in `replace.js`.
 
 ## Special Handling
 
@@ -46,12 +60,12 @@ A browser extension that makes the web look like AmigaOS from the 1990s.
 
 ## Version
 
-Current: v1.96
+Current: v2.01
 
 ### Recent Updates
+- v2.01: Extended syntax highlighting support to all containers (not just code/pre tags)
+- v2.00: Optimized performance for syntax color replacement
+- v1.99: Added computed style checking for code elements
+- v1.98: Added hexColorMap support for syntax highlighting colors
 - v1.96: Added custom text selection color (faint light blue)
 - v1.95: Refined scrollbar design (black thumb, no 3D effects)
-- v1.91: Fixed GitHub header backgrounds
-- v1.88: Aggressive GitHub white background removal
-- v1.85: GitHub-specific CSS injection for code blocks
-- v1.80: CrowdBunker video overlay fixes

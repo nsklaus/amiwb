@@ -15,6 +15,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <time.h>
 #include <pwd.h>
@@ -162,6 +163,7 @@ ReqASL* reqasl_create(Display *display) {
                                           req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT);
     if (req->pattern_field) {
         inputfield_set_text(req->pattern_field, "");
+        inputfield_set_disabled(req->pattern_field, true);  // Disable pattern field for now
     }
     
     req->drawer_field = inputfield_create(MARGIN + LABEL_WIDTH, input_y + INPUT_HEIGHT + SPACING,
@@ -1030,13 +1032,19 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                                               strlen(entry->path));
                                 XFlush(req->display);
                             } else {
-                                // File selected - open with xdg-open
-                                pid_t pid = fork();
-                                if (pid == 0) {
-                                    // Child process
-                                    execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
-                                    perror("execlp failed for xdg-open");
-                                    _exit(EXIT_FAILURE);
+                                // File selected - check if we have a callback or should use xdg-open
+                                if (req->on_open) {
+                                    // Callback mode - return path to caller
+                                    req->on_open(entry->path);
+                                } else {
+                                    // Standalone mode - open with xdg-open
+                                    pid_t pid = fork();
+                                    if (pid == 0) {
+                                        // Child process
+                                        execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
+                                        perror("execlp failed for xdg-open");
+                                        _exit(EXIT_FAILURE);
+                                    }
                                 }
                             }
                             reqasl_hide(req);
@@ -1234,16 +1242,23 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                             // Navigate into directory (same as double-click)
                             reqasl_navigate_to(req, entry->path);
                         } else {
-                            // Open file with xdg-open (like workbench.c does)
-                            pid_t pid = fork();
-                            if (pid == 0) {
-                                // Child process
-                                execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
-                                perror("execlp failed for xdg-open");
-                                _exit(EXIT_FAILURE);
-                            } else if (pid > 0) {
-                                // Parent - file opened, hide reqasl
+                            // File selected - check if we have a callback or should use xdg-open
+                            if (req->on_open) {
+                                // Callback mode - return path to caller
+                                req->on_open(entry->path);
                                 reqasl_hide(req);
+                            } else {
+                                // Standalone mode - open file with xdg-open (like workbench.c does)
+                                pid_t pid = fork();
+                                if (pid == 0) {
+                                    // Child process
+                                    execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
+                                    perror("execlp failed for xdg-open");
+                                    _exit(EXIT_FAILURE);
+                                } else if (pid > 0) {
+                                    // Parent - file opened, hide reqasl
+                                    reqasl_hide(req);
+                                }
                             }
                         }
                         return true;
@@ -1403,10 +1418,19 @@ static void listview_double_click_callback(int index, const char *text, void *us
         // Navigate into directory
         reqasl_navigate_to(req, entry->path);
     } else {
-        // Open file
+        // Open file - check if we have a callback or should use xdg-open
         if (req->on_open) {
+            // Callback mode - return path to caller
             req->on_open(entry->path);
+            reqasl_hide(req);
+        } else {
+            // Standalone mode - open with xdg-open
+            pid_t pid = fork();
+            if (pid == 0) {
+                execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
+                _exit(EXIT_FAILURE);
+            }
+            reqasl_hide(req);
         }
-        reqasl_hide(req);
     }
 }

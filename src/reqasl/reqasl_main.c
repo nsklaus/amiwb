@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <X11/Xlib.h>
 #include "reqasl.h"
 
@@ -34,17 +35,34 @@ int main(int argc, char *argv[]) {
     
     // Parse command line arguments
     const char *initial_path = NULL;
+    const char *title = "Open File";
+    const char *mode = "open";
+    
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--path") == 0 && i + 1 < argc) {
             initial_path = argv[++i];
+        } else if (strcmp(argv[i], "--title") == 0 && i + 1 < argc) {
+            title = argv[++i];
+        } else if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
+            mode = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
-            printf("Usage: %s [--path /initial/path]\n", argv[0]);
-            printf("ReqASL File Requester - Part of WBDE\n");
+            printf("Usage: %s [options]\n", argv[0]);
+            printf("Options:\n");
+            printf("  --path PATH    Initial directory path\n");
+            printf("  --title TITLE  Window title\n");
+            printf("  --mode MODE    Mode (open/save)\n");
+            printf("  --help         Show this help\n");
+            printf("\nReqASL File Requester - Part of AmiWB\n");
             reqasl_destroy(req);
             XCloseDisplay(display);
             return 0;
         }
     }
+    
+    // TODO: Set window title based on --title argument
+    // For now, mode determines behavior (open vs save)
+    (void)title;  // Will be used when we add title support
+    (void)mode;   // Will be used for save mode
     
     // Show dialog
     reqasl_show(req, initial_path);

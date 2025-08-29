@@ -546,27 +546,7 @@ void load_custom_menus(void) {
 
 // Execute a custom menu command
 void execute_custom_command(const char *cmd) {
-    if (!cmd || !*cmd) return;
-    
-    pid_t pid = fork();
-    if (pid == -1) {
-        printf("[ERROR] fork failed for launch_command: %s\n", cmd);
-        return;
-    } else if (pid == 0) {
-        // Child process
-        // Close file descriptors to detach from parent
-        for (int i = 3; i < 256; i++) {
-            close(i);
-        }
-        
-        // Execute command through shell
-        execl("/bin/sh", "sh", "-c", cmd, NULL);
-        // If exec fails
-        exit(1);
-    } else if (pid < 0) {
-        fprintf(stderr, "Failed to execute command: %s\n", cmd);
-    }
-    // Parent continues immediately (don't wait)
+    launch_with_hook(cmd);
 }
 
 // Update menubar if time changed (called periodically)
@@ -1783,21 +1763,7 @@ static void execute_command_cancel_callback(void);
 
 // Execute command dialog callback - run the command
 static void execute_command_ok_callback(const char *command) {
-    if (!command || strlen(command) == 0) return;
-    
-    // Fork and execute command - fire and forget
-    pid_t pid = fork();
-    if (pid == -1) {
-        printf("[ERROR] fork failed for execute dialog command: %s\n", command);
-        return;
-    } else if (pid == 0) {
-        // Child process - execute the command
-        // Use shell to handle arguments and environment
-        execl("/bin/sh", "sh", "-c", command, NULL);
-        // If execl fails, exit child
-        exit(1);
-    }
-    // Parent continues - no waiting for child
+    launch_with_hook(command);
 }
 
 static void execute_command_cancel_callback(void) {

@@ -1504,6 +1504,35 @@ FileIcon *find_icon(Window win, int x, int y) {
     return NULL;
 }
 
+// Launch a program with ReqASL hook preloaded
+// Command should be a full shell command like "leafpad file.txt" or "xdg-open file.pdf"
+void launch_with_hook(const char *command) {
+    if (!command || !*command) return;
+    
+    pid_t pid = fork();
+    if (pid == -1) {
+        printf("[ERROR] fork failed for command: %s\n", command);
+        return;
+    } else if (pid == 0) {
+        // Child process
+        // Close file descriptors to detach from parent
+        for (int i = 3; i < 256; i++) {
+            close(i);
+        }
+        
+        // Always inject ReqASL hook for GUI applications
+        setenv("LD_PRELOAD", REQASL_HOOK_PATH, 1);
+        
+        // Execute through shell to handle arguments properly
+        execl("/bin/sh", "sh", "-c", command, NULL);
+        
+        // If exec fails
+        perror("execl failed");
+        _exit(EXIT_FAILURE);
+    }
+    // Parent continues without waiting
+}
+
 void open_file(FileIcon *icon) {
     if (!icon || !icon->path) return;
     // Directories should be opened within AmiWB (safety guard)
@@ -1512,16 +1541,11 @@ void open_file(FileIcon *icon) {
         if (c) open_directory(icon, c);
         return;
     }
-    pid_t pid = fork();
-    if (pid == -1) {
-        printf("[ERROR] fork failed in open_file for path: %s\n", icon->path);
-        return;
-    } else if (pid == 0) {
-        // Child: replace with xdg-open
-        execlp("xdg-open", "xdg-open", icon->path, (char *)NULL);
-        perror("execlp failed for xdg-open");
-        _exit(EXIT_FAILURE);
-    }
+    
+    // Build xdg-open command and launch with hook
+    char command[PATH_SIZE * 2 + 32];
+    snprintf(command, sizeof(command), "xdg-open '%s'", icon->path);
+    launch_with_hook(command);
 }
 
 void restore_iconified(FileIcon *icon) {

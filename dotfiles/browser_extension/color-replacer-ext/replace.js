@@ -1,4 +1,4 @@
-const EXTENSION_VERSION = '1.73';
+const EXTENSION_VERSION = '2.06';
 console.log(`Color replacer extension v${EXTENSION_VERSION} loaded!`);
 
 // Note: Initial gray background and hiding is now handled by inject.css
@@ -39,7 +39,8 @@ const hexColorMap = {
   '#56A8DA': '#000cda',
   '#a0a1a7': '#9d5f76',  // Gray comments to purple
   '#000000': '#a0a2a0',  // Black backgrounds to gray
-  '#000': '#a0a2a0',     // Short black to gray
+  '#000'   : '#a0a2a0',  // Short black to gray
+  '#DB3279': '#9d5f76',  // bad pink to purple
 };
 
 const colors = generateColorVariations(hexColorMap);
@@ -69,6 +70,9 @@ function processAllStyles() {
     document.querySelectorAll('[style]').forEach(element => {
       element.style.cssText = replaceColors(element.style.cssText);
     });
+    
+    // Use the efficient fixCodeColors function
+    fixCodeColors();
   }
 
   // Process stylesheets - BUT NOT on GitHub
@@ -115,6 +119,18 @@ function processAllStyles() {
     }
     document.head.appendChild(showStyle);
   }, delay); // Small delay to ensure styles are applied
+}
+
+// Domains where overlays should NOT be blocked (for functionality)
+const overlayExceptionDomains = [
+  'youtube.com',
+  'online-go.com',
+  // Add more domains here as needed
+];
+
+function shouldBlockOverlays() {
+  const hostname = window.location.hostname;
+  return !overlayExceptionDomains.some(domain => hostname.includes(domain));
 }
 
 function applySmartColorForcing() {
@@ -409,7 +425,51 @@ function applySmartColorForcing() {
     return;
   }
   
-  // Create style rules for AmigaOS-style gray backgrounds - AGGRESSIVE for non-GitHub
+  // Skip aggressive styling for YouTube to prevent player issues
+  if (window.location.hostname.includes('youtube.com')) {
+    const youtubeStyle = document.createElement('style');
+    youtubeStyle.textContent = `
+      /* Minimal YouTube styling - just body background */
+      body {
+        background-color: #a0a2a0 !important;
+      }
+      
+      /* Keep video player and controls untouched */
+      #movie_player, .ytp-chrome-bottom, .ytp-chrome-controls,
+      .ytp-progress-bar-container, .ytp-progress-bar,
+      .html5-video-player, .html5-video-container,
+      video, .video-stream {
+        background-color: transparent !important;
+        background: transparent !important;
+      }
+      
+      /* Preserve player gradients and overlays */
+      .ytp-gradient-bottom, .ytp-gradient-top {
+        background: inherit !important;
+      }
+      
+      /* Main content area gray but not video */
+      ytd-app, #content, #page-manager {
+        background-color: #a0a2a0 !important;
+      }
+      
+      /* Sidebar and non-video elements */
+      #secondary, #sidebar, ytd-comments, #comments {
+        background-color: #a0a2a0 !important;
+      }
+      
+      /* Force tp-yt-app-header backgrounds */
+      tp-yt-app-header * {
+        background: #a0a2a0 !important;
+      }
+      
+    `;
+    document.head.appendChild(youtubeStyle);
+    console.log('Applied minimal YouTube styling to preserve player');
+    return;
+  }
+  
+  // Create style rules for AmigaOS-style gray backgrounds - AGGRESSIVE for non-GitHub/YouTube
   const style = document.createElement('style');
   style.textContent = `
     /* Unset all fonts globally - use browser defaults */
@@ -554,7 +614,8 @@ function applySmartColorForcing() {
       visibility: visible !important;
     }
     
-    /* Disable YouTube video preview on hover */
+    ${shouldBlockOverlays() ? `
+    /* Disable YouTube video preview on hover - only if not on exception list */
     ytd-thumbnail #hover-overlays,
     ytd-thumbnail ytd-thumbnail-overlay-toggle-button-renderer,
     ytd-thumbnail-overlay-time-status-renderer,
@@ -579,7 +640,7 @@ function applySmartColorForcing() {
     .thumbnail-overlay,
     .video-overlay {
       display: none !important;
-    }
+    }` : '/* Overlays allowed on this domain */'}
     
     /* But keep the actual thumbnail images visible */
     [class*="thumb"] img,
@@ -710,10 +771,75 @@ function fixGitHubCode() {
   });
 }
 
+// Pre-compute RGB values for performance
+const colorLookup = {};
+for (let [oldHex, newHex] of Object.entries(hexColorMap)) {
+  const oldRgb = hexToRgb(oldHex);
+  const oldRgbNoSpace = oldRgb.replace(/\s/g, '');
+  colorLookup[oldHex.toLowerCase()] = newHex;
+  colorLookup[oldRgb] = newHex;
+  colorLookup[oldRgbNoSpace] = newHex;
+}
+
+// Function to fix syntax colors efficiently (not just in code tags)
+function fixCodeColors() {
+  // Broader selector for any syntax highlighting containers
+  const syntaxSelectors = [
+    'code:not([data-code-fixed])',
+    'pre:not([data-code-fixed])',
+    '[class*="highlight"]:not([data-code-fixed])',
+    '[class*="hljs"]:not([data-code-fixed])',
+    '[class*="prism"]:not([data-code-fixed])',
+    '[class*="syntax"]:not([data-code-fixed])',
+    '[class*="language-"]:not([data-code-fixed])',
+    '[class*="codemirror"]:not([data-code-fixed])',
+    '.highlight:not([data-code-fixed])',
+    '.code:not([data-code-fixed])',
+    '.codeblock:not([data-code-fixed])'
+  ].join(', ');
+  
+  const codeElements = document.querySelectorAll(syntaxSelectors);
+  if (codeElements.length === 0) return; // Skip if nothing to process
+  
+  codeElements.forEach(container => {
+    // Mark as processed immediately to avoid reprocessing
+    container.setAttribute('data-code-fixed', 'true');
+    
+    // Process the container itself
+    const containerColor = window.getComputedStyle(container).color;
+    const newColor = colorLookup[containerColor] || colorLookup[containerColor.replace(/\s/g, '')];
+    if (newColor) {
+      container.style.setProperty('color', newColor, 'important');
+    }
+    
+    // Process children with syntax-related classes or inline colors
+    const styledChildren = container.querySelectorAll(
+      '[style*="color"], [class*="hljs"], [class*="token"], [class*="syntax"], ' +
+      '[class*="language"], [class*="highlight"], [class*="prism"], ' +
+      '[class*="keyword"], [class*="string"], [class*="comment"], [class*="function"], ' +
+      '[class*="operator"], [class*="number"], [class*="variable"], span'
+    );
+    
+    styledChildren.forEach(element => {
+      if (element.hasAttribute('data-color-processed')) return;
+      
+      const currentColor = window.getComputedStyle(element).color;
+      const replacement = colorLookup[currentColor] || colorLookup[currentColor.replace(/\s/g, '')];
+      if (replacement) {
+        element.style.setProperty('color', replacement, 'important');
+        element.setAttribute('data-color-processed', 'true');
+      }
+    });
+  });
+}
+
 // Run the extension when DOM is ready
 function runExtension() {
   if (document.body) {
     processAllStyles();
+    // Run code fix after a delay to catch late-rendered elements
+    setTimeout(fixCodeColors, 1000);
+    setTimeout(fixCodeColors, 2000);
   } else {
     // If body doesn't exist yet, wait a bit
     setTimeout(runExtension, 10);
@@ -740,6 +866,9 @@ function handleMutations() {
       element.style.cssText = replaceColors(element.style.cssText);
       element.setAttribute('data-color-processed', 'true');
     });
+    
+    // Use the efficient fixCodeColors function for mutations too
+    fixCodeColors();
     
     // Also fix any new gray-on-gray text
     fixGrayOnGrayText();
