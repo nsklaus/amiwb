@@ -84,11 +84,8 @@ extern char *iconify_path;
 #define DEBUG false  		// enable debug output
 #define MIN_KNOB_SIZE 10  	// Minimum size for scrollbar knobs in pixels
 
-// desktop and windows backgrounds, with tile option 0/1
-#define DESKPICT "/usr/local/share/amiwb/patterns/atom_art.png"
-#define DESKTILE 0
-#define WINDPICT "/usr/local/share/amiwb/patterns/pattern8.png"
-#define WINDTILE 1
+// Wallpaper settings now in ~/.config/amiwb/amiwbrc
+// Removed: DESKPICT, DESKTILE, WINDPICT, WINDTILE
 
 // Logging configuration
 // When LOGGING_ENABLED is 1, AmiWB redirects stdout/stderr to LOG_FILE_PATH,

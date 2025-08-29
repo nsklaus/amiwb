@@ -57,7 +57,8 @@ typedef struct {
     Picture canvas_render;              // XRender pic for compositing content onto buffer
     Picture window_render;              // XRender picture for displaying content to window
     char *path;                         // Directory path (NULL for menus)
-    char *title;                        // Window/menu title (NULL for desktop)
+    char *title_base;                   // Base app name (never changes, used for iconify)
+    char *title_change;                 // Dynamic display title (if NULL, render uses title_base)
     int x, y;                           // Position
     int width, height;                  // Dimensions
     int buffer_width, buffer_height;    // Actual buffer dimensions (may be larger)

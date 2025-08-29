@@ -32,8 +32,9 @@ int main(int argc, char *argv[]) {
     
     // Parse command line arguments
     const char *initial_path = NULL;
-    const char *title = "Open File";
+    const char *title = NULL;  // Will be set based on mode if not provided
     const char *mode = "open";
+    const char *pattern = NULL;  // File extensions filter (e.g. "avi,mp4,mkv")
     bool called_by_app = false;  // Detect if called by another app
     
     for (int i = 1; i < argc; i++) {
@@ -44,13 +45,16 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
             mode = argv[++i];
             called_by_app = true;  // --mode flag indicates app is calling
+        } else if (strcmp(argv[i], "--pattern") == 0 && i + 1 < argc) {
+            pattern = argv[++i];  // e.g. "avi,mp4,mkv"
         } else if (strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("Options:\n");
-            printf("  --path PATH    Initial directory path\n");
-            printf("  --title TITLE  Window title\n");
-            printf("  --mode MODE    Mode (open/save)\n");
-            printf("  --help         Show this help\n");
+            printf("  --path PATH       Initial directory path\n");
+            printf("  --title TITLE     Window title\n");
+            printf("  --mode MODE       Mode (open/save)\n");
+            printf("  --pattern EXTS    File extensions filter (e.g. \"avi,mp4,mkv\")\n");
+            printf("  --help            Show this help\n");
             printf("\nReqASL File Requester - Part of AmiWB\n");
             reqasl_destroy(req);
             XCloseDisplay(display);
@@ -64,10 +68,26 @@ int main(int argc, char *argv[]) {
         reqasl_set_callbacks(req, on_file_open, on_cancel, NULL);
     }
     
-    // TODO: Set window title based on --title argument
-    // For now, mode determines behavior (open vs save)
-    (void)title;  // Will be used when we add title support
-    (void)mode;   // Will be used for save mode
+    // Set pattern filter if provided
+    if (pattern) {
+        reqasl_set_pattern(req, pattern);
+    }
+    
+    // Set window title based on arguments
+    if (title) {
+        // Use provided title
+        reqasl_set_title(req, title);
+    } else if (called_by_app || pattern) {
+        // Called by app or with pattern filter - implies file selection
+        if (strcmp(mode, "save") == 0) {
+            reqasl_set_title(req, "Save File");
+        } else {
+            reqasl_set_title(req, "Open File");
+        }
+    } else {
+        // Standalone mode without patterns - just browsing
+        reqasl_set_title(req, "ReqASL");
+    }
     
     // Show dialog
     reqasl_show(req, initial_path);

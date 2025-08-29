@@ -74,6 +74,9 @@ typedef struct ReqASL {
     bool parent_button_pressed;
     bool cancel_button_pressed;
     
+    // Window title
+    char window_title[256];
+    
 } ReqASL;
 
 // Public API
@@ -89,5 +92,7 @@ void reqasl_set_callbacks(ReqASL *req,
 void reqasl_refresh(ReqASL *req);
 void reqasl_navigate_to(ReqASL *req, const char *path);
 void reqasl_navigate_parent(ReqASL *req);
+void reqasl_set_pattern(ReqASL *req, const char *extensions);
+void reqasl_set_title(ReqASL *req, const char *title);
 
 #endif

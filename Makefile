@@ -113,6 +113,29 @@ install-amiwb: amiwb
 	cp -r fonts/* /usr/local/share/amiwb/fonts/ 2>/dev/null || true
 	mkdir -p /usr/local/share/amiwb/dotfiles
 	cp -r dotfiles/* /usr/local/share/amiwb/dotfiles/ 2>/dev/null || true
+	# Install default config file to user's home directory if it doesn't exist
+	@if [ -n "$$SUDO_USER" ]; then \
+		USER_HOME=$$(getent passwd $$SUDO_USER | cut -d: -f6); \
+	elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
+		USER_HOME=$$(getent passwd $$USER | cut -d: -f6); \
+	else \
+		USER_HOME="$$HOME"; \
+	fi; \
+	if [ -n "$$USER_HOME" ] && [ -d "$$USER_HOME" ]; then \
+		CONFIG_DIR="$$USER_HOME/.config/amiwb"; \
+		mkdir -p "$$CONFIG_DIR"; \
+		if [ ! -f "$$CONFIG_DIR/amiwbrc" ]; then \
+			cp dotfiles/home_dot_config_amiwb/amiwbrc "$$CONFIG_DIR/amiwbrc"; \
+			if [ -n "$$SUDO_USER" ]; then \
+				chown -R $$SUDO_USER:$$SUDO_USER "$$CONFIG_DIR"; \
+			elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
+				chown -R $$USER:$$USER "$$CONFIG_DIR" 2>/dev/null || true; \
+			fi; \
+			echo "Config file installed to $$CONFIG_DIR/amiwbrc"; \
+		else \
+			echo "Config file already exists at $$CONFIG_DIR/amiwbrc (not overwritten)"; \
+		fi; \
+	fi
 	@echo "AmiWB installed"
 
 # 3rd: Install reqasl file requester (requires toolkit and works with amiwb)

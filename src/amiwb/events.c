@@ -8,6 +8,7 @@
 #include "workbench.h"
 #include "dialogs.h"
 #include "config.h"
+#include "amiwbrc.h"  // For config access
 #include <X11/extensions/Xrandr.h>
 #include <X11/XF86keysym.h> // media keys
 #include <X11/Xlib.h>
@@ -638,24 +639,42 @@ void handle_key_press(XKeyEvent *event) {
     KeySym keysym = XLookupKeysym(event, 0);
     
     // Handle media keys first - they should work regardless of other modifiers
+    // Get config for media key commands
+    const AmiwbConfig *cfg = get_config();
+    
     if (keysym == XF86XK_MonBrightnessUp) {
-        system("brightnessctl set +10%");
+        if (cfg->brightness_up_cmd[0]) {  // If command is configured
+            system(cfg->brightness_up_cmd);
+        }
+        // No fallback - user must configure it
         return;
     }
     if (keysym == XF86XK_MonBrightnessDown) {
-        system("brightnessctl set 10%-");
+        if (cfg->brightness_down_cmd[0]) {  // If command is configured
+            system(cfg->brightness_down_cmd);
+        }
+        // No fallback - user must configure it
         return;
     }
     if (keysym == XF86XK_AudioRaiseVolume) {
-        system("amixer -c 2 set Master 5%+");
+        if (cfg->volume_up_cmd[0]) {  // If command is configured
+            system(cfg->volume_up_cmd);
+        }
+        // No fallback - user must configure it
         return;
     }
     if (keysym == XF86XK_AudioLowerVolume) {
-        system("amixer -c 2 set Master 5%-");
+        if (cfg->volume_down_cmd[0]) {  // If command is configured
+            system(cfg->volume_down_cmd);
+        }
+        // No fallback - user must configure it
         return;
     }
     if (keysym == XF86XK_AudioMute) {
-        system("amixer -c 2 set Master toggle");
+        if (cfg->volume_mute_cmd[0]) {  // If command is configured
+            system(cfg->volume_mute_cmd);
+        }
+        // No fallback - user must configure it
         return;
     }
     

@@ -4,6 +4,7 @@
 #include "intuition.h"
 #include "workbench.h"
 #include "config.h"
+#include "amiwbrc.h"  // For config access
 #include "menus.h"
 #include "dialogs.h"
 #include <X11/Xlib.h>
@@ -230,8 +231,12 @@ void render_load_wallpapers(void) {
         ctx->wind_picture = None;
     }
 
-    if (strlen(DESKPICT) > 0) {
-        ctx->desk_img = load_wallpaper_to_pixmap(dpy, scr, DESKPICT, DESKTILE);
+    // Get config for wallpaper settings
+    const AmiwbConfig *cfg = get_config();
+    
+    // Load desktop background if configured
+    if (cfg->desktop_background[0]) {
+        ctx->desk_img = load_wallpaper_to_pixmap(dpy, scr, cfg->desktop_background, cfg->desktop_tiling);
         // Create cached Picture for desktop wallpaper
         if (ctx->desk_img != None) {
             Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
@@ -241,8 +246,9 @@ void render_load_wallpapers(void) {
             }
         }
     }
-    if (strlen(WINDPICT) > 0) {
-        ctx->wind_img = load_wallpaper_to_pixmap(dpy, scr, WINDPICT, WINDTILE);
+    // Load window background if configured
+    if (cfg->window_background[0]) {
+        ctx->wind_img = load_wallpaper_to_pixmap(dpy, scr, cfg->window_background, cfg->window_tiling);
         // Create cached Picture for window wallpaper
         if (ctx->wind_img != None) {
             Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
@@ -986,7 +992,7 @@ void redraw_canvas(Canvas *canvas) {
         // ==================
         // draw windows title (skip when fullscreen)
         // ==================
-        if (canvas->title ) {
+        if (canvas->title_base || canvas->title_change) {
 
             XftColor text_col;
             if (canvas->active) {
@@ -996,18 +1002,22 @@ void redraw_canvas(Canvas *canvas) {
             }
             // case for workbench windows
             if (font) {
+                // Determine which title to display: title_change if set, otherwise title_base
+                const char *display_title = canvas->title_change ? canvas->title_change : canvas->title_base;
+                if (!display_title) display_title = "Untitled";  // Fallback if both are NULL
+                
                 if (canvas->client_win == None) {
                     // Use cached XftDraw for Workbench windows
                     if (canvas->xft_draw) {
                         int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
-                        XftDrawStringUtf8(canvas->xft_draw, &text_col, font, 50, text_y-4, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
+                        XftDrawStringUtf8(canvas->xft_draw, &text_col, font, 50, text_y-4, (FcChar8 *)display_title, strlen(display_title));  // Draw title text.
                     }
                 }
                 // case for client windows
                 if (canvas->client_win != None){
                     XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->win, canvas->visual, canvas->colormap);
                     int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
-                    XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)canvas->title, strlen(canvas->title));  // Draw title text.
+                    XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)display_title, strlen(display_title));  // Draw title text.
                     XftDrawDestroy(draw);
                 }
             }

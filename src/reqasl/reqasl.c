@@ -162,8 +162,8 @@ ReqASL* reqasl_create(Display *display) {
     req->pattern_field = inputfield_create(MARGIN + LABEL_WIDTH, input_y, 
                                           req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT);
     if (req->pattern_field) {
-        inputfield_set_text(req->pattern_field, "");
-        inputfield_set_disabled(req->pattern_field, true);  // Disable pattern field for now
+        inputfield_set_text(req->pattern_field, "*");  // Default to show all files
+        inputfield_set_disabled(req->pattern_field, false);  // Pattern field is now functional
     }
     
     req->drawer_field = inputfield_create(MARGIN + LABEL_WIDTH, input_y + INPUT_HEIGHT + SPACING,
@@ -197,6 +197,9 @@ ReqASL* reqasl_create(Display *display) {
     req->pattern_text[0] = '\0';
     req->file_text[0] = '\0';
     
+    // Initialize window title to empty - will be set by reqasl_set_title()
+    req->window_title[0] = '\0';
+    
     // Sync InputFields with text buffers
     if (req->drawer_field) {
         inputfield_set_text(req->drawer_field, req->drawer_text);
@@ -221,27 +224,14 @@ ReqASL* reqasl_create(Display *display) {
                                CWBackPixel | CWBorderPixel | CWEventMask,
                                &attrs);
     
-    // Set window title (multiple methods for compatibility with different WMs)
-    XStoreName(display, req->window, "reqasl");
+    // Don't set window title here - it will be set by reqasl_set_title() later
+    // This ensures the correct title is set before the window is mapped
     
-    // Set WM_NAME property
-    XTextProperty window_name;
-    char *title = "reqasl";
-    XStringListToTextProperty(&title, 1, &window_name);
-    XSetWMName(display, req->window, &window_name);
-    XFree(window_name.value);
-    
-    // Also set _NET_WM_NAME for modern window managers
-    Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", False);
-    Atom utf8_string = XInternAtom(display, "UTF8_STRING", False);
-    XChangeProperty(display, req->window, net_wm_name, utf8_string, 8,
-                    PropModeReplace, (unsigned char *)"reqasl", 6);
-    
-    // Set WM_CLASS for window identification
+    // Set WM_CLASS for window identification (app identity, never changes)
     XClassHint *class_hint = XAllocClassHint();
     if (class_hint) {
-        class_hint->res_name = "reqasl";
-        class_hint->res_class = "ReqASL";
+        class_hint->res_name = "ReqASL";  // Application name
+        class_hint->res_class = "ReqASL";  // Application class
         XSetClassHint(display, req->window, class_hint);
         XFree(class_hint);
     }
@@ -419,6 +409,48 @@ static void free_entries(ReqASL *req) {
     req->entry_capacity = 0;
 }
 
+// Check if filename matches pattern (supports wildcards like *.txt, *.mp4)
+static bool matches_pattern(const char *filename, const char *pattern) {
+    if (!pattern || !*pattern || strcmp(pattern, "*") == 0) {
+        return true;  // No pattern or "*" matches everything
+    }
+    
+    // Handle multiple patterns separated by commas
+    char pattern_copy[256];
+    strncpy(pattern_copy, pattern, sizeof(pattern_copy) - 1);
+    pattern_copy[sizeof(pattern_copy) - 1] = '\0';
+    
+    char *token = strtok(pattern_copy, ",");
+    while (token) {
+        // Trim spaces
+        while (*token == ' ') token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && *end == ' ') *end-- = '\0';
+        
+        // Simple wildcard matching
+        if (*token == '*') {
+            // Pattern like *.txt
+            const char *ext = token + 1;
+            if (*ext == '.') {
+                // Check file extension
+                const char *file_ext = strrchr(filename, '.');
+                if (file_ext && strcasecmp(file_ext, ext) == 0) {
+                    return true;
+                }
+            }
+        } else {
+            // Exact match
+            if (strcasecmp(filename, token) == 0) {
+                return true;
+            }
+        }
+        
+        token = strtok(NULL, ",");
+    }
+    
+    return false;
+}
+
 static int compare_entries(const void *a, const void *b) {
     FileEntry *ea = *(FileEntry**)a;
     FileEntry *eb = *(FileEntry**)b;
@@ -466,6 +498,33 @@ static void scan_directory(ReqASL *req, const char *path) {
             continue;
         }
         
+        // Check if it's a directory first (directories always shown)
+        char full_path[2048];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        struct stat st;
+        bool is_directory = false;
+        if (stat(full_path, &st) == 0) {
+            is_directory = S_ISDIR(st.st_mode);
+        }
+        
+        // Apply pattern filter (but always show directories)
+        if (!is_directory) {
+            // Get pattern from input field if available, otherwise use stored pattern
+            const char *current_pattern = NULL;
+            if (req->pattern_field) {
+                current_pattern = inputfield_get_text(req->pattern_field);
+            }
+            if (!current_pattern || !*current_pattern) {
+                current_pattern = req->pattern_text;
+            }
+            
+            if (current_pattern && *current_pattern && strcmp(current_pattern, "*") != 0) {
+                if (!matches_pattern(entry->d_name, current_pattern)) {
+                    continue;  // Skip files that don't match pattern
+                }
+            }
+        }
+        
         // Grow array if needed
         if (req->entry_count >= req->entry_capacity) {
             int new_capacity = req->entry_capacity ? req->entry_capacity * 2 : 16;
@@ -481,23 +540,12 @@ static void scan_directory(ReqASL *req, const char *path) {
         if (!fe) continue;
         
         fe->name = strdup(entry->d_name);
-        
-        // Build full path
-        char full_path[2048];
-        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
         fe->path = strdup(full_path);
         
-        // Get file info
-        struct stat st;
-        if (stat(full_path, &st) == 0) {
-            fe->type = S_ISDIR(st.st_mode) ? TYPE_DRAWER : TYPE_FILE;
-            fe->size = st.st_size;
-            fe->modified = st.st_mtime;
-        } else {
-            fe->type = TYPE_FILE;
-            fe->size = 0;
-            fe->modified = 0;
-        }
+        // Use the stat info we already got
+        fe->type = is_directory ? TYPE_DRAWER : TYPE_FILE;
+        fe->size = st.st_size;
+        fe->modified = st.st_mtime;
         
         req->entries[req->entry_count++] = fe;
     }
@@ -906,9 +954,23 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 
                 // If no field was clicked, clear all focus
                 if (!field_clicked) {
-                    if (req->pattern_field) inputfield_set_focus(req->pattern_field, false);
-                    if (req->drawer_field) inputfield_set_focus(req->drawer_field, false);
-                    if (req->file_field) inputfield_set_focus(req->file_field, false);
+                    bool had_focus = false;
+                    if (req->pattern_field && req->pattern_field->has_focus) {
+                        inputfield_set_focus(req->pattern_field, false);
+                        had_focus = true;
+                    }
+                    if (req->drawer_field && req->drawer_field->has_focus) {
+                        inputfield_set_focus(req->drawer_field, false);
+                        had_focus = true;
+                    }
+                    if (req->file_field && req->file_field->has_focus) {
+                        inputfield_set_focus(req->file_field, false);
+                        had_focus = true;
+                    }
+                    // Redraw if we removed focus from any field
+                    if (had_focus) {
+                        draw_window(req);
+                    }
                 }
                 
                 // Handle ListView click if available
@@ -1231,8 +1293,68 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     }
                 }
                 
-                // Handle Return key for opening files/directories
-                if (keysym == XK_Return) {
+                // Pass keyboard events to input fields FIRST
+                // This ensures input fields get priority for handling keys
+		// bool handled_by_field = false;
+                
+                if (req->pattern_field && req->pattern_field->has_focus) {
+                    if (inputfield_handle_key(req->pattern_field, &event->xkey)) {
+                        // Sync field text back to buffer
+                        strncpy(req->pattern_text, inputfield_get_text(req->pattern_field), 
+                               sizeof(req->pattern_text) - 1);
+                        req->pattern_text[sizeof(req->pattern_text) - 1] = '\0';
+                        
+                        // If Enter was pressed in pattern field, refresh the file list
+                        // Note: InputField widget automatically removes focus on Enter
+                        if (keysym == XK_Return || keysym == XK_KP_Enter) {
+                            scan_directory(req, req->current_path);
+                        }
+                        
+                        draw_window(req);
+                        return true;
+                    }
+                }
+                
+                if (req->drawer_field && req->drawer_field->has_focus) {
+                    if (inputfield_handle_key(req->drawer_field, &event->xkey)) {
+                        // Sync field text back to buffer
+                        strncpy(req->drawer_text, inputfield_get_text(req->drawer_field),
+                               sizeof(req->drawer_text) - 1);
+                        req->drawer_text[sizeof(req->drawer_text) - 1] = '\0';
+                        
+                        // If Enter was pressed in drawer field, navigate to path
+                        // Note: InputField widget automatically removes focus on Enter
+                        if (keysym == XK_Return || keysym == XK_KP_Enter) {
+                            reqasl_navigate_to(req, req->drawer_text);
+                        }
+                        
+                        draw_window(req);
+                        return true;
+                    }
+                }
+                
+                if (req->file_field && req->file_field->has_focus) {
+                    if (inputfield_handle_key(req->file_field, &event->xkey)) {
+                        // Sync field text back to buffer
+                        strncpy(req->file_text, inputfield_get_text(req->file_field),
+                               sizeof(req->file_text) - 1);
+                        req->file_text[sizeof(req->file_text) - 1] = '\0';
+                        
+                        // Note: InputField widget automatically removes focus on Enter
+                        
+                        draw_window(req);
+                        return true;
+                    }
+                }
+                
+                // Check if any input field has focus
+                bool any_field_focused = false;
+                if (req->pattern_field && req->pattern_field->has_focus) any_field_focused = true;
+                if (req->drawer_field && req->drawer_field->has_focus) any_field_focused = true;
+                if (req->file_field && req->file_field->has_focus) any_field_focused = true;
+                
+                // Handle Return key for opening files/directories (only if not editing)
+                if (keysym == XK_Return && !any_field_focused) {
                     if (req->listview && req->listview->selected_index >= 0 && 
                         req->listview->selected_index < req->entry_count) {
                         
@@ -1278,39 +1400,29 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     }
                 }
                 
-                // Handle Backspace key - go to parent directory
-                if (keysym == XK_BackSpace) {
+                // Handle Backspace key - go to parent directory (only if not editing)
+                // Note: any_field_focused was already checked above for Return key
+                if (keysym == XK_BackSpace && !any_field_focused) {
                     reqasl_navigate_parent(req);
                     return true;
                 }
                 
-                // Pass keyboard events to input fields
-                // Try each input field in order
-                if (req->pattern_field && inputfield_handle_key(req->pattern_field, &event->xkey)) {
-                    // Sync field text back to buffer
-                    strncpy(req->pattern_text, inputfield_get_text(req->pattern_field), 
-                           sizeof(req->pattern_text) - 1);
-                    req->pattern_text[sizeof(req->pattern_text) - 1] = '\0';
-                    draw_window(req);
-                    return true;
-                }
-                
-                if (req->drawer_field && inputfield_handle_key(req->drawer_field, &event->xkey)) {
-                    // Sync field text back to buffer
-                    strncpy(req->drawer_text, inputfield_get_text(req->drawer_field),
-                           sizeof(req->drawer_text) - 1);
-                    req->drawer_text[sizeof(req->drawer_text) - 1] = '\0';
-                    draw_window(req);
-                    return true;
-                }
-                
-                if (req->file_field && inputfield_handle_key(req->file_field, &event->xkey)) {
-                    // Sync field text back to buffer
-                    strncpy(req->file_text, inputfield_get_text(req->file_field),
-                           sizeof(req->file_text) - 1);
-                    req->file_text[sizeof(req->file_text) - 1] = '\0';
-                    draw_window(req);
-                    return true;
+                // Try to handle keyboard input for fields that don't have focus yet
+                // This allows Tab key or other navigation to give focus to fields
+                if (!any_field_focused) {
+                    // Try each field to see if it wants to handle this key
+                    if (req->pattern_field && inputfield_handle_key(req->pattern_field, &event->xkey)) {
+                        draw_window(req);
+                        return true;
+                    }
+                    if (req->drawer_field && inputfield_handle_key(req->drawer_field, &event->xkey)) {
+                        draw_window(req);
+                        return true;
+                    }
+                    if (req->file_field && inputfield_handle_key(req->file_field, &event->xkey)) {
+                        draw_window(req);
+                        return true;
+                    }
                 }
             }
             break;
@@ -1432,5 +1544,86 @@ static void listview_double_click_callback(int index, const char *text, void *us
             }
             reqasl_hide(req);
         }
+    }
+}
+
+// Set pattern filter from simple extensions list (e.g. "avi,mp4,mkv")
+// Converts to wildcard format (e.g. "*.avi,*.mp4,*.mkv")
+void reqasl_set_pattern(ReqASL *req, const char *extensions) {
+    if (!req || !extensions) return;
+    
+    char pattern_buffer[256] = {0};
+    char ext_copy[256];
+    strncpy(ext_copy, extensions, sizeof(ext_copy) - 1);
+    
+    // Parse comma-separated extensions
+    char *token = strtok(ext_copy, ",");
+    bool first = true;
+    
+    while (token) {
+        // Trim leading/trailing spaces
+        while (*token == ' ') token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && *end == ' ') *end-- = '\0';
+        
+        // Add to pattern buffer
+        if (!first) {
+            strncat(pattern_buffer, ",", sizeof(pattern_buffer) - strlen(pattern_buffer) - 1);
+        }
+        strncat(pattern_buffer, "*.", sizeof(pattern_buffer) - strlen(pattern_buffer) - 1);
+        strncat(pattern_buffer, token, sizeof(pattern_buffer) - strlen(pattern_buffer) - 1);
+        
+        first = false;
+        token = strtok(NULL, ",");
+    }
+    
+    // Set the pattern in the input field
+    if (req->pattern_field) {
+        inputfield_set_text(req->pattern_field, pattern_buffer);
+        inputfield_set_disabled(req->pattern_field, false);  // Enable the field
+    }
+    
+    // Store in pattern_text as well
+    strncpy(req->pattern_text, pattern_buffer, sizeof(req->pattern_text) - 1);
+    
+    // TODO: Apply filter to file list
+    // This will be implemented when pattern filtering is added
+}
+
+// Set window title
+void reqasl_set_title(ReqASL *req, const char *title) {
+    if (!req || !title) return;
+    
+    reqasl_log("reqasl_set_title: Setting title to '%s'", title);
+    
+    strncpy(req->window_title, title, sizeof(req->window_title) - 1);
+    req->window_title[sizeof(req->window_title) - 1] = '\0';
+    
+    // Update the window title if window already exists
+    if (req->window && req->display) {
+        reqasl_log("reqasl_set_title: Updating window title properties");
+        XStoreName(req->display, req->window, req->window_title);
+        
+        // Set WM_NAME property
+        XTextProperty window_name;
+        char *title_ptr = req->window_title;
+        XStringListToTextProperty(&title_ptr, 1, &window_name);
+        XSetWMName(req->display, req->window, &window_name);
+        XFree(window_name.value);
+        
+        // Also set _NET_WM_NAME for modern window managers
+        Atom net_wm_name = XInternAtom(req->display, "_NET_WM_NAME", False);
+        Atom utf8_string = XInternAtom(req->display, "UTF8_STRING", False);
+        XChangeProperty(req->display, req->window, net_wm_name, utf8_string, 8,
+                        PropModeReplace, (unsigned char *)req->window_title, 
+                        strlen(req->window_title));
+        
+        // Set a custom property for AmiWB to detect title changes
+        Atom amiwb_title_change = XInternAtom(req->display, "AMIWB_TITLE_CHANGE", False);
+        XChangeProperty(req->display, req->window, amiwb_title_change, utf8_string, 8,
+                        PropModeReplace, (unsigned char *)req->window_title,
+                        strlen(req->window_title));
+        
+        XFlush(req->display);
     }
 }

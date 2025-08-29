@@ -534,8 +534,9 @@ void deactivate_all_windows(void) {
 static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
                                  int x, int y, int w, int h) {
     *c = (Canvas){0}; c->type = t; c->path = path ? strdup(path) : NULL;
-    c->title = path ? strdup(strrchr(path, '/') ? strrchr(path, '/') + 1 : path) : NULL;
-    if (c->title && strlen(c->title) == 0) c->title = strdup("System");
+    c->title_base = path ? strdup(strrchr(path, '/') ? strrchr(path, '/') + 1 : path) : NULL;
+    if (c->title_base && strlen(c->title_base) == 0) c->title_base = strdup("System");
+    c->title_change = NULL;  // Workbench windows don't use dynamic titles
     c->x = x; c->y = (t == WINDOW) ? max(y, MENUBAR_HEIGHT) : y;
     c->width = w; c->height = h; 
     // Set default background color
@@ -822,27 +823,51 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
                     strcmp(ch.res_name, "vulkan") == 0 ||
                     strcmp(ch.res_name, "sdl") == 0) {
                     // Use res_class instead (usually the app name)
-                    frame->title = strdup(ch.res_class);
+                    frame->title_base = strdup(ch.res_class);
+                    frame->title_change = NULL;  // Will be set later if needed
                     XFree(ch.res_name);
                     XFree(ch.res_class);
                 } else {
                     // Use res_name as normal
-                    frame->title = strdup(ch.res_name);
+                    frame->title_base = strdup(ch.res_name);
+                    frame->title_change = NULL;  // Will be set later if needed
                     XFree(ch.res_name);
                     XFree(ch.res_class);
                 }
             } else if (ch.res_name) {
-                frame->title = strdup(ch.res_name);
+                frame->title_base = strdup(ch.res_name);
+                frame->title_change = NULL;  // Will be set later if needed
                 XFree(ch.res_name);
                 if (ch.res_class) XFree(ch.res_class);
             } else if (ch.res_class) {
-                frame->title = strdup(ch.res_class);
+                frame->title_base = strdup(ch.res_class);
+                frame->title_change = NULL;  // Will be set later if needed
                 XFree(ch.res_class);
             } else {
-                frame->title = strdup("NoNameApp");
+                frame->title_base = strdup("NoNameApp");
+                frame->title_change = NULL;
             }
         } else {
-            frame->title = strdup("NoNameApp");
+            frame->title_base = strdup("NoNameApp");
+            frame->title_change = NULL;
+        }
+        
+        // Check if the client has set a custom display title
+        Atom amiwb_title_change = XInternAtom(display, "AMIWB_TITLE_CHANGE", False);
+        Atom actual_type;
+        int actual_format;
+        unsigned long nitems, bytes_after;
+        unsigned char *prop_data = NULL;
+        
+        if (XGetWindowProperty(display, client, amiwb_title_change,
+                              0, 256, False, XA_STRING,
+                              &actual_type, &actual_format,
+                              &nitems, &bytes_after, &prop_data) == Success) {
+            if (prop_data && nitems > 0) {
+                // Client has specified a display title
+                frame->title_change = strndup((char *)prop_data, nitems);
+                XFree(prop_data);
+            }
         }
     }
     XAddToSaveSet(display, client); 
@@ -1198,7 +1223,7 @@ void iconify_canvas(Canvas *c) {
     const char *def_foo_path = "/usr/local/share/amiwb/icons/def_icons/def_foo.info";
     
     if (c->client_win == None) { 
-        label = c->title ? strdup(c->title) : strdup("Untitled"); 
+        label = c->title_base ? strdup(c->title_base) : strdup("Untitled"); 
         icon_path = "/usr/local/share/amiwb/icons/filer.info";
     } else {
         XClassHint ch;
@@ -1436,6 +1461,45 @@ void intuition_handle_property_notify(XPropertyEvent *event) {
                 // Open the directory
                 workbench_open_directory((char *)data);
                 XFree(data);
+            }
+        }
+        return;
+    }
+    
+    // Check for title change property from clients (e.g., ReqASL)
+    static Atom amiwb_title_change = None;
+    if (amiwb_title_change == None) {
+        amiwb_title_change = XInternAtom(display, "AMIWB_TITLE_CHANGE", False);
+    }
+    
+    if (event->atom == amiwb_title_change) {
+        // Find the canvas by client window
+        Canvas *canvas = find_canvas_by_client(event->window);
+        if (canvas) {
+            // Property was changed, read the new value
+            Atom actual_type;
+            int actual_format;
+            unsigned long nitems, bytes_after;
+            unsigned char *prop_data = NULL;
+            
+            if (XGetWindowProperty(display, event->window, amiwb_title_change,
+                                  0, 256, False, XA_STRING,
+                                  &actual_type, &actual_format,
+                                  &nitems, &bytes_after, &prop_data) == Success) {
+                
+                // Update the canvas title_change
+                if (canvas->title_change) {
+                    free(canvas->title_change);
+                    canvas->title_change = NULL;
+                }
+                
+                if (prop_data && nitems > 0) {
+                    canvas->title_change = strndup((char *)prop_data, nitems);
+                    XFree(prop_data);
+                    
+                    // Trigger a redraw of the canvas to show the new title
+                    redraw_canvas(canvas);
+                }
             }
         }
         return;
@@ -1977,7 +2041,8 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
             
             // Free resources
             free(canvas->path);
-            free(canvas->title);
+            free(canvas->title_base);
+            free(canvas->title_change);
             free(canvas);
             
             // Restore focus to parent window if it exists
@@ -2381,7 +2446,8 @@ void destroy_canvas(Canvas *canvas) {
     }
 
     free(canvas->path);
-    free(canvas->title);
+    free(canvas->title_base);
+    free(canvas->title_change);
 
     if (active_window == canvas) active_window = NULL;
 
@@ -2451,7 +2517,8 @@ void cleanup_gtk_dialog_frame(Canvas* canvas) {
     
     // Free canvas resources
     if (canvas->path) free(canvas->path);
-    if (canvas->title) free(canvas->title);
+    if (canvas->title_base) free(canvas->title_base);
+    if (canvas->title_change) free(canvas->title_change);
     free(canvas);
     
     // Now activate the parent window if we found one

@@ -94,7 +94,8 @@ void show_rename_dialog(const char *old_name,
     // Set dialog properties - create title with filename
     char title[256];
     snprintf(title, sizeof(title), "Rename '%s'", old_name);
-    dialog->canvas->title = strdup(title);
+    dialog->canvas->title_base = strdup(title);
+    dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
     dialog->canvas->bg_color = GRAY;  // Standard dialog gray
     dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
     
@@ -147,7 +148,8 @@ void show_execute_dialog(void (*on_ok)(const char *command),
     }
     
     // Set dialog properties
-    dialog->canvas->title = strdup("Execute");
+    dialog->canvas->title_base = strdup("Execute");
+    dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
     dialog->canvas->bg_color = GRAY;  // Standard dialog gray
     dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
     
@@ -1395,7 +1397,8 @@ void show_delete_confirmation(const char *message,
     }
     
     // Set dialog properties
-    dialog->canvas->title = strdup("Delete Confirmation");
+    dialog->canvas->title_base = strdup("Delete Confirmation");
+    dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
     dialog->canvas->bg_color = GRAY;  // Standard dialog gray
     dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
     

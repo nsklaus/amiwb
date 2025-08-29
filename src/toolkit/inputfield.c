@@ -335,7 +335,8 @@ bool inputfield_handle_click(InputField *field, int click_x, int click_y) {
         return true;
     }
     
-    field->has_focus = false;
+    // Don't remove focus here - let the caller handle that
+    // field->has_focus = false;  // REMOVED - caller should manage focus
     return false;
 }
 
@@ -456,6 +457,8 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
             if (field->on_enter) {
                 field->on_enter(field->text, field->user_data);
             }
+            // Automatically lose focus when Enter is pressed
+            field->has_focus = false;
             return true;
             
         case XK_BackSpace:

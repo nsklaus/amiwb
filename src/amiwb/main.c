@@ -7,6 +7,7 @@
 #include "compositor.h"
 #include "render.h"
 #include "config.h"
+#include "amiwbrc.h"  // For config loading
 #include <X11/Xlib.h>
 #include <stdio.h> // For fprintf
 #include <stdlib.h> // getenv
@@ -126,6 +127,10 @@ int main(int argc, char *argv[]) {
         
         // Keep the display and window for the lifetime of the program
     }
+    
+    // Load configuration from ~/.config/amiwb/amiwbrc
+    // Do this early so all init functions can use config values
+    load_config();
     
     // Intuition first: sets up X Display and RenderContext
     init_intuition();

@@ -1,0 +1,42 @@
+# AmiWB Configuration File
+# Edit this file to customize AmiWB behavior
+# After changes, press Super+Shift+R to hot-restart and apply
+
+# Media Key Commands
+# Configure these based on your system:
+# - brightnessctl: Modern brightness control
+# - wpctl: PipeWire/WirePlumber (Fedora, newer distros)
+# - amixer: ALSA mixer (older systems)
+# - pactl: PulseAudio control
+
+# Brightness controls
+brightness_up_cmd = brightnessctl set +10%
+brightness_down_cmd = brightnessctl set 10%-
+
+# Volume controls - Examples for different systems:
+# For PipeWire (Asahi, Fedora):
+volume_up_cmd = wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+volume_down_cmd = wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+volume_mute_cmd = wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+
+# For ALSA with specific card (ASUS G14 example):
+# volume_up_cmd = amixer -c 2 set Master 5%+
+# volume_down_cmd = amixer -c 2 set Master 5%-
+# volume_mute_cmd = amixer -c 2 set Master toggle
+
+# For PulseAudio:
+# volume_up_cmd = pactl set-sink-volume @DEFAULT_SINK@ +5%
+# volume_down_cmd = pactl set-sink-volume @DEFAULT_SINK@ -5%
+# volume_mute_cmd = pactl set-sink-mute @DEFAULT_SINK@ toggle
+
+# Background Images
+# Set paths to your wallpaper images
+# tiling: 0 = center/scale, 1 = tile pattern
+
+desktop_background = /usr/local/share/amiwb/patterns/atom_art.png
+desktop_tiling = 0
+
+window_background = /usr/local/share/amiwb/patterns/pattern8.png
+window_tiling = 1
+
+# Future settings will be added here...
