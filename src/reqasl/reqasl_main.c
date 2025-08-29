@@ -30,13 +30,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Set callbacks
-    reqasl_set_callbacks(req, on_file_open, on_cancel, NULL);
-    
     // Parse command line arguments
     const char *initial_path = NULL;
     const char *title = "Open File";
     const char *mode = "open";
+    bool called_by_app = false;  // Detect if called by another app
     
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--path") == 0 && i + 1 < argc) {
@@ -45,6 +43,7 @@ int main(int argc, char *argv[]) {
             title = argv[++i];
         } else if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
             mode = argv[++i];
+            called_by_app = true;  // --mode flag indicates app is calling
         } else if (strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("Options:\n");
@@ -57,6 +56,12 @@ int main(int argc, char *argv[]) {
             XCloseDisplay(display);
             return 0;
         }
+    }
+    
+    // Only set callbacks if called by another app
+    // In standalone mode, reqasl.c will use xdg-open instead
+    if (called_by_app) {
+        reqasl_set_callbacks(req, on_file_open, on_cancel, NULL);
     }
     
     // TODO: Set window title based on --title argument
