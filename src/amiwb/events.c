@@ -7,11 +7,13 @@
 #include "intuition.h"
 #include "workbench.h"
 #include "dialogs.h"
+#include "render.h"  // For redraw_canvas
 #include "config.h"
 #include "amiwbrc.h"  // For config access
 #include <X11/extensions/Xrandr.h>
 #include <X11/XF86keysym.h> // media keys
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>  // For XGetWMName
 #include <X11/keysym.h>
 #include <stdio.h> // For fprintf
 #include <sys/stat.h>
@@ -807,8 +809,56 @@ void handle_configure_request(XConfigureRequestEvent *event) {
 
 // Dispatch property notify
 // WM hints, protocols, and netwm properties changes.
+// Also handles dynamic title updates via AMIWB_TITLE_CHANGE property
 void handle_property_notify(XPropertyEvent *event) {
-    intuition_handle_property_notify(event);
+    // We're only interested in client windows
+    Canvas *canvas = find_canvas_by_client(event->window);
+    if (!canvas) {
+        return;
+    }
+    
+    // Check if this is our custom title change property
+    Display *dpy = get_display();
+    Atom amiwb_title_change = XInternAtom(dpy, "AMIWB_TITLE_CHANGE", False);
+    
+    if (event->atom == amiwb_title_change && event->state == PropertyNewValue) {
+        // Get the new title from the property
+        Atom actual_type;
+        int actual_format;
+        unsigned long nitems, bytes_after;
+        unsigned char *data = NULL;
+        
+        if (XGetWindowProperty(dpy, event->window, amiwb_title_change,
+                              0, 256, False, AnyPropertyType,
+                              &actual_type, &actual_format, &nitems, &bytes_after,
+                              &data) == Success && data) {
+            
+            // Update the canvas title_change field
+            if (canvas->title_change) {
+                free(canvas->title_change);
+            }
+            canvas->title_change = strdup((char *)data);
+            XFree(data);
+            
+            // Trigger a redraw of the canvas to show the new title
+            redraw_canvas(canvas);
+        }
+    }
+    // Also handle standard WM_NAME changes
+    else if (event->atom == XInternAtom(dpy, "WM_NAME", False) && event->state == PropertyNewValue) {
+        // Update title from WM_NAME property
+        XTextProperty text_prop;
+        if (XGetWMName(dpy, event->window, &text_prop) && text_prop.value) {
+            if (canvas->title_change) {
+                free(canvas->title_change);
+            }
+            canvas->title_change = strdup((char *)text_prop.value);
+            XFree(text_prop.value);
+            
+            // Trigger a redraw
+            redraw_canvas(canvas);
+        }
+    }
 }
 
 // Dispatch mouse motion

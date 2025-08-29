@@ -860,7 +860,7 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
         unsigned char *prop_data = NULL;
         
         if (XGetWindowProperty(display, client, amiwb_title_change,
-                              0, 256, False, XA_STRING,
+                              0, 256, False, AnyPropertyType,
                               &actual_type, &actual_format,
                               &nitems, &bytes_after, &prop_data) == Success) {
             if (prop_data && nitems > 0) {

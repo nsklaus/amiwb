@@ -18,8 +18,10 @@
 
 [gfx]
 "Gimp" = "/usr/bin/gimp"
-"Viewer" = "/usr/bin/imv"
+# "Pic Viewer" = "/usr/bin/imv"
+"Pic Editor" = "reqasl --mode open --pattern 'png,jpg,webp' | xargs -d '\\n' -r /usr/bin/imv"
 
 [Media]
-"Player" = "/usr/bin/mpv"
+# "Video Player" = "/usr/bin/mpv"
+"Video Player" = "reqasl --mode open --pattern 'avi,mp4,mkv' | xargs -d '\\n' -r /usr/bin/mpv"
 "Editor" = "/usr/bin/audacity"

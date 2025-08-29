@@ -113,7 +113,7 @@ install-amiwb: amiwb
 	cp -r fonts/* /usr/local/share/amiwb/fonts/ 2>/dev/null || true
 	mkdir -p /usr/local/share/amiwb/dotfiles
 	cp -r dotfiles/* /usr/local/share/amiwb/dotfiles/ 2>/dev/null || true
-	# Install default config file to user's home directory if it doesn't exist
+	# Install default config files to user's home directory if they don't exist
 	@if [ -n "$$SUDO_USER" ]; then \
 		USER_HOME=$$(getent passwd $$SUDO_USER | cut -d: -f6); \
 	elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
@@ -123,17 +123,18 @@ install-amiwb: amiwb
 	fi; \
 	if [ -n "$$USER_HOME" ] && [ -d "$$USER_HOME" ]; then \
 		CONFIG_DIR="$$USER_HOME/.config/amiwb"; \
-		mkdir -p "$$CONFIG_DIR"; \
-		if [ ! -f "$$CONFIG_DIR/amiwbrc" ]; then \
+		if [ ! -d "$$CONFIG_DIR" ]; then \
+			mkdir -p "$$CONFIG_DIR"; \
 			cp dotfiles/home_dot_config_amiwb/amiwbrc "$$CONFIG_DIR/amiwbrc"; \
+			cp dotfiles/home_dot_config_amiwb/toolsdaemonrc "$$CONFIG_DIR/toolsdaemonrc"; \
 			if [ -n "$$SUDO_USER" ]; then \
 				chown -R $$SUDO_USER:$$SUDO_USER "$$CONFIG_DIR"; \
 			elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
 				chown -R $$USER:$$USER "$$CONFIG_DIR" 2>/dev/null || true; \
 			fi; \
-			echo "Config file installed to $$CONFIG_DIR/amiwbrc"; \
+			echo "Config files installed to $$CONFIG_DIR/"; \
 		else \
-			echo "Config file already exists at $$CONFIG_DIR/amiwbrc (not overwritten)"; \
+			echo "Config directory $$CONFIG_DIR/ already exists (not overwritten)"; \
 		fi; \
 	fi
 	@echo "AmiWB installed"
