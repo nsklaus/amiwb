@@ -567,43 +567,84 @@ void update_menubar_time(void) {
 #endif
 }
 
+// Forward declaration
+static void free_menu(Menu *menu);
+
 void cleanup_menus(void) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
 
-    // Release font/color and destroy any menu canvases.
+    // Release font/color
     if (font) XftFontClose(ctx->dpy, font);
     if (text_color.pixel) XftColorFree(ctx->dpy, ctx->default_visual, ctx->default_colormap, &text_color);
+    
+    // Clear active menu reference
     if (active_menu) {
         if (active_menu->canvas) {
-            clear_press_target_if_matches(active_menu->canvas->win);  // Clear before destroy
+            clear_press_target_if_matches(active_menu->canvas->win);
             destroy_canvas(active_menu->canvas);
         }
-        // Removed: free(active_menu);  // Avoid double free; submenu structs are freed in the loop below
         active_menu = NULL;
     }
+    
+    // Free menubar and all its submenus
     if (menubar) {
+        // Destroy menubar canvas
         if (menubar->canvas) {
-            clear_press_target_if_matches(menubar->canvas->win);  // Clear before destroy
+            clear_press_target_if_matches(menubar->canvas->win);
             destroy_canvas(menubar->canvas);
         }
-        // Free full menu items and submenus
-        for (int i = 0; i < full_menu_item_count; i++) {
-            free(full_menu_items[i]);
-            if (full_submenus[i]) {
-                for (int j = 0; j < full_submenus[i]->item_count; j++) free(full_submenus[i]->items[j]);
-                free(full_submenus[i]->items);
-                free(full_submenus[i]);
+        
+        // Free all submenus recursively using helper
+        if (menubar->submenus) {
+            for (int i = 0; i < menubar->item_count; i++) {
+                if (menubar->submenus[i]) {
+                    free_menu(menubar->submenus[i]);
+                }
             }
+            free(menubar->submenus);
         }
-        free(full_menu_items);
-        free(full_submenus);
-        // Free logo items
-        for (int i = 0; i < logo_item_count; i++) free(logo_items[i]);
-        free(logo_items);
+        
+        // Free menubar items
+        if (menubar->items) {
+            for (int i = 0; i < menubar->item_count; i++) {
+                free(menubar->items[i]);
+            }
+            free(menubar->items);
+        }
+        
+        // Free shortcuts and enabled if they exist
+        if (menubar->shortcuts) {
+            for (int i = 0; i < menubar->item_count; i++) {
+                free(menubar->shortcuts[i]);
+            }
+            free(menubar->shortcuts);
+        }
+        free(menubar->enabled);
+        
+        // Free the menubar struct
         free(menubar);
+        menubar = NULL;
     }
-    // Last trace to confirm teardown order during shutdown.
+    
+    // Free full menu backup arrays
+    for (int i = 0; i < full_menu_item_count; i++) {
+        free(full_menu_items[i]);
+    }
+    free(full_menu_items);
+    free(full_submenus);
+    full_menu_items = NULL;
+    full_submenus = NULL;
+    full_menu_item_count = 0;
+    
+    // Free logo items
+    for (int i = 0; i < logo_item_count; i++) {
+        free(logo_items[i]);
+    }
+    free(logo_items);
+    logo_items = NULL;
+    logo_item_count = 0;
+    
     printf("Called cleanup_menus()\n");
 }
 
@@ -1967,3 +2008,51 @@ void trigger_new_drawer_action(void) {
     } else {
     }
 }
+
+// Free a menu and all its resources recursively
+static void free_menu(Menu *menu) {
+    if (!menu) return;
+    
+    // Free submenus recursively
+    if (menu->submenus) {
+        for (int i = 0; i < menu->item_count; i++) {
+            if (menu->submenus[i]) {
+                free_menu(menu->submenus[i]);
+            }
+        }
+        free(menu->submenus);
+    }
+    
+    // Free items
+    if (menu->items) {
+        for (int i = 0; i < menu->item_count; i++) {
+            free(menu->items[i]);
+        }
+        free(menu->items);
+    }
+    
+    // Free shortcuts
+    if (menu->shortcuts) {
+        for (int i = 0; i < menu->item_count; i++) {
+            free(menu->shortcuts[i]);
+        }
+        free(menu->shortcuts);
+    }
+    
+    // Free commands (for custom menus)
+    if (menu->commands) {
+        for (int i = 0; i < menu->item_count; i++) {
+            free(menu->commands[i]);
+        }
+        free(menu->commands);
+    }
+    
+    // Free enabled array
+    free(menu->enabled);
+    
+    // Canvas is destroyed elsewhere when menus close, not here
+    
+    // Free the menu struct itself
+    free(menu);
+}
+

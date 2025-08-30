@@ -535,7 +535,10 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
                                  int x, int y, int w, int h) {
     *c = (Canvas){0}; c->type = t; c->path = path ? strdup(path) : NULL;
     c->title_base = path ? strdup(strrchr(path, '/') ? strrchr(path, '/') + 1 : path) : NULL;
-    if (c->title_base && strlen(c->title_base) == 0) c->title_base = strdup("System");
+    if (c->title_base && strlen(c->title_base) == 0) {
+        free(c->title_base);  // Free the empty string before replacing
+        c->title_base = strdup("System");
+    }
     c->title_change = NULL;  // Workbench windows don't use dynamic titles
     c->x = x; c->y = (t == WINDOW) ? max(y, MENUBAR_HEIGHT) : y;
     c->width = w; c->height = h; 

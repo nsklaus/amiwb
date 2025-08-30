@@ -45,4 +45,5 @@ xrandr -s 1440x900 &
 
 exec dbus-launch --exit-with-session amiwb
 
+# exec dbus-launch --exit-with-session valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --track-fds=yes --num-callers=20 --log -file=/home/klaus/Sources/amiwb/valgrind_new.log /usr/local/bin/amiwb
 
