@@ -501,7 +501,7 @@ static void draw_checkerboard(Display *dpy, Picture dest, int x, int y, int w, i
 void redraw_canvas(Canvas *canvas) {
     if (!canvas || canvas->width <= 0 || canvas->height <= 0 || 
         canvas->canvas_render == None || canvas->window_render == None) {
-        printf("[REDRAW] Early return: canvas=%p, width=%d, height=%d, canvas_render=%lu, window_render=%lu\n",
+        log_error("[REDRAW] Early return: canvas=%p, width=%d, height=%d, canvas_render=%lu, window_render=%lu\n",
                (void*)canvas, canvas ? canvas->width : -1, canvas ? canvas->height : -1, 
                canvas ? canvas->canvas_render : 0, canvas ? canvas->window_render : 0);
         return;
@@ -860,7 +860,22 @@ void redraw_canvas(Canvas *canvas) {
     // render dialog
     // ===========
     if (canvas->type == DIALOG) {
-        render_dialog_content(canvas);
+        static bool dialog_render_debug = false;
+        if (!dialog_render_debug) {
+            log_error("[RENDER.C DEBUG] Rendering DIALOG type:\n");
+            log_error("  - canvas=%p\n", (void*)canvas);
+            log_error("  - is_progress_dialog=%d\n", is_progress_dialog(canvas));
+            log_error("  - dest Picture=%lu\n", dest);
+            log_error("  - is_client_frame=%d\n", is_client_frame);
+            dialog_render_debug = true;
+        }
+        
+        // Check if it's a progress dialog first
+        if (is_progress_dialog(canvas)) {
+            render_progress_dialog_content(canvas);
+        } else {
+            render_dialog_content(canvas);
+        }
     }
 
     // Draw frame for WINDOW and DIALOG types (skip when fullscreen)

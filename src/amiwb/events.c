@@ -213,6 +213,9 @@ void handle_events(void) {
                 update_menubar_time();  // Will only redraw if minute changed
             }
             
+            // Check progress dialogs for updates
+            workbench_check_progress_dialogs();
+            
             // Very brief sleep to avoid busy-waiting but remain responsive
             usleep(1000);  // 1ms - much more responsive
             continue;

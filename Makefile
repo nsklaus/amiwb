@@ -41,15 +41,11 @@ $(TOOLKIT_LIB): $(TOOLKIT_OBJS)
 	@echo "Toolkit library built: $(TOOLKIT_LIB)"
 
 # amiwb window manager
-amiwb: $(AMIWB_EXEC)
-
 $(AMIWB_EXEC): $(AMIWB_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(AMIWB_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
 	@echo "amiwb executable built: $(AMIWB_EXEC)"
 
-# ReqASL file requester
-reqasl: $(REQASL_EXEC)
-
+# ReqASL file requester  
 $(REQASL_EXEC): $(REQASL_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(REQASL_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
 	@echo "ReqASL executable built: $(REQASL_EXEC)"

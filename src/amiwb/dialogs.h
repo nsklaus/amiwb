@@ -15,8 +15,16 @@
 typedef enum {
     DIALOG_RENAME,
     DIALOG_DELETE_CONFIRM,
-    DIALOG_EXECUTE_COMMAND
+    DIALOG_EXECUTE_COMMAND,
+    DIALOG_PROGRESS
 } DialogType;
+
+// Progress operation types
+typedef enum {
+    PROGRESS_COPY,
+    PROGRESS_MOVE,
+    PROGRESS_DELETE
+} ProgressOperation;
 
 // Dialog state structure
 typedef struct RenameDialog {
@@ -79,5 +87,26 @@ RenameDialog *get_dialog_for_canvas(Canvas *canvas);
 
 // Rendering (called from render.c)
 void render_dialog_content(Canvas *canvas);
+
+// Progress dialog structure
+typedef struct ProgressDialog {
+    Canvas *canvas;
+    ProgressOperation operation;
+    char current_file[PATH_SIZE];
+    float percent;
+    int pipe_fd;
+    pid_t child_pid;
+    bool abort_requested;
+    void (*on_abort)(void);
+    struct ProgressDialog *next;
+} ProgressDialog;
+
+// Progress dialog functions
+ProgressDialog* show_progress_dialog(ProgressOperation op, const char *title);
+void update_progress_dialog(ProgressDialog *dialog, const char *file, float percent);
+void close_progress_dialog(ProgressDialog *dialog);
+bool is_progress_dialog(Canvas *canvas);
+ProgressDialog* get_progress_dialog_for_canvas(Canvas *canvas);
+void render_progress_dialog_content(Canvas *canvas);
 
 #endif

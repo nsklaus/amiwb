@@ -1,20 +1,23 @@
 // File: workbench.c
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE  // For usleep
 #include "workbench.h"
 #include "render.h"
 #include "intuition.h"
 #include "compositor.h"
 #include "config.h"  // Added to include config.h for max/min macros
 #include "events.h"  // For clear_press_target_if_matches
+#include "dialogs.h"  // For progress dialog support
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <stdio.h>
+#include <unistd.h>  // For usleep, fork, pipe
 #include <dirent.h>
 #include <sys/stat.h>
-#include <unistd.h>
+#include <sys/wait.h>  // For waitpid
 #include <fcntl.h>
 #include <sys/types.h>
 #include <time.h>
@@ -30,6 +33,7 @@ static int move_file_to_directory(const char *src_path, const char *dst_dir, cha
 static bool is_directory(const char *path);
 static int copy_file(const char *src, const char *dst);
 static int copy_directory_recursive(const char *src_dir, const char *dst_dir);
+static int move_directory_with_progress(const char *src_dir, const char *dst_dir);
 int remove_directory_recursive(const char *path);
 static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas);
 static void refresh_canvas(Canvas *canvas);
@@ -1022,6 +1026,253 @@ static int copy_directory_recursive(const char *src_dir, const char *dst_dir) {
     return result;
 }
 
+// Structure to pass data through recursive directory traversal
+typedef struct {
+    int total_files;
+    int files_processed;
+    ProgressDialog *dialog;
+    bool abort;
+    int pipe_fd;  // For child to send updates to parent
+} CopyProgress;
+
+// IPC message structure for progress updates
+typedef struct {
+    enum {
+        MSG_PROGRESS,
+        MSG_COMPLETE,
+        MSG_ERROR
+    } type;
+    int files_done;
+    int files_total;
+    char current_file[NAME_SIZE];
+} ProgressMessage;
+
+// Count files in directory tree (helper for progress calculation)
+static void count_files_in_directory(const char *path, int *count) {
+    DIR *dir = opendir(path);
+    if (!dir) return;
+    
+    struct dirent *entry;
+    char full_path[PATH_SIZE];
+    
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        
+        struct stat st;
+        if (stat(full_path, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                count_files_in_directory(full_path, count);
+            } else if (S_ISREG(st.st_mode)) {
+                (*count)++;
+            }
+        }
+    }
+    closedir(dir);
+}
+
+// Copy directory tree with progress updates
+static int copy_directory_recursive_with_progress(const char *src_dir, const char *dst_dir, CopyProgress *progress) {
+    if (!src_dir || !dst_dir || !*src_dir || !*dst_dir) return -1;
+    
+    // Check for abort
+    if (progress && progress->dialog && progress->dialog->abort_requested) {
+        progress->abort = true;
+        return -1;
+    }
+    
+    // Get source directory stats
+    struct stat src_stat;
+    if (stat(src_dir, &src_stat) != 0 || !S_ISDIR(src_stat.st_mode)) {
+        return -1;
+    }
+    
+    // Create destination directory with same permissions
+    if (mkdir(dst_dir, src_stat.st_mode & 0777) != 0) {
+        // If it exists and is a directory, that's OK
+        struct stat dst_stat;
+        if (stat(dst_dir, &dst_stat) != 0 || !S_ISDIR(dst_stat.st_mode)) {
+            return -1;
+        }
+    }
+    
+    // Open source directory
+    DIR *dir = opendir(src_dir);
+    if (!dir) {
+        return -1;
+    }
+    
+    struct dirent *entry;
+    char src_path[PATH_SIZE];
+    char dst_path[PATH_SIZE];
+    int result = 0;
+    
+    while ((entry = readdir(dir)) != NULL && result == 0) {
+        // Check for abort
+        if (progress && progress->dialog && progress->dialog->abort_requested) {
+            progress->abort = true;
+            result = -1;
+            break;
+        }
+        
+        // Skip . and ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        
+        snprintf(src_path, sizeof(src_path), "%s/%s", src_dir, entry->d_name);
+        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_dir, entry->d_name);
+        
+        struct stat st;
+        if (stat(src_path, &st) != 0) {
+            result = -1;
+            break;
+        }
+        
+        if (S_ISDIR(st.st_mode)) {
+            // Recursively copy subdirectory
+            if (copy_directory_recursive_with_progress(src_path, dst_path, progress) != 0) {
+                log_error("[ERROR] Failed to copy directory: %s to %s", src_path, dst_path);
+                result = -1;
+            }
+        } else if (S_ISREG(st.st_mode)) {
+            // Update progress - send IPC message if we have a pipe
+            if (progress) {
+                progress->files_processed++;
+                
+                if (progress->pipe_fd > 0) {
+                    // Child process - send progress update to parent
+                    ProgressMessage msg = {
+                        .type = MSG_PROGRESS,
+                        .files_done = progress->files_processed,
+                        .files_total = progress->total_files
+                    };
+                    strncpy(msg.current_file, entry->d_name, NAME_SIZE - 1);
+                    msg.current_file[NAME_SIZE - 1] = '\0';
+                    write(progress->pipe_fd, &msg, sizeof(msg));
+                } else if (progress->dialog) {
+                    // Parent process or no pipe - update dialog directly
+                    float percent = (progress->total_files > 0) ? 
+                        ((float)progress->files_processed / progress->total_files * 100.0f) : 0.0f;
+                    update_progress_dialog(progress->dialog, entry->d_name, percent);
+                }
+                // For now, the progress dialog will update but won't process clicks
+            }
+            
+            // Copy regular file
+            if (copy_file(src_path, dst_path) != 0) {
+                log_error("[ERROR] Failed to copy file: %s to %s", src_path, dst_path);
+                result = -1;
+            }
+        }
+        // Skip other file types (symlinks, devices, etc.)
+    }
+    
+    closedir(dir);
+    return result;
+}
+
+
+// Move directory with progress dialog (for cross-filesystem moves)
+static int move_directory_with_progress(const char *src_dir, const char *dst_dir) {
+    if (!src_dir || !dst_dir) return -1;
+    
+    // Count total files for progress calculation
+    int total_files = 0;
+    count_files_in_directory(src_dir, &total_files);
+    
+    // If directory is small, just use regular copy without progress
+    if (total_files < 10) {
+        int result = copy_directory_recursive(src_dir, dst_dir);
+        if (result == 0) {
+            remove_directory_recursive(src_dir);
+        }
+        return result;
+    }
+    
+    // Show progress dialog for MOVE operation
+    ProgressDialog *dialog = show_progress_dialog(PROGRESS_MOVE, "Moving Files...");
+    if (!dialog) {
+        // Fall back to regular copy if dialog fails
+        int result = copy_directory_recursive(src_dir, dst_dir);
+        if (result == 0) {
+            remove_directory_recursive(src_dir);
+        }
+        return result;
+    }
+    
+    // Create pipe for IPC
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        close_progress_dialog(dialog);
+        int result = copy_directory_recursive(src_dir, dst_dir);
+        if (result == 0) {
+            remove_directory_recursive(src_dir);
+        }
+        return result;
+    }
+    
+    // Fork to do the actual work in background
+    pid_t pid = fork();
+    if (pid == -1) {
+        // Fork failed
+        close(pipefd[0]);
+        close(pipefd[1]);
+        close_progress_dialog(dialog);
+        int result = copy_directory_recursive(src_dir, dst_dir);
+        if (result == 0) {
+            remove_directory_recursive(src_dir);
+        }
+        return result;
+    }
+    
+    if (pid == 0) {
+        // Child process - do the actual file operations
+        close(pipefd[0]);  // Close read end
+        
+        // Set up progress tracking with pipe for IPC
+        CopyProgress progress = {
+            .total_files = total_files,
+            .files_processed = 0,
+            .dialog = NULL,  // Child doesn't have dialog access
+            .abort = false,
+            .pipe_fd = pipefd[1]  // Write end of pipe
+        };
+        
+        // Perform the copy with progress updates
+        int result = copy_directory_recursive_with_progress(src_dir, dst_dir, &progress);
+        
+        // Send completion message
+        ProgressMessage msg = {
+            .type = result == 0 ? MSG_COMPLETE : MSG_ERROR,
+            .files_done = progress.files_processed,
+            .files_total = total_files
+        };
+        strcpy(msg.current_file, "");
+        write(pipefd[1], &msg, sizeof(msg));
+        close(pipefd[1]);
+        
+        if (result == 0) {
+            // Success - remove source directory
+            remove_directory_recursive(src_dir);
+        }
+        exit(result);
+    }
+    
+    // Parent process
+    close(pipefd[1]);  // Close write end
+    
+    // Store pipe and PID in dialog for monitoring
+    dialog->pipe_fd = pipefd[0];
+    dialog->child_pid = pid;
+    
+    // Set pipe to non-blocking
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    
+    return 0;  // Return immediately - operation runs in background
+}
+
 // returns 0 on success, non-zero on failure
 static int move_file_to_directory(const char *src_path, const char *dst_dir, char *dst_path, size_t dst_sz) {
     if (!src_path || !dst_dir || !dst_path || !*src_path || !*dst_dir) return -1;
@@ -1049,16 +1300,12 @@ static int move_file_to_directory(const char *src_path, const char *dst_dir, cha
         if (errno == EXDEV) {
             // Cross-filesystem move
             if (is_src_dir) {
-                // Copy directory tree then remove source
-                if (copy_directory_recursive(src_path, dst_path) != 0) {
-                    log_error("[ERROR] Failed to copy directory across filesystem: %s to %s", src_path, dst_path);
+                // Use progress dialog for directory moves (shows "Moving" instead of "Copying")
+                if (move_directory_with_progress(src_path, dst_path) != 0) {
+                    log_error("[ERROR] Failed to move directory across filesystem: %s to %s", src_path, dst_path);
                     return -1;
                 }
-                // Remove source directory after successful copy
-                if (remove_directory_recursive(src_path) != 0) {
-                    log_error("[WARNING] Directory copied but failed to remove source: %s", src_path);
-                    // Not a fatal error - data is safely copied
-                }
+                // Note: move_directory_with_progress handles source removal internally
             } else {
                 // For files, copy then remove source
                 if (copy_file(src_path, dst_path) != 0) { 
@@ -1794,6 +2041,72 @@ void workbench_handle_motion_notify(XMotionEvent *event) {
 
 void workbench_handle_button_release(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window); if (canvas) end_drag_icon(canvas);
+}
+
+// ========================
+// Progress Dialog Monitoring
+// ========================
+
+// Check progress dialogs for updates (called from event loop)
+void workbench_check_progress_dialogs(void) {
+    extern ProgressDialog* get_all_progress_dialogs(void);
+    ProgressDialog *dialog = get_all_progress_dialogs();
+    
+    while (dialog) {
+        ProgressDialog *next = dialog->next;  // Save next before potential close
+        
+        // Check for pipe data
+        if (dialog->pipe_fd >= 0) {
+            ProgressMessage msg;
+            ssize_t n = read(dialog->pipe_fd, &msg, sizeof(msg));
+            
+            if (n == sizeof(msg)) {
+                // Got a message
+                switch (msg.type) {
+                    case MSG_PROGRESS:
+                        {
+                            float percent = (msg.files_total > 0) ?
+                                ((float)msg.files_done / msg.files_total * 100.0f) : 0.0f;
+                            update_progress_dialog(dialog, msg.current_file, percent);
+                        }
+                        break;
+                        
+                    case MSG_COMPLETE:
+                    case MSG_ERROR:
+                        // Operation finished - close dialog
+                        close(dialog->pipe_fd);
+                        dialog->pipe_fd = -1;
+                        
+                        // Wait for child to exit
+                        if (dialog->child_pid > 0) {
+                            waitpid(dialog->child_pid, NULL, WNOHANG);
+                            dialog->child_pid = 0;
+                        }
+                        
+                        // Close the dialog
+                        close_progress_dialog(dialog);
+                        break;
+                }
+            }
+        }
+        
+        // Check if child exited without sending message
+        if (dialog->child_pid > 0) {
+            int status;
+            pid_t result = waitpid(dialog->child_pid, &status, WNOHANG);
+            if (result == dialog->child_pid) {
+                // Child exited
+                if (dialog->pipe_fd >= 0) {
+                    close(dialog->pipe_fd);
+                    dialog->pipe_fd = -1;
+                }
+                dialog->child_pid = 0;
+                close_progress_dialog(dialog);
+            }
+        }
+        
+        dialog = next;
+    }
 }
 
 // ========================

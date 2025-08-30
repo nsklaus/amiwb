@@ -54,4 +54,7 @@ void launch_with_hook(const char *command);     // Execute command with LD_PRELO
 // Directory operations
 int remove_directory_recursive(const char *path); // Recursively remove directory and contents
 
+// Progress dialog monitoring (called from event loop)
+void workbench_check_progress_dialogs(void);
+
 #endif

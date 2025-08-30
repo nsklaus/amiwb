@@ -106,6 +106,27 @@ void show_rename_dialog(const char *old_name,
     // Show the dialog and set it as active window
     XMapRaised(get_display(), dialog->canvas->win);
     set_active_window(dialog->canvas);  // Make dialog active so it can receive focus
+    
+    // Debug output for rename dialog - ONCE only
+    static bool rename_canvas_debug_done = false;
+    if (!rename_canvas_debug_done) {
+        log_error("[RENAME DIALOG DEBUG] Canvas info:\n");
+        log_error("  - canvas=%p\n", (void*)dialog->canvas);
+        log_error("  - win=%lu\n", dialog->canvas->win);
+        log_error("  - canvas_buffer=%lu\n", dialog->canvas->canvas_buffer);
+        log_error("  - canvas_render=%lu\n", dialog->canvas->canvas_render);
+        log_error("  - window_render=%lu\n", dialog->canvas->window_render);
+        log_error("  - visual=%p\n", (void*)dialog->canvas->visual);
+        log_error("  - colormap=%lu\n", dialog->canvas->colormap);
+        log_error("  - depth=%d\n", dialog->canvas->depth);
+        log_error("  - xft_draw=%p\n", (void*)dialog->canvas->xft_draw);
+        log_error("  - type=%d (should be DIALOG=3)\n", dialog->canvas->type);
+        log_error("  - bg_color=(%04x,%04x,%04x,%04x)\n", 
+            dialog->canvas->bg_color.red, dialog->canvas->bg_color.green, 
+            dialog->canvas->bg_color.blue, dialog->canvas->bg_color.alpha);
+        rename_canvas_debug_done = true;
+    }
+    
     redraw_canvas(dialog->canvas);
 }
 
@@ -897,6 +918,17 @@ void render_dialog_content(Canvas *canvas) {
     RenameDialog *dialog = get_dialog_for_canvas(canvas);
     if (!dialog) return;
     
+    // Debug output once for rename dialog rendering
+    static bool rename_debug_done = false;
+    if (!rename_debug_done) {
+        log_error("[RENAME RENDER DEBUG] Starting render_dialog_content:\n");
+        log_error("  - canvas=%p\n", (void*)canvas);
+        log_error("  - canvas->canvas_render=%lu\n", canvas->canvas_render);
+        log_error("  - canvas->window_render=%lu\n", canvas->window_render);
+        log_error("  - canvas->xft_draw=%p\n", (void*)canvas->xft_draw);
+        rename_debug_done = true;
+    }
+    
     Display *dpy = get_display();
     Picture dest = canvas->canvas_render;
     
@@ -1410,4 +1442,301 @@ void show_delete_confirmation(const char *message,
     XMapRaised(get_display(), dialog->canvas->win);
     set_active_window(dialog->canvas);
     redraw_canvas(dialog->canvas);
+}
+
+// ========================
+// Progress Dialog Implementation
+// ========================
+
+// Global progress dialog list
+static ProgressDialog *g_progress_dialogs = NULL;
+
+// Show progress dialog
+ProgressDialog* show_progress_dialog(ProgressOperation op, const char *title) {
+    ProgressDialog *dialog = calloc(1, sizeof(ProgressDialog));
+    if (!dialog) return NULL;
+    
+    dialog->operation = op;
+    dialog->percent = 0.0f;
+    dialog->current_file[0] = '\0';
+    dialog->pipe_fd = -1;
+    dialog->child_pid = 0;
+    dialog->abort_requested = false;
+    dialog->on_abort = NULL;
+    
+    // Create canvas window (400x150)
+    dialog->canvas = create_canvas(NULL, 200, 150, 400, 150, DIALOG);
+    if (!dialog->canvas) {
+        log_error("[ERROR] show_progress_dialog: failed to create canvas\n");
+        free(dialog);
+        return NULL;
+    }
+    
+    // Set title based on operation
+    const char *op_title = title ? title : 
+        (op == PROGRESS_MOVE ? "Moving Files..." :
+         op == PROGRESS_COPY ? "Copying Files..." :
+         "Deleting Files...");
+    
+    dialog->canvas->title_base = strdup(op_title);
+    dialog->canvas->title_change = NULL;
+    dialog->canvas->bg_color = GRAY;
+    dialog->canvas->disable_scrollbars = true;
+    
+    // Add to progress dialog list
+    dialog->next = g_progress_dialogs;
+    g_progress_dialogs = dialog;
+    
+    // Show the dialog
+    static bool map_debug_done = false;
+    if (!map_debug_done) {
+        log_error("[DEBUG] Mapping progress dialog window=%lu\n", dialog->canvas->win);
+        map_debug_done = true;
+    }
+    XMapRaised(get_display(), dialog->canvas->win);
+    set_active_window(dialog->canvas);
+    
+    // Force X11 to process the map request
+    XSync(get_display(), False);
+    
+    redraw_canvas(dialog->canvas);
+    
+    // Force an immediate flush to ensure the window is visible
+    XFlush(get_display());
+    
+    return dialog;
+}
+
+// Update progress dialog
+void update_progress_dialog(ProgressDialog *dialog, const char *file, float percent) {
+    if (!dialog) return;
+    
+    if (file) {
+        strncpy(dialog->current_file, file, PATH_SIZE - 1);
+        dialog->current_file[PATH_SIZE - 1] = '\0';
+    }
+    
+    if (percent >= 0.0f && percent <= 100.0f) {
+        dialog->percent = percent;
+    }
+    
+    redraw_canvas(dialog->canvas);
+    XFlush(get_display());  // Force immediate display update
+}
+
+// Close progress dialog
+void close_progress_dialog(ProgressDialog *dialog) {
+    if (!dialog) return;
+    
+    // Remove from list
+    if (g_progress_dialogs == dialog) {
+        g_progress_dialogs = dialog->next;
+    } else {
+        for (ProgressDialog *d = g_progress_dialogs; d; d = d->next) {
+            if (d->next == dialog) {
+                d->next = dialog->next;
+                break;
+            }
+        }
+    }
+    
+    // Clean up
+    if (dialog->canvas) {
+        destroy_canvas(dialog->canvas);
+    }
+    free(dialog);
+}
+
+
+// Check if canvas is a progress dialog
+bool is_progress_dialog(Canvas *canvas) {
+    if (!canvas) return false;
+    for (ProgressDialog *dialog = g_progress_dialogs; dialog; dialog = dialog->next) {
+        if (dialog->canvas == canvas) return true;
+    }
+    return false;
+}
+
+// Get progress dialog for canvas
+ProgressDialog* get_progress_dialog_for_canvas(Canvas *canvas) {
+    if (!canvas) return NULL;
+    for (ProgressDialog *dialog = g_progress_dialogs; dialog; dialog = dialog->next) {
+        if (dialog->canvas == canvas) return dialog;
+    }
+    return NULL;
+}
+
+// Get all progress dialogs (for monitoring)
+ProgressDialog* get_all_progress_dialogs(void) {
+    return g_progress_dialogs;
+}
+
+// Render progress dialog content
+void render_progress_dialog_content(Canvas *canvas) {
+    ProgressDialog *dialog = get_progress_dialog_for_canvas(canvas);
+    if (!dialog) {
+        static bool no_dialog_debug_done = false;
+        if (!no_dialog_debug_done) {
+            log_error("[DEBUG] render_progress_dialog_content: no dialog found for canvas\n");
+            no_dialog_debug_done = true;
+        }
+        return;
+    }
+    
+    Display *dpy = get_display();
+    Picture dest = canvas->canvas_render;
+    
+    // Debug output once for progress dialog rendering
+    static bool progress_debug_done = false;
+    if (!progress_debug_done) {
+        log_error("[PROGRESS RENDER DEBUG] Starting render_progress_dialog_content:\n");
+        log_error("  - canvas=%p\n", (void*)canvas);
+        log_error("  - canvas->canvas_render=%lu\n", canvas->canvas_render);
+        log_error("  - canvas->window_render=%lu\n", canvas->window_render);
+        log_error("  - canvas->xft_draw=%p\n", (void*)canvas->xft_draw);
+        log_error("  - dest Picture=%lu\n", dest);
+        progress_debug_done = true;
+    }
+    
+    if (dest == None) {
+        static bool dest_none_debug_done = false;
+        if (!dest_none_debug_done) {
+            log_error("[ERROR] render_progress_dialog_content: canvas_render is None!\n");
+            dest_none_debug_done = true;
+        }
+        return;
+    }
+    
+    XftFont *font = get_font();
+    if (!font) {
+        static bool no_font_debug_done = false;
+        if (!no_font_debug_done) {
+            log_error("[ERROR] render_progress_dialog_content: no font!\n");
+            no_font_debug_done = true;
+        }
+        return;
+    }
+    
+    // Clear content area to dialog gray
+    int content_x = BORDER_WIDTH_LEFT;
+    int content_y = BORDER_HEIGHT_TOP;
+    int content_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+    int content_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+    
+    static bool gray_fill_debug_done = false;
+    if (!gray_fill_debug_done) {
+        log_error("[DEBUG] About to fill gray: x=%d, y=%d, w=%d, h=%d\n", content_x, content_y, content_w, content_h);
+        gray_fill_debug_done = true;
+    }
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, content_x, content_y, content_w, content_h);
+    
+    // Use cached XftDraw
+    if (!canvas->xft_draw) {
+        static bool no_xft_debug_done = false;
+        if (!no_xft_debug_done) {
+            log_error("[ERROR] render_progress_dialog_content: canvas->xft_draw is NULL!\n");
+            no_xft_debug_done = true;
+        }
+        return;
+    }
+    
+    static bool xft_exists_debug_done = false;
+    if (!xft_exists_debug_done) {
+        log_error("[DEBUG] XftDraw exists, continuing with text rendering\n");
+        xft_exists_debug_done = true;
+    }
+    
+    XRenderColor text_color = BLACK;
+    XftColor xft_text;
+    XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &text_color, &xft_text);
+    
+    static bool xft_color_debug_done = false;
+    if (!xft_color_debug_done) {
+        log_error("[DEBUG] XftColor allocated\n");
+        xft_color_debug_done = true;
+    }
+    
+    // Line 2: Current file (with operation prefix)
+    const char *op_prefix = dialog->operation == PROGRESS_MOVE ? "Moving: " :
+                           dialog->operation == PROGRESS_COPY ? "Copying: " :
+                           "Deleting: ";
+    
+    char display_text[PATH_SIZE + 20];
+    snprintf(display_text, sizeof(display_text), "%s%s", op_prefix, dialog->current_file);
+    
+    // Truncate with "..." if too long
+    XGlyphInfo text_ext;
+    XftTextExtentsUtf8(dpy, font, (FcChar8*)display_text, strlen(display_text), &text_ext);
+    int max_width = content_w - 40;  // Leave margin
+    
+    if (text_ext.xOff > max_width) {
+        // Truncate and add ...
+        int len = strlen(display_text);
+        while (len > 3) {
+            display_text[len - 1] = '\0';
+            display_text[len - 2] = '.';
+            display_text[len - 3] = '.';
+            display_text[len - 4] = '.';
+            len -= 4;
+            XftTextExtentsUtf8(dpy, font, (FcChar8*)display_text, strlen(display_text), &text_ext);
+            if (text_ext.xOff <= max_width) break;
+        }
+    }
+    
+    int text_y = content_y + 20;  // Move text up - no padding line before
+    XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, content_x + 20, text_y,
+                     (FcChar8*)display_text, strlen(display_text));
+    
+    // Progress bar position right after text - no padding line
+    int bar_x = content_x + 20;
+    int bar_y = content_y + 35;
+    int bar_width = content_w - 40;
+    int bar_height = font->height * 2;
+    
+    // Draw progress bar background (gray)
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY,
+                        bar_x + 1, bar_y + 1, bar_width - 2, bar_height - 2);
+    
+    // Draw progress bar fill (blue)
+    int filled_width = (int)((bar_width - 2) * (dialog->percent / 100.0f));
+    if (filled_width > 0) {
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLUE,
+                            bar_x + 1, bar_y + 1, filled_width, bar_height - 2);
+    }
+    
+    // Draw 3D borders (black top/left, white bottom/right)
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
+                        bar_x, bar_y, bar_width, 1);  // Top
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
+                        bar_x, bar_y, 1, bar_height);  // Left
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
+                        bar_x, bar_y + bar_height - 1, bar_width, 1);  // Bottom
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
+                        bar_x + bar_width - 1, bar_y, 1, bar_height);  // Right
+    
+    // Abort button - right after progress bar
+    int button_x = content_x + (content_w - BUTTON_WIDTH) / 2;
+    int button_y = bar_y + bar_height + 10;
+    
+    // Draw button with 3D effect
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
+                        button_x, button_y, 1, BUTTON_HEIGHT);  // Left
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
+                        button_x, button_y, BUTTON_WIDTH, 1);  // Top
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
+                        button_x + BUTTON_WIDTH - 1, button_y, 1, BUTTON_HEIGHT);  // Right
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
+                        button_x, button_y + BUTTON_HEIGHT - 1, BUTTON_WIDTH, 1);  // Bottom
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY,
+                        button_x + 1, button_y + 1, BUTTON_WIDTH - 2, BUTTON_HEIGHT - 2);  // Fill
+    
+    // Draw "Abort" text
+    XGlyphInfo abort_ext;
+    XftTextExtentsUtf8(dpy, font, (FcChar8*)"Abort", 5, &abort_ext);
+    int abort_text_x = button_x + (BUTTON_WIDTH - abort_ext.xOff) / 2;
+    int abort_text_y = button_y + (BUTTON_HEIGHT + font->ascent) / 2 - 2;
+    XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, abort_text_x, abort_text_y,
+                     (FcChar8*)"Abort", 5);
+    
+    XftColorFree(dpy, canvas->visual, canvas->colormap, &xft_text);
 }
