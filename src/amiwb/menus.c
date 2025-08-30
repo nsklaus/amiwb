@@ -21,6 +21,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <time.h>
 
 // Static menu resources
@@ -1672,15 +1673,18 @@ static void execute_pending_deletes(void) {
         strncpy(saved_path, selected->path, sizeof(saved_path) - 1);
         saved_path[sizeof(saved_path) - 1] = '\0';
         
-        // Execute delete command
-        char cmd[1280];  // Increased to handle full path + command
+        // Execute delete using proper C functions
+        int result;
         if (selected->type == TYPE_DRAWER) {
-            snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", saved_path);
+            // Use our recursive directory removal function
+            result = remove_directory_recursive(saved_path);
         } else {
-            snprintf(cmd, sizeof(cmd), "rm -f \"%s\"", saved_path);
+            // Use unlink for regular files
+            result = unlink(saved_path);
+            if (result != 0 && errno == ENOENT) {
+                result = 0;  // Already gone is success
+            }
         }
-        
-        int result = system(cmd);
         
         // Check if file was actually deleted
         if (result != 0 && access(saved_path, F_OK) != 0) {

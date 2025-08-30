@@ -51,4 +51,7 @@ void workbench_open_directory(const char *path); // Open directory in new workbe
 // Launch programs with ReqASL hook
 void launch_with_hook(const char *command);     // Execute command with LD_PRELOAD set
 
+// Directory operations
+int remove_directory_recursive(const char *path); // Recursively remove directory and contents
+
 #endif

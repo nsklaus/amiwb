@@ -29,6 +29,8 @@ static Canvas *canvas_under_pointer(void);
 static int move_file_to_directory(const char *src_path, const char *dst_dir, char *dst_path, size_t dst_sz);
 static bool is_directory(const char *path);
 static int copy_file(const char *src, const char *dst);
+static int copy_directory_recursive(const char *src_dir, const char *dst_dir);
+int remove_directory_recursive(const char *path);
 static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas);
 static void refresh_canvas(Canvas *canvas);
 
@@ -903,6 +905,123 @@ static int copy_file(const char *src, const char *dst) {
     return 0;
 }
 
+// Recursively remove a directory and all its contents
+// Returns 0 on success, -1 on failure
+int remove_directory_recursive(const char *path) {
+    if (!path || !*path) return -1;
+    
+    DIR *dir = opendir(path);
+    if (!dir) {
+        return -1;
+    }
+    
+    struct dirent *entry;
+    char full_path[PATH_SIZE];
+    int result = 0;
+    
+    while ((entry = readdir(dir)) != NULL) {
+        // Skip . and ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        
+        struct stat st;
+        if (stat(full_path, &st) != 0) {
+            result = -1;
+            continue;
+        }
+        
+        if (S_ISDIR(st.st_mode)) {
+            // Recursively remove subdirectory
+            if (remove_directory_recursive(full_path) != 0) {
+                result = -1;
+            }
+        } else {
+            // Remove file
+            if (unlink(full_path) != 0) {
+                result = -1;
+            }
+        }
+    }
+    
+    closedir(dir);
+    
+    // Remove the now-empty directory
+    if (rmdir(path) != 0) {
+        result = -1;
+    }
+    
+    return result;
+}
+
+// Recursively copy a directory from src to dst
+// Returns 0 on success, -1 on failure
+static int copy_directory_recursive(const char *src_dir, const char *dst_dir) {
+    if (!src_dir || !dst_dir || !*src_dir || !*dst_dir) return -1;
+    
+    // Get source directory stats
+    struct stat src_stat;
+    if (stat(src_dir, &src_stat) != 0 || !S_ISDIR(src_stat.st_mode)) {
+        return -1;
+    }
+    
+    // Create destination directory with same permissions
+    if (mkdir(dst_dir, src_stat.st_mode & 0777) != 0) {
+        // If it exists and is a directory, that's OK
+        struct stat dst_stat;
+        if (stat(dst_dir, &dst_stat) != 0 || !S_ISDIR(dst_stat.st_mode)) {
+            return -1;
+        }
+    }
+    
+    // Open source directory
+    DIR *dir = opendir(src_dir);
+    if (!dir) {
+        return -1;
+    }
+    
+    struct dirent *entry;
+    char src_path[PATH_SIZE];
+    char dst_path[PATH_SIZE];
+    int result = 0;
+    
+    while ((entry = readdir(dir)) != NULL && result == 0) {
+        // Skip . and ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        
+        snprintf(src_path, sizeof(src_path), "%s/%s", src_dir, entry->d_name);
+        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_dir, entry->d_name);
+        
+        struct stat st;
+        if (stat(src_path, &st) != 0) {
+            result = -1;
+            break;
+        }
+        
+        if (S_ISDIR(st.st_mode)) {
+            // Recursively copy subdirectory
+            if (copy_directory_recursive(src_path, dst_path) != 0) {
+                log_error("[ERROR] Failed to copy directory: %s to %s", src_path, dst_path);
+                result = -1;
+            }
+        } else if (S_ISREG(st.st_mode)) {
+            // Copy regular file
+            if (copy_file(src_path, dst_path) != 0) {
+                log_error("[ERROR] Failed to copy file: %s to %s", src_path, dst_path);
+                result = -1;
+            }
+        }
+        // Skip other file types (symlinks, devices, etc.)
+    }
+    
+    closedir(dir);
+    return result;
+}
+
 // returns 0 on success, non-zero on failure
 static int move_file_to_directory(const char *src_path, const char *dst_dir, char *dst_path, size_t dst_sz) {
     if (!src_path || !dst_dir || !dst_path || !*src_path || !*dst_dir) return -1;
@@ -930,9 +1049,16 @@ static int move_file_to_directory(const char *src_path, const char *dst_dir, cha
         if (errno == EXDEV) {
             // Cross-filesystem move
             if (is_src_dir) {
-                // TODO: Implement recursive directory copy for cross-filesystem moves
-                log_error("[ERROR] Cross-filesystem directory moves not yet supported");
-                return -1;
+                // Copy directory tree then remove source
+                if (copy_directory_recursive(src_path, dst_path) != 0) {
+                    log_error("[ERROR] Failed to copy directory across filesystem: %s to %s", src_path, dst_path);
+                    return -1;
+                }
+                // Remove source directory after successful copy
+                if (remove_directory_recursive(src_path) != 0) {
+                    log_error("[WARNING] Directory copied but failed to remove source: %s", src_path);
+                    // Not a fatal error - data is safely copied
+                }
             } else {
                 // For files, copy then remove source
                 if (copy_file(src_path, dst_path) != 0) { 
