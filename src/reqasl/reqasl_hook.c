@@ -330,12 +330,6 @@ void gtk_widget_destroy(void *widget) {
 }
 
 // Library destructor - cleanup
-__attribute__((destructor))
-static void cleanup(void) {
-    if (current_dialog.title) {
-        free(current_dialog.title);
-    }
-    if (current_dialog.filename) {
-        free(current_dialog.filename);
-    }
-}
+// REMOVED: Destructor was causing segfaults in forked child processes
+// Child processes inherit parent's memory but shouldn't free it
+// The OS will clean up memory when process exits anyway

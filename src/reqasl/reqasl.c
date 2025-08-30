@@ -21,7 +21,7 @@
 #include <pwd.h>
 #include <stdarg.h>
 
-// Initialize debug logging (create fresh log with timestamp)
+// Initialize log file with timestamp header (overwrites previous log)
 static void reqasl_log_init(void) {
     const char *home = getenv("HOME");
     if (!home) return;
@@ -29,19 +29,22 @@ static void reqasl_log_init(void) {
     char log_path[512];
     snprintf(log_path, sizeof(log_path), "%s/Sources/amiwb/reqasl.log", home);
     
-    FILE *debug_file = fopen(log_path, "w");  // "w" to create fresh file
-    if (debug_file) {
+    FILE *lf = fopen(log_path, "w");  // "w" to overwrite each run
+    if (lf) {
+        // Header with timestamp - EXACTLY like AmiWB
         time_t now = time(NULL);
-        char *timestamp = ctime(&now);
-        fprintf(debug_file, "=== ReqASL Debug Log ===\n");
-        fprintf(debug_file, "Started: %s", timestamp);  // ctime includes newline
-        fprintf(debug_file, "========================\n\n");
-        fclose(debug_file);
+        struct tm tm;
+        localtime_r(&now, &tm);
+        char ts[128];
+        strftime(ts, sizeof(ts), "%a %d %b %Y - %H:%M", &tm);
+        fprintf(lf, "ReqASL log file, started on: %s\n", ts);
+        fprintf(lf, "----------------------------------------\n");
+        fclose(lf);
     }
 }
 
-// Debug logging function
-static void reqasl_log(const char *format, ...) {
+// Error logging function - only logs actual errors
+void log_error(const char *format, ...) {
     const char *home = getenv("HOME");
     if (!home) return;
     
@@ -91,7 +94,7 @@ ReqASL* reqasl_create(Display *display) {
     
     // Initialize debug logging with fresh file
     reqasl_log_init();
-    reqasl_log("ReqASL starting...");
+    // Starting - no need to log
     
     ReqASL *req = calloc(1, sizeof(ReqASL));
     if (!req) return NULL;
@@ -114,13 +117,13 @@ ReqASL* reqasl_create(Display *display) {
     }
     
     if (!req->font) {
-        fprintf(stderr, "[WARNING] Failed to load SourceCodePro-Bold.otf, falling back to monospace\n");
+        log_error("[WARNING] Failed to load SourceCodePro-Bold.otf, falling back to monospace");
         req->font = XftFontOpen(display, DefaultScreen(display),
                                XFT_FAMILY, XftTypeString, "monospace",
                                XFT_SIZE, XftTypeDouble, 12.0,
                                NULL);
         if (!req->font) {
-            fprintf(stderr, "[WARNING] Failed to load monospace, falling back to fixed\n");
+            log_error("[WARNING] Failed to load monospace, falling back to fixed");
             req->font = XftFontOpenName(display, DefaultScreen(display), "fixed");
         }
     }
@@ -145,7 +148,7 @@ ReqASL* reqasl_create(Display *display) {
                                    req->width - MARGIN * 2, 
                                    req->list_height);
     if (!req->listview) {
-        reqasl_log("ERROR: Failed to create listview");
+        log_error("[ERROR] Failed to create listview");
         // Continue anyway - old rendering will be fallback
     } else {
         // Set callbacks for ListView
@@ -345,11 +348,11 @@ void reqasl_refresh(ReqASL *req) {
 void reqasl_navigate_to(ReqASL *req, const char *path) {
     if (!req || !path) return;
     
-    reqasl_log("reqasl_navigate_to: Navigating to path: %s", path);
+    // Navigating to path
     
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
-        reqasl_log("reqasl_navigate_to: Path is valid directory");
+        // Path is valid
         strncpy(req->current_path, path, sizeof(req->current_path) - 1);
         req->current_path[sizeof(req->current_path) - 1] = '\0';
         strncpy(req->drawer_text, req->current_path, sizeof(req->drawer_text) - 1);
@@ -370,13 +373,13 @@ void reqasl_navigate_to(ReqASL *req, const char *path) {
         req->selected_index = -1;
         req->scroll_offset = 0;
         scan_directory(req, req->current_path);  // Use copied path, not original which may be freed
-        reqasl_log("reqasl_navigate_to: After scan_directory, entry_count=%d", req->entry_count);
+        // Scanned directory
         if (req->listview) {
-            reqasl_log("reqasl_navigate_to: ListView item_count=%d", req->listview->item_count);
+            // ListView updated
         }
         draw_window(req);
     } else {
-        reqasl_log("reqasl_navigate_to: Path is not valid or not a directory");
+        // Path not valid
     }
 }
 
@@ -467,21 +470,21 @@ static int compare_entries(const void *a, const void *b) {
 static void scan_directory(ReqASL *req, const char *path) {
     if (!req || !path) return;
     
-    reqasl_log("scan_directory: Scanning path: %s", path);
+    // Scanning directory
     
     // Free existing entries
     free_entries(req);
     
     // Clear ListView
     if (req->listview) {
-        reqasl_log("scan_directory: Clearing ListView");
+        // Clear ListView
         listview_clear(req->listview);
-        reqasl_log("scan_directory: After clear, ListView item_count=%d", req->listview->item_count);
+        // ListView cleared
     }
     
     DIR *dir = opendir(path);
     if (!dir) {
-        reqasl_log("scan_directory: Failed to open directory: %s", path);
+        // Failed to open directory - silent fail
         return;
     }
     
@@ -552,7 +555,7 @@ static void scan_directory(ReqASL *req, const char *path) {
     
     closedir(dir);
     
-    reqasl_log("scan_directory: Found %d entries total", req->entry_count);
+    // Entries found
     
     // Sort entries
     if (req->entry_count > 0) {
@@ -560,20 +563,20 @@ static void scan_directory(ReqASL *req, const char *path) {
         
         // Add entries to ListView
         if (req->listview) {
-            reqasl_log("scan_directory: Adding %d entries to ListView", req->entry_count);
+            // Adding entries
             for (int i = 0; i < req->entry_count; i++) {
                 FileEntry *fe = req->entries[i];
-                reqasl_log("scan_directory: Adding item %d: %s (dir=%d)", i, fe->name, fe->type == TYPE_DRAWER);
+                // Adding item
                 listview_add_item(req->listview, fe->name, 
                                 fe->type == TYPE_DRAWER, fe);
             }
-            reqasl_log("scan_directory: ListView now has %d items", req->listview->item_count);
-            reqasl_log("scan_directory: ListView needs_redraw=%d", req->listview->needs_redraw);
+            // ListView populated
+            // Redraw state set
         } else {
-            reqasl_log("scan_directory: ERROR - ListView is NULL!");
+            log_error("[ERROR] scan_directory: ListView is NULL!");
         }
     } else {
-        reqasl_log("scan_directory: No entries found in directory");
+        // No entries found
     }
 }
 
@@ -581,7 +584,7 @@ static void draw_window(ReqASL *req) {
     if (!req || !req->window) return;
     
     // Debug output for window dimensions
-    reqasl_log("Window dimensions: width=%d, height=%d", req->width, req->height);
+    // Window dimensions set
     
     // Get window drawable
     Pixmap pixmap = XCreatePixmap(req->display, req->window, 
@@ -1198,8 +1201,7 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
         case ConfigureRequest:
             // Handle resize requests - enforce minimum size
             {
-                reqasl_log("ConfigureRequest: width=%d, height=%d", 
-                          event->xconfigurerequest.width, event->xconfigurerequest.height);
+                // Configure request received
                 
                 XWindowChanges changes;
                 changes.x = event->xconfigurerequest.x;
@@ -1435,7 +1437,7 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 
                 // Check if size actually changed
                 if (new_width != req->width || new_height != req->height) {
-                    reqasl_log("ConfigureNotify: Window resized to %dx%d", new_width, new_height);
+                    // Window resized
                     
                     // Update internal dimensions
                     req->width = new_width;
@@ -1594,14 +1596,14 @@ void reqasl_set_pattern(ReqASL *req, const char *extensions) {
 void reqasl_set_title(ReqASL *req, const char *title) {
     if (!req || !title) return;
     
-    reqasl_log("reqasl_set_title: Setting title to '%s'", title);
+    // Setting title
     
     strncpy(req->window_title, title, sizeof(req->window_title) - 1);
     req->window_title[sizeof(req->window_title) - 1] = '\0';
     
     // Update the window title if window already exists
     if (req->window && req->display) {
-        reqasl_log("reqasl_set_title: Updating window title properties");
+        // Update window properties
         XStoreName(req->display, req->window, req->window_title);
         
         // Set WM_NAME property

@@ -418,7 +418,7 @@ static bool init_display_and_root(void) {
     if (XRRQueryExtension(display, &randr_event_base, &randr_error_base)) {
         XRRSelectInput(display, root, RRScreenChangeNotifyMask);
     } else {
-        fprintf(stderr, "XRANDR extension not available; resolution changes may not be handled.\n");
+        log_error("[WARNING] XRANDR extension not available; resolution changes may not be handled.");
     }
     XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask | PropertyChangeMask |
                  StructureNotifyMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | KeyPressMask);
@@ -813,40 +813,22 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
         
         XClassHint ch;
         if (XGetClassHint(display, frame->client_win, &ch)) {
-            // For MPV and similar apps, res_name might be generic (like "x11", "wayland")
-            // Use res_class if res_name looks like a video/audio output driver
-            if (ch.res_name && ch.res_class) {
-                // Check if res_name is a generic output driver name
-                if (strcmp(ch.res_name, "x11") == 0 || 
-                    strcmp(ch.res_name, "wayland") == 0 ||
-                    strcmp(ch.res_name, "opengl") == 0 ||
-                    strcmp(ch.res_name, "vulkan") == 0 ||
-                    strcmp(ch.res_name, "sdl") == 0) {
-                    // Use res_class instead (usually the app name)
-                    frame->title_base = strdup(ch.res_class);
-                    frame->title_change = NULL;  // Will be set later if needed
-                    XFree(ch.res_name);
-                    XFree(ch.res_class);
-                } else {
-                    // Use res_name as normal
-                    frame->title_base = strdup(ch.res_name);
-                    frame->title_change = NULL;  // Will be set later if needed
-                    XFree(ch.res_name);
-                    XFree(ch.res_class);
-                }
+            // Use res_class as the title (it's usually the proper app name)
+            if (ch.res_class) {
+                frame->title_base = strdup(ch.res_class);
             } else if (ch.res_name) {
                 frame->title_base = strdup(ch.res_name);
-                frame->title_change = NULL;  // Will be set later if needed
-                XFree(ch.res_name);
-                if (ch.res_class) XFree(ch.res_class);
-            } else if (ch.res_class) {
-                frame->title_base = strdup(ch.res_class);
-                frame->title_change = NULL;  // Will be set later if needed
-                XFree(ch.res_class);
             } else {
                 frame->title_base = strdup("NoNameApp");
-                frame->title_change = NULL;
             }
+            frame->title_change = NULL;  // Will be set later if needed
+            
+            // Also set WM_CLASS on the frame for xprop
+            XSetClassHint(display, frame->win, &ch);
+            
+            // Now free
+            if (ch.res_name) XFree(ch.res_name);
+            if (ch.res_class) XFree(ch.res_class);
         } else {
             frame->title_base = strdup("NoNameApp");
             frame->title_change = NULL;
@@ -870,6 +852,7 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
             }
         }
     }
+    
     XAddToSaveSet(display, client); 
     return frame;
 }
@@ -913,6 +896,12 @@ Canvas *init_intuition(void) {
     
     Canvas *desktop = create_canvas(getenv("HOME"), 0, 20, width, height, DESKTOP);
     if (!desktop) return NULL;
+    
+    // Set WM_CLASS for the desktop window so xprop can detect it
+    XClassHint desktop_class;
+    desktop_class.res_name = "workbench";
+    desktop_class.res_class = "AmiWB";
+    XSetClassHint(display, desktop->win, &desktop_class);
     
     // Setup Imlib2 for image loading
     imlib_context_set_display(display);
@@ -1222,41 +1211,20 @@ void iconify_canvas(Canvas *c) {
     const char *icon_path = NULL; char *label = NULL;
     const char *def_foo_path = "/usr/local/share/amiwb/icons/def_icons/def_foo.info";
     
+    // Use the Canvas's title_base which was already set correctly when the window was created
+    label = c->title_base ? strdup(c->title_base) : strdup("Untitled");
+    
     if (c->client_win == None) { 
-        label = c->title_base ? strdup(c->title_base) : strdup("Untitled"); 
         icon_path = "/usr/local/share/amiwb/icons/filer.info";
     } else {
-        XClassHint ch;
-        if (XGetClassHint(display, c->client_win, &ch)) {
-            // Determine label - use same logic as window title
-            const char *app_name = ch.res_name;
-            if (ch.res_name && ch.res_class) {
-                // Check if res_name is a generic output driver name
-                if (strcmp(ch.res_name, "x11") == 0 || 
-                    strcmp(ch.res_name, "wayland") == 0 ||
-                    strcmp(ch.res_name, "opengl") == 0 ||
-                    strcmp(ch.res_name, "vulkan") == 0 ||
-                    strcmp(ch.res_name, "sdl") == 0) {
-                    app_name = ch.res_class;
-                }
-            }
-            
-            // Try to find a specific icon for this app
-            char icon_full[256]; 
-            snprintf(icon_full, sizeof(icon_full), "/usr/local/share/amiwb/icons/%s.info", app_name);
-            struct stat st; 
-            if (stat(icon_full, &st) == 0) {
-                icon_path = icon_full;
-            } else {
-                printf("[ICON] Couldn't find %s.info at %s, using def_foo.info\n", app_name, icon_full);
-                icon_path = def_foo_path;
-            }
-            label = strdup(app_name);
-            
-            if (ch.res_name) XFree(ch.res_name);
-            if (ch.res_class) XFree(ch.res_class);
-        } else { 
-            label = strdup("Untitled"); 
+        // Try to find a specific icon for this app using the title_base
+        char icon_full[256]; 
+        snprintf(icon_full, sizeof(icon_full), "/usr/local/share/amiwb/icons/%s.info", c->title_base);
+        struct stat st; 
+        if (stat(icon_full, &st) == 0) {
+            icon_path = icon_full;
+        } else {
+            printf("[ICON] Couldn't find %s.info at %s, using def_foo.info\n", c->title_base, icon_full);
             icon_path = def_foo_path;
         }
     }

@@ -178,7 +178,7 @@ static Pixmap load_wallpaper_to_pixmap(Display *dpy, int screen_num, const char 
     if (!path || strlen(path) == 0) return None;
     Imlib_Image img = imlib_load_image(path);
     if (!img) {
-        fprintf(stderr, "Failed to load wallpaper: %s\n", path);
+        log_error("[ERROR] Failed to load wallpaper: %s", path);
         return None;
     }
     imlib_context_set_image(img);
@@ -275,7 +275,7 @@ void init_render(void) {
 
     // Initialize FontConfig
     if (!FcInit()) {
-        fprintf(stderr, "Failed to initialize FontConfig\n");
+        log_error("[ERROR] Failed to initialize FontConfig");
         return;
     }
 
@@ -292,7 +292,7 @@ void init_render(void) {
     XftDefaultSubstitute(ctx->dpy, DefaultScreen(ctx->dpy), pattern);
     font = XftFontOpenPattern(ctx->dpy, pattern);
     if (!font) {
-        fprintf(stderr, "Failed to load font %s\n", font_path);
+        log_error("[ERROR] Failed to load font %s", font_path);
         FcPatternDestroy(pattern);
         free(font_path);
         return;
@@ -381,7 +381,7 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
 
     RenderContext *ctx = get_render_context();
     if (!ctx) {
-        fprintf(stderr, "render_icon: No render context\n");
+        log_error("[ERROR] render_icon: No render context");
         return;
     }
     if (!canvas) { printf("in render.c, render_icon(), canvas failled  \n"); }
@@ -396,17 +396,17 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
                      0, 0, 0, 0, render_x, render_y, render_width, render_height);
 
     if (!font) {
-        fprintf(stderr, "render_icon: Font not loaded\n");
+        log_error("[ERROR] render_icon: Font not loaded");
         return;
     }
     if (!icon->label) {
-        fprintf(stderr, "render_icon: No label for icon\n");
+        log_error("[ERROR] render_icon: No label for icon");
         return;
     }
 
     // Use cached XftDraw instead of creating a new one
     if (!canvas->xft_draw) {
-        fprintf(stderr, "render_icon: No cached XftDraw for label '%s'\n", icon->label);
+        log_error("[ERROR] render_icon: No cached XftDraw for label '%s'", icon->label);
         return;
     }
 

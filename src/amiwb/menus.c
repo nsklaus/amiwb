@@ -175,7 +175,7 @@ void init_menus(void) {
     XftDefaultSubstitute(ctx->dpy, DefaultScreen(ctx->dpy), pattern);
     font = XftFontOpenPattern(ctx->dpy, pattern);
     if (!font) {
-        fprintf(stderr, "Failed to load font %s\n", font_path);
+        log_error("[ERROR] Failed to load font %s", font_path);
         FcPatternDestroy(pattern);
         free(font_path);
         return;

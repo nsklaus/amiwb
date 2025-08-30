@@ -1,4 +1,5 @@
 #include "compositor.h"
+#include "config.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <X11/extensions/Xrender.h>
@@ -118,26 +119,15 @@ void compositor_dump_order(const char *tag) {
 
 // Debug: dump compositor list order (bottom->top) and XQueryTree order (top->bottom)
 static void dump_compositor_order(Display *dpy, const char *tag) {
-    fprintf(stderr, "[comp] ORDER %s\n", tag ? tag : "");
+    // Stack order update - debug output removed
     // Compositor paint order: iterate g_list (built bottom->top)
-    int idx = 0;
-    for (CompWin *it = g_list; it; it = it->next, ++idx) {
-        Canvas *c = find_canvas(it->win);
-        const char *type = c ? (c->type == DESKTOP ? "DESKTOP" : (c->type == MENU ? "MENU" : "WINDOW")) : "(unknown)";
-        fprintf(stderr, "  [comp %2d] %-7s win=0x%lx depth=%d %dx%d\n", idx, type, it->win, it->depth, it->width, it->height);
+    for (CompWin *it = g_list; it; it = it->next) {
+        // Window in stack - debug output removed
     }
-    // X server stacking: children are bottom->top; print top->bottom
+    // X server stacking: children are bottom->top
     Window root_ret, parent_ret, *children = NULL; unsigned int n = 0;
     if (XQueryTree(dpy, g_root, &root_ret, &parent_ret, &children, &n)) {
-        fprintf(stderr, "[comp] X stack (TOP->BOTTOM), n=%u\n", n);
-        int level = 0;
-        for (int i = (int)n - 1; i >= 0; --i) {
-            Window w = children[i];
-            const char *special = (w == g_overlay) ? " [OVERLAY]" : ((w == g_owner) ? " [OWNER]" : "");
-            Canvas *c = find_canvas(w);
-            const char *type = c ? (c->type == DESKTOP ? "DESKTOP" : (c->type == MENU ? "MENU" : "WINDOW")) : "(unknown)";
-            fprintf(stderr, "  [%2d] %-7s win=0x%lx%s\n", level++, type, w, special);
-        }
+        // X11 stack dump - debug output removed
         if (children) XFree(children);
     }
 }
@@ -371,7 +361,7 @@ bool init_compositor(Display *dpy) {
     // This extension is essential for compositing window managers
     // Without it, we can't do transparency, shadows, or smooth effects
     if (!XCompositeQueryExtension(dpy, &g_composite_event_base, &g_composite_error_base)) {
-        fprintf(stderr, "Compositor: XComposite extension missing\n");
+        log_error("[ERROR] Compositor: XComposite extension missing");
         return false;
     }
     int major=0, minor=0;
@@ -380,7 +370,7 @@ bool init_compositor(Display *dpy) {
     // Instead of constantly redrawing everything, we only update damaged areas
     // This makes compositing efficient - we redraw only what changed
     if (!XDamageQueryExtension(dpy, &g_damage_event_base, &g_damage_error_base)) {
-        fprintf(stderr, "Compositor: XDamage extension missing\n");
+        log_error("[ERROR] Compositor: XDamage extension missing");
         return false;
     }
 
@@ -390,7 +380,7 @@ bool init_compositor(Display *dpy) {
     g_sel = XInternAtom(dpy, selname, False);
     Window current_owner = XGetSelectionOwner(dpy, g_sel);
     if (current_owner != None) {
-        fprintf(stderr, "Compositor: could not acquire selection, continuing without\n");
+        // Could not acquire selection - not critical
     } else {
         XSetWindowAttributes swa; memset(&swa, 0, sizeof(swa));
         swa.override_redirect = True;
@@ -412,7 +402,7 @@ bool init_compositor(Display *dpy) {
     // We draw our composited result here, creating the final desktop image
     g_overlay = XCompositeGetOverlayWindow(dpy, g_root);
     if (g_overlay == None) {
-        fprintf(stderr, "Compositor: overlay window not available\n");
+        log_error("[ERROR] Compositor: overlay window not available");
         shutdown_compositor(dpy);
         return false;
     }
@@ -427,14 +417,14 @@ bool init_compositor(Display *dpy) {
     XRenderPictFormat *ofmt = XRenderFindVisualFormat(dpy, owa.visual);
     if (!ofmt) ofmt = XRenderFindStandardFormat(dpy, PictStandardARGB32);
     if (!ofmt) {
-        fprintf(stderr, "Compositor: no overlay pict format\n");
+        log_error("[ERROR] Compositor: no overlay pict format");
         shutdown_compositor(dpy);
         return false;
     }
     XRenderPictureAttributes opa; memset(&opa, 0, sizeof(opa));
     g_overlay_pict = XRenderCreatePicture(dpy, g_overlay, ofmt, 0, &opa);
     if (!g_overlay_pict) {
-        fprintf(stderr, "Compositor: failed to create overlay picture\n");
+        log_error("[ERROR] Compositor: failed to create overlay picture");
         shutdown_compositor(dpy);
         return false;
     }
@@ -452,7 +442,7 @@ bool init_compositor(Display *dpy) {
     build_win_list(dpy);
     g_active = true;
     compositor_repaint(dpy);
-    fprintf(stderr, "[INFO] Compositor: active (Composite v%d.%d)\n", major, minor);
+    // Compositor active - no need to log success
     return true;
 }
 

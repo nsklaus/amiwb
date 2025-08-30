@@ -101,4 +101,7 @@ extern char *iconify_path;
 // This will intercept GTK3, Qt, and other toolkit file dialogs
 #define REQASL_HOOK_PATH "/usr/local/lib/reqasl_hook.so"
 
+// Error logging function - defined once in main.c, used everywhere
+void log_error(const char *format, ...);
+
 #endif

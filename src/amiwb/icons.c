@@ -198,7 +198,7 @@ static int parse_icon_header(const uint8_t *header, long size, uint16_t *width, 
 static int render_os13_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height) {
     XVisualInfo vinfo;
     if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
-        fprintf(stderr, "No %d-bit TrueColor visual found for icon\n", ICON_RENDER_DEPTH);
+        log_error("[ERROR] No %d-bit TrueColor visual found for icon", ICON_RENDER_DEPTH);
         return 1;
     }
     Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), width, height, ICON_RENDER_DEPTH);
@@ -259,7 +259,7 @@ static int render_os13_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *dat
 static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth, AmigaIconFormat format) {
     XVisualInfo vinfo;
     if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
-        fprintf(stderr, "No %d-bit TrueColor visual found for icon\n", ICON_RENDER_DEPTH);
+        log_error("[ERROR] No %d-bit TrueColor visual found for icon", ICON_RENDER_DEPTH);
         return 1;
     }
     Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), width, height, ICON_RENDER_DEPTH);

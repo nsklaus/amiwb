@@ -12,14 +12,43 @@
 #include <stdio.h> // For fprintf
 #include <stdlib.h> // getenv
 #include <unistd.h> // dup2
+#include <fcntl.h>  // open, O_WRONLY
 #include <time.h>   // time, strftime
 #include <string.h>
+#include <stdarg.h> // For va_list
 
 // Global variables for restart functionality
 static char **g_argv = NULL;
 static int g_argc = 0;
 static Window g_selection_window = None;
 static Display *g_selection_display = NULL;
+
+// Error logging function - only logs actual errors
+void log_error(const char *format, ...) {
+    char log_path[1024];
+    const char *cfg = LOG_FILE_PATH;
+    
+    // Expand leading $HOME in the configured path
+    if (cfg && strncmp(cfg, "$HOME/", 6) == 0) {
+        const char *home = getenv("HOME");
+        if (!home) return;  // Silent fail - no logs if no home
+        snprintf(log_path, sizeof(log_path), "%s/%s", home, cfg + 6);
+    } else {
+        snprintf(log_path, sizeof(log_path), "%s", cfg ? cfg : "amiwb.log");
+    }
+    
+    // Open, write, close immediately - no fd inheritance
+    FILE *log = fopen(log_path, "a");
+    if (!log) return;  // Silent fail - don't break on log errors
+    
+    va_list args;
+    va_start(args, format);
+    vfprintf(log, format, args);
+    va_end(args);
+    fprintf(log, "\n");
+    
+    fclose(log);
+}
 
 // Function to restart the window manager
 void restart_amiwb(void) {
@@ -37,11 +66,33 @@ void restart_amiwb(void) {
     shutdown_compositor(get_display());
     cleanup_intuition();  // This closes the X display
     
+    // Clean up file descriptors before exec to prevent inheritance
+    // Reset stdout/stderr to clean state
+    int devtty = open("/dev/tty", O_WRONLY);
+    if (devtty != -1) {
+        dup2(devtty, STDOUT_FILENO);
+        dup2(devtty, STDERR_FILENO);
+        close(devtty);
+    } else {
+        // If no tty available, redirect to /dev/null
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull != -1) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+    }
+    
+    // Close all other file descriptors except stdin/stdout/stderr
+    for (int fd = 3; fd < 256; fd++) {
+        close(fd);
+    }
+    
     // Replace ourselves with a new instance
     execvp(g_argv[0], g_argv);
     
     // If exec fails, exit with error
-    fprintf(stderr, "Failed to restart AmiWB: execvp failed\n");
+    log_error("[ERROR] Failed to restart AmiWB: execvp failed");
     exit(1);
 }
 
@@ -58,8 +109,7 @@ int main(int argc, char *argv[]) {
     // Store arguments for potential restart
     g_argc = argc;
     g_argv = argv;
-    // Configurable logging: redirect stdout/stderr to LOG_FILE_PATH when enabled.
-    // Truncate on each run and print a timestamp header. Line-buffered writes.
+    // Initialize log file with timestamp header (truncate on each run)
     #if LOGGING_ENABLED
     {
         char path_buf[1024];
@@ -77,20 +127,14 @@ int main(int argc, char *argv[]) {
         }
         FILE *lf = fopen(path_buf, "w"); // overwrite each run
         if (lf) {
-            setvbuf(lf, NULL, _IOLBF, 0); // line-buffered file (harmless)
-            dup2(fileno(lf), fileno(stdout));
-            dup2(fileno(lf), fileno(stderr));
-            // Ensure stdout/stderr are line-buffered so tail sees output promptly
-            setvbuf(stdout, NULL, _IOLBF, 0);
-            setvbuf(stderr, NULL, _IOLBF, 0);
-            // Header with timestamp
+            // Header with timestamp - only thing that goes in log during normal operation
             time_t now = time(NULL);
             struct tm tm; localtime_r(&now, &tm);
             char ts[128];
             strftime(ts, sizeof(ts), "%a %d %b %Y - %H:%M", &tm);
-            fprintf(stderr, "AmiWB log file, started on: %s\n", ts);
-            fprintf(stderr, "----------------------------------------\n");
-            fflush(stderr);
+            fprintf(lf, "AmiWB log file, started on: %s\n", ts);
+            fprintf(lf, "----------------------------------------\n");
+            fclose(lf);  // Close immediately - no fd inheritance
         }
     }
     #endif

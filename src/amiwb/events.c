@@ -228,7 +228,7 @@ void handle_events(void) {
                     setvbuf(lf, NULL, _IOLBF, 0);
                     dup2(fileno(lf), fileno(stdout));
                     dup2(fileno(lf), fileno(stderr));
-                    fprintf(stderr, "[amiwb] log truncated (cap=%ld bytes)\n", (long)LOG_CAP_BYTES);
+                    // Log truncated silently
                 }
             }
         }
@@ -281,8 +281,7 @@ void handle_events(void) {
                     // Maybe it's a frame window?
                     canvas = find_canvas(map_event->window);
                     if (canvas) {
-                        fprintf(stderr, "[DEBUG] Found canvas by FRAME window 0x%lx\n", 
-                                (unsigned long)map_event->window);
+                        // Found canvas
                     }
                 }
                 if (canvas) {
@@ -321,18 +320,13 @@ void handle_events(void) {
                         }
                         
                         // Debug: What window are we actually verifying?
-                        fprintf(stderr, "[DEBUG] Verifying window 0x%lx (map_event->window)\n", 
-                                (unsigned long)map_event->window);
-                        fprintf(stderr, "[DEBUG] Canvas client_win is 0x%lx\n", 
-                                (unsigned long)canvas->client_win);
-                        fprintf(stderr, "[DEBUG] Canvas frame win is 0x%lx\n", 
-                                (unsigned long)canvas->win);
+                        // Verifying window mapping
                         
                         // Only verify if it's really the client window
                         if (map_event->window == canvas->client_win) {
                             // Client should be at correct position
                         } else {
-                            fprintf(stderr, "[WARNING] map_event->window != canvas->client_win, skipping verification\n");
+                            // Window mismatch, skipping
                         }
                         
                         // Verify it actually moved
@@ -442,7 +436,7 @@ static Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, in
     Window root = DefaultRootWindow(dpy);
     Window cur = w;
     // rx, ry removed - were unused
-    if (wb_dbg()) fprintf(stderr, "[WB] resolve_event_canvas: w=0x%lx in=(%d,%d)\n", w, in_x, in_y);
+    // Resolving event canvas
     while (cur && cur != root) {
         Canvas *c = find_canvas(cur);
         if (c) {
@@ -451,7 +445,7 @@ static Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, in
             XTranslateCoordinates(dpy, w, c->win, in_x, in_y, &tx, &ty, &dummy);
             if (out_x) *out_x = tx;
             if (out_y) *out_y = ty;
-            if (wb_dbg()) fprintf(stderr, "[WB]  -> resolved to canvas win=0x%lx type=%d tx,ty=(%d,%d)\n", c->win, c->type, tx, ty);
+            // Canvas resolved
             return c;
         }
         // Ensure 'cur' is still a valid window before walking up the tree
@@ -470,7 +464,7 @@ static Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, in
 void handle_button_press(XButtonEvent *event) {
     int cx = event->x, cy = event->y; // may be rewritten
     Canvas *canvas = find_canvas(event->window);
-    if (wb_dbg()) fprintf(stderr, "[WB] ButtonPress win=0x%lx x,y=(%d,%d) state=0x%x\n", event->window, event->x, event->y, event->state);
+    // Handle button press
     // If the press is on a managed client, activate its frame, replay pointer, and translate
     if (!canvas) {
         Canvas *owner = find_canvas_by_client(event->window);
@@ -486,13 +480,12 @@ void handle_button_press(XButtonEvent *event) {
             // translate coords from client to frame canvas
             Window dummy; XTranslateCoordinates(get_display(), event->window, owner->win, event->x, event->y, &cx, &cy, &dummy);
             canvas = owner;
-            if (wb_dbg()) fprintf(stderr, "[WB]  client press routed to frame=0x%lx tx,ty=(%d,%d)\n", canvas->win, cx, cy);
+            // Route to frame
         }
     }
     if (!canvas) canvas = resolve_event_canvas(event->window, event->x, event->y, &cx, &cy);
     if (!canvas) { return; }
-    if (wb_dbg()) fprintf(stderr, "[WB]  press resolved: canvas=0x%lx type=%d tx,ty=(%d,%d) was_active=%d\n",
-                           canvas->win, canvas->type, cx, cy, canvas->active?1:0);
+    // Press resolved
 
     // If the desktop got the press but a window is actually under the pointer,
     // reroute the event to the topmost WINDOW canvas at the pointer's root coords.
@@ -516,7 +509,7 @@ void handle_button_press(XButtonEvent *event) {
                     // Translate root coords to frame coords
                     Window dummy; int tx=0, ty=0;
                     XTranslateCoordinates(dpy, root, c->win, rx, ry, &tx, &ty, &dummy);
-                    if (wb_dbg()) fprintf(stderr, "[WB]  desktop press rerouted to frame=0x%lx tx,ty=(%d,%d)\n", c->win, tx, ty);
+                    // Reroute to frame
                     set_active_window(c);
                     XButtonEvent ev = *event; ev.window = c->win; ev.x = tx; ev.y = ty;
                     intuition_handle_button_press(&ev);
@@ -844,21 +837,6 @@ void handle_property_notify(XPropertyEvent *event) {
             redraw_canvas(canvas);
         }
     }
-    // Also handle standard WM_NAME changes
-    else if (event->atom == XInternAtom(dpy, "WM_NAME", False) && event->state == PropertyNewValue) {
-        // Update title from WM_NAME property
-        XTextProperty text_prop;
-        if (XGetWMName(dpy, event->window, &text_prop) && text_prop.value) {
-            if (canvas->title_change) {
-                free(canvas->title_change);
-            }
-            canvas->title_change = strdup((char *)text_prop.value);
-            XFree(text_prop.value);
-            
-            // Trigger a redraw
-            redraw_canvas(canvas);
-        }
-    }
 }
 
 // Dispatch mouse motion
@@ -891,8 +869,7 @@ void handle_motion_notify(XMotionEvent *event) {
     // Suppress motion logging to avoid log spam
     if (!canvas) canvas = resolve_event_canvas(event->window, event->x, event->y, &cx, &cy);
     if (!canvas) {
-        fprintf(stderr, "No canvas for MotionNotify \
-            event on window %lu\n", event->window);
+        // No canvas for this motion event
         return;
     }
 

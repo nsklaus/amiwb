@@ -18,14 +18,14 @@ static void on_cancel(void) {
 int main(int argc, char *argv[]) {
     Display *display = XOpenDisplay(NULL);
     if (!display) {
-        fprintf(stderr, "Cannot open display\n");
+        log_error("[ERROR] Cannot open display");
         return 1;
     }
     
     // Create ReqASL dialog
     ReqASL *req = reqasl_create(display);
     if (!req) {
-        fprintf(stderr, "Failed to create ReqASL\n");
+        log_error("[ERROR] Failed to create ReqASL");
         XCloseDisplay(display);
         return 1;
     }

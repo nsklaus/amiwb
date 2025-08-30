@@ -22,6 +22,7 @@
 #include <X11/extensions/shape.h>
 #include <signal.h>
 #include <time.h>
+#include <stdarg.h>  // For va_list
 
 // Forward declarations for local helpers used later
 static Canvas *canvas_under_pointer(void);
@@ -930,7 +931,7 @@ static int move_file_to_directory(const char *src_path, const char *dst_dir, cha
             // Cross-filesystem move
             if (is_src_dir) {
                 // TODO: Implement recursive directory copy for cross-filesystem moves
-                fprintf(stderr, "[amiwb] Cross-filesystem directory moves not yet supported\n");
+                log_error("[ERROR] Cross-filesystem directory moves not yet supported");
                 return -1;
             } else {
                 // For files, copy then remove source
@@ -1415,7 +1416,7 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
         }
         closedir(dirp);
     } else {
-        fprintf(stderr, "Failed to open directory %s\n", dir);
+        log_error("[ERROR] Failed to open directory %s", dir);
     }
     // Do not auto-reorganize icons; only menu > Window > Cleanup should do that
     canvas->scanning = false;
@@ -1511,11 +1512,11 @@ void launch_with_hook(const char *command) {
     
     pid_t pid = fork();
     if (pid == -1) {
-        printf("[ERROR] fork failed for command: %s\n", command);
+        log_error("[ERROR] fork failed for command: %s", command);
         return;
     } else if (pid == 0) {
         // Child process
-        // Close file descriptors to detach from parent
+        // Close file descriptors to detach from parent (but keep stdin/stdout/stderr)
         for (int i = 3; i < 256; i++) {
             close(i);
         }
@@ -1526,8 +1527,7 @@ void launch_with_hook(const char *command) {
         // Execute through shell to handle arguments properly
         execl("/bin/sh", "sh", "-c", command, NULL);
         
-        // If exec fails
-        perror("execl failed");
+        // If exec fails - this won't be visible due to /dev/null redirection
         _exit(EXIT_FAILURE);
     }
     // Parent continues without waiting

@@ -95,4 +95,7 @@ void reqasl_navigate_parent(ReqASL *req);
 void reqasl_set_pattern(ReqASL *req, const char *extensions);
 void reqasl_set_title(ReqASL *req, const char *title);
 
+// Error logging function - defined in reqasl.c
+void log_error(const char *format, ...);
+
 #endif
