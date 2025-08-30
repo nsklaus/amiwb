@@ -107,25 +107,6 @@ void show_rename_dialog(const char *old_name,
     XMapRaised(get_display(), dialog->canvas->win);
     set_active_window(dialog->canvas);  // Make dialog active so it can receive focus
     
-    // Debug output for rename dialog - ONCE only
-    static bool rename_canvas_debug_done = false;
-    if (!rename_canvas_debug_done) {
-        log_error("[RENAME DIALOG DEBUG] Canvas info:\n");
-        log_error("  - canvas=%p\n", (void*)dialog->canvas);
-        log_error("  - win=%lu\n", dialog->canvas->win);
-        log_error("  - canvas_buffer=%lu\n", dialog->canvas->canvas_buffer);
-        log_error("  - canvas_render=%lu\n", dialog->canvas->canvas_render);
-        log_error("  - window_render=%lu\n", dialog->canvas->window_render);
-        log_error("  - visual=%p\n", (void*)dialog->canvas->visual);
-        log_error("  - colormap=%lu\n", dialog->canvas->colormap);
-        log_error("  - depth=%d\n", dialog->canvas->depth);
-        log_error("  - xft_draw=%p\n", (void*)dialog->canvas->xft_draw);
-        log_error("  - type=%d (should be DIALOG=3)\n", dialog->canvas->type);
-        log_error("  - bg_color=(%04x,%04x,%04x,%04x)\n", 
-            dialog->canvas->bg_color.red, dialog->canvas->bg_color.green, 
-            dialog->canvas->bg_color.blue, dialog->canvas->bg_color.alpha);
-        rename_canvas_debug_done = true;
-    }
     
     redraw_canvas(dialog->canvas);
 }
@@ -918,16 +899,6 @@ void render_dialog_content(Canvas *canvas) {
     RenameDialog *dialog = get_dialog_for_canvas(canvas);
     if (!dialog) return;
     
-    // Debug output once for rename dialog rendering
-    static bool rename_debug_done = false;
-    if (!rename_debug_done) {
-        log_error("[RENAME RENDER DEBUG] Starting render_dialog_content:\n");
-        log_error("  - canvas=%p\n", (void*)canvas);
-        log_error("  - canvas->canvas_render=%lu\n", canvas->canvas_render);
-        log_error("  - canvas->window_render=%lu\n", canvas->window_render);
-        log_error("  - canvas->xft_draw=%p\n", (void*)canvas->xft_draw);
-        rename_debug_done = true;
-    }
     
     Display *dpy = get_display();
     Picture dest = canvas->canvas_render;
@@ -1488,11 +1459,6 @@ ProgressDialog* show_progress_dialog(ProgressOperation op, const char *title) {
     g_progress_dialogs = dialog;
     
     // Show the dialog
-    static bool map_debug_done = false;
-    if (!map_debug_done) {
-        log_error("[DEBUG] Mapping progress dialog window=%lu\n", dialog->canvas->win);
-        map_debug_done = true;
-    }
     XMapRaised(get_display(), dialog->canvas->win);
     set_active_window(dialog->canvas);
     
@@ -1575,28 +1541,12 @@ ProgressDialog* get_all_progress_dialogs(void) {
 void render_progress_dialog_content(Canvas *canvas) {
     ProgressDialog *dialog = get_progress_dialog_for_canvas(canvas);
     if (!dialog) {
-        static bool no_dialog_debug_done = false;
-        if (!no_dialog_debug_done) {
-            log_error("[DEBUG] render_progress_dialog_content: no dialog found for canvas\n");
-            no_dialog_debug_done = true;
-        }
         return;
     }
     
     Display *dpy = get_display();
     Picture dest = canvas->canvas_render;
     
-    // Debug output once for progress dialog rendering
-    static bool progress_debug_done = false;
-    if (!progress_debug_done) {
-        log_error("[PROGRESS RENDER DEBUG] Starting render_progress_dialog_content:\n");
-        log_error("  - canvas=%p\n", (void*)canvas);
-        log_error("  - canvas->canvas_render=%lu\n", canvas->canvas_render);
-        log_error("  - canvas->window_render=%lu\n", canvas->window_render);
-        log_error("  - canvas->xft_draw=%p\n", (void*)canvas->xft_draw);
-        log_error("  - dest Picture=%lu\n", dest);
-        progress_debug_done = true;
-    }
     
     if (dest == None) {
         static bool dest_none_debug_done = false;
@@ -1623,11 +1573,6 @@ void render_progress_dialog_content(Canvas *canvas) {
     int content_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
     int content_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
     
-    static bool gray_fill_debug_done = false;
-    if (!gray_fill_debug_done) {
-        log_error("[DEBUG] About to fill gray: x=%d, y=%d, w=%d, h=%d\n", content_x, content_y, content_w, content_h);
-        gray_fill_debug_done = true;
-    }
     XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, content_x, content_y, content_w, content_h);
     
     // Use cached XftDraw
@@ -1640,21 +1585,11 @@ void render_progress_dialog_content(Canvas *canvas) {
         return;
     }
     
-    static bool xft_exists_debug_done = false;
-    if (!xft_exists_debug_done) {
-        log_error("[DEBUG] XftDraw exists, continuing with text rendering\n");
-        xft_exists_debug_done = true;
-    }
     
     XRenderColor text_color = BLACK;
     XftColor xft_text;
     XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &text_color, &xft_text);
     
-    static bool xft_color_debug_done = false;
-    if (!xft_color_debug_done) {
-        log_error("[DEBUG] XftColor allocated\n");
-        xft_color_debug_done = true;
-    }
     
     // Line 2: Current file (with operation prefix)
     const char *op_prefix = dialog->operation == PROGRESS_MOVE ? "Moving: " :

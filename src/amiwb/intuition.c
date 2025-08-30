@@ -496,11 +496,6 @@ static void apply_resize_and_redraw(Canvas *c, int nw, int nh) {
         int client_width, client_height; 
         calculate_content_area_inside_frame(c, &client_width, &client_height);
         
-        // DEBUG: Check if client height is correct
-        printf("[DEBUG] Frame height=%d, client_height=%d, TOP=%d, BOTTOM=%d, sum=%d\n",
-               c->height, client_height, BORDER_HEIGHT_TOP, BORDER_HEIGHT_BOTTOM,
-               client_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM);
-        
         // MUST also set position to ensure client stays within borders!
         XWindowChanges ch = { 
             .x = BORDER_WIDTH_LEFT, 

@@ -860,15 +860,6 @@ void redraw_canvas(Canvas *canvas) {
     // render dialog
     // ===========
     if (canvas->type == DIALOG) {
-        static bool dialog_render_debug = false;
-        if (!dialog_render_debug) {
-            log_error("[RENDER.C DEBUG] Rendering DIALOG type:\n");
-            log_error("  - canvas=%p\n", (void*)canvas);
-            log_error("  - is_progress_dialog=%d\n", is_progress_dialog(canvas));
-            log_error("  - dest Picture=%lu\n", dest);
-            log_error("  - is_client_frame=%d\n", is_client_frame);
-            dialog_render_debug = true;
-        }
         
         // Check if it's a progress dialog first
         if (is_progress_dialog(canvas)) {
