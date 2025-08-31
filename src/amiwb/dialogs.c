@@ -1537,6 +1537,70 @@ ProgressDialog* get_all_progress_dialogs(void) {
     return g_progress_dialogs;
 }
 
+// Add progress dialog to global list
+void add_progress_dialog_to_list(ProgressDialog *dialog) {
+    if (!dialog) return;
+    dialog->next = g_progress_dialogs;
+    g_progress_dialogs = dialog;
+}
+
+// Remove progress dialog from global list
+void remove_progress_dialog_from_list(ProgressDialog *dialog) {
+    if (!dialog) return;
+    
+    if (g_progress_dialogs == dialog) {
+        g_progress_dialogs = dialog->next;
+    } else {
+        for (ProgressDialog *d = g_progress_dialogs; d; d = d->next) {
+            if (d->next == dialog) {
+                d->next = dialog->next;
+                break;
+            }
+        }
+    }
+}
+
+// Create progress window (canvas) for a dialog
+Canvas* create_progress_window(ProgressOperation op, const char *title) {
+    // Determine proper title based on operation
+    const char *window_title = title;
+    if (!window_title) {
+        switch (op) {
+            case PROGRESS_COPY: window_title = "Copying Files"; break;
+            case PROGRESS_MOVE: window_title = "Moving Files"; break;
+            case PROGRESS_DELETE: window_title = "Deleting Files"; break;
+            default: window_title = "Progress"; break;
+        }
+    }
+    
+    // Center on screen
+    Display *dpy = get_display();
+    int screen = DefaultScreen(dpy);
+    int screen_width = DisplayWidth(dpy, screen);
+    int screen_height = DisplayHeight(dpy, screen);
+    int x = (screen_width - 400) / 2;
+    int y = (screen_height - 150) / 2;
+    
+    Canvas *canvas = create_canvas(NULL, x, y, 400, 150, DIALOG_PROGRESS);
+    if (!canvas) {
+        log_error("[ERROR] create_progress_window: failed to create canvas\n");
+        return NULL;
+    }
+    
+    // Set title for AmiWB window rendering (XStoreName doesn't work for AmiWB windows)
+    canvas->title_base = strdup(window_title);
+    
+    // DO NOT make it modal - user should be able to continue working
+    // Removed modal property setting
+    
+    // Show, raise and make it the active window
+    XMapRaised(dpy, canvas->win);
+    set_active_window(canvas);  // Make this the active window (handles focus and active state)
+    XSync(dpy, False);
+    
+    return canvas;
+}
+
 // Render progress dialog content
 void render_progress_dialog_content(Canvas *canvas) {
     ProgressDialog *dialog = get_progress_dialog_for_canvas(canvas);

@@ -1,6 +1,7 @@
 // File: menus.c
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
+#include <stdbool.h>
 #include "menus.h"
 #include "config.h"
 #include "intuition.h"
@@ -1531,38 +1532,56 @@ void trigger_copy_action(void) {
             // Use current directory
         }
         
-        // Find available copy name
+        // Find available copy name with prefix pattern: copy_myfile, copy1_myfile, copy2_myfile...
         int copy_num = 0;
         do {
             if (copy_num == 0) {
-                snprintf(copy_path, sizeof(copy_path), "%s/%s_copy", dir_path, base_name);
+                snprintf(copy_path, sizeof(copy_path), "%s/copy_%s", dir_path, base_name);
             } else {
-                snprintf(copy_path, sizeof(copy_path), "%s/%s_copy%d", dir_path, base_name, copy_num);
+                snprintf(copy_path, sizeof(copy_path), "%s/copy%d_%s", dir_path, copy_num, base_name);
             }
             copy_num++;
         } while (access(copy_path, F_OK) == 0 && copy_num < 100);
-        
-        // Execute copy command
-        char cmd[2048];
-        if (selected->type == TYPE_DRAWER) {
-            snprintf(cmd, sizeof(cmd), "cp -r \"%s\" \"%s\"", selected->path, copy_path);
-        } else {
-            snprintf(cmd, sizeof(cmd), "cp \"%s\" \"%s\"", selected->path, copy_path);
-        }
         
         // Save path before refresh as it will destroy the icon
         char saved_path[1024];
         strncpy(saved_path, selected->path, sizeof(saved_path) - 1);
         saved_path[sizeof(saved_path) - 1] = '\0';
         
-        int result = system(cmd);
-        // Check if the file actually exists (system() may return -1 even on success)
-        if (result != 0 && access(copy_path, F_OK) == 0) {
-            result = 0;  // Force success since file exists
+        // Check if source has a sidecar .info file and copy it first if it exists
+        char src_info_path[1030];  // 1024 + 6 for ".info\0"
+        char dst_info_path[1030];  // 1024 + 6 for ".info\0"
+        bool has_sidecar = false;
+        
+        if (strlen(selected->path) < 1024 && strlen(copy_path) < 1024) {
+            snprintf(src_info_path, sizeof(src_info_path), "%s.info", selected->path);
+            struct stat info_stat;
+            if (stat(src_info_path, &info_stat) == 0) {
+                has_sidecar = true;
+                // Build destination .info path
+                snprintf(dst_info_path, sizeof(dst_info_path), "%s.info", copy_path);
+            }
         }
         
+        // Use safe file operation with progress dialog
+        extern int perform_file_operation_with_progress(int op, const char *src_path, 
+                                                       const char *dst_path, const char *custom_title);
+        int result = perform_file_operation_with_progress(0, // FILE_OP_COPY = 0
+                                                         selected->path, 
+                                                         copy_path, 
+                                                         "Copying Files...");
+        
         if (result == 0) {
-            // Add just the new icon instead of refreshing everything
+            // Copy succeeded - now copy sidecar if it exists
+            if (has_sidecar) {
+                // Copy the sidecar .info file (synchronous, it's small)
+                perform_file_operation_with_progress(0, // FILE_OP_COPY
+                                                    src_info_path,
+                                                    dst_info_path,
+                                                    NULL); // No progress dialog for .info file
+            }
+            
+            // NOW create the icon after everything is copied
             if (target_canvas) {
                 // Find a good position for the new icon, avoiding overlaps
                 int new_x = selected->x + 110;  // Standard icon spacing to the right
@@ -1597,8 +1616,34 @@ void trigger_copy_action(void) {
                     attempts++;
                 }
                 
-                // Create the new icon at that position
-                create_icon(copy_path, target_canvas, new_x, new_y);
+                // Determine the icon path to use (sidecar or def_icon)
+                const char *icon_path_to_use = copy_path;
+                
+                // Extract filename for def_icon lookup
+                const char *filename = strrchr(copy_path, '/');
+                filename = filename ? filename + 1 : copy_path;
+                
+                // Determine file type
+                struct stat st;
+                int file_type = TYPE_FILE;
+                if (stat(copy_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                    file_type = TYPE_DRAWER;
+                }
+                
+                // Find the appropriate icon path
+                if (has_sidecar) {
+                    icon_path_to_use = dst_info_path;
+                } else {
+                    // Use def_icon system
+                    const char *def_icon = definfo_for_file(filename, file_type == TYPE_DRAWER);
+                    if (def_icon) {
+                        icon_path_to_use = def_icon;
+                    }
+                }
+                
+                // Use the proper workbench function that handles everything correctly
+                create_icon_with_metadata(icon_path_to_use, target_canvas, new_x, new_y,
+                                        copy_path, filename, file_type);
                 
                 // Apply layout if in list view
                 if (target_canvas->view_mode == VIEW_NAMES) {
@@ -1673,18 +1718,13 @@ static void execute_pending_deletes(void) {
         strncpy(saved_path, selected->path, sizeof(saved_path) - 1);
         saved_path[sizeof(saved_path) - 1] = '\0';
         
-        // Execute delete using proper C functions
-        int result;
-        if (selected->type == TYPE_DRAWER) {
-            // Use our recursive directory removal function
-            result = remove_directory_recursive(saved_path);
-        } else {
-            // Use unlink for regular files
-            result = unlink(saved_path);
-            if (result != 0 && errno == ENOENT) {
-                result = 0;  // Already gone is success
-            }
-        }
+        // Execute delete using progress-enabled function
+        extern int perform_file_operation_with_progress(int op, const char *src_path, 
+                                                       const char *dst_path, const char *custom_title);
+        int result = perform_file_operation_with_progress(2, // FILE_OP_DELETE = 2
+                                                         saved_path, 
+                                                         NULL,  // No destination for delete
+                                                         "Deleting Files...");
         
         // Check if file was actually deleted
         if (result != 0 && access(saved_path, F_OK) != 0) {

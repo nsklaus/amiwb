@@ -14,6 +14,10 @@ void init_workbench(void);                                  // Init icon storage
 void cleanup_workbench(void);                               // Free icons and workbench state
 void clear_canvas_icons(Canvas *canvas);                    // Remove all icons for a canvas
 void create_icon(const char *path, Canvas *canvas, int x, int y); // Create an icon at x,y
+void create_icon_with_type(const char *path, Canvas *canvas, int x, int y, int type); // Create icon with explicit type
+FileIcon* create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x, int y,
+                                   const char *full_path, const char *name, int type); // Create icon with proper metadata
+const char *definfo_for_file(const char *name, bool is_dir); // Get def_icon path for file extension
 void destroy_icon(FileIcon *icon);                          // Free icon resources and pictures
 FileIcon *find_icon(Window win, int x, int y);              // Hit-test an icon by position
 void move_icon(FileIcon *icon, int x, int y);               // Move icon to new position
