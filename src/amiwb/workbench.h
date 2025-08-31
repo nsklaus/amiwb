@@ -58,6 +58,11 @@ void launch_with_hook(const char *command);     // Execute command with LD_PRELO
 // Directory operations
 int remove_directory_recursive(const char *path); // Recursively remove directory and contents
 
+// Directory size calculation (non-blocking via fork)
+typedef void (*size_callback_t)(off_t size, void *userdata);
+pid_t calculate_directory_size(const char *path, int *pipe_fd); // Start size calculation, returns child PID and pipe FD
+off_t read_directory_size_result(int pipe_fd);                 // Read result from pipe when ready
+
 // Progress dialog monitoring (called from event loop)
 void workbench_check_progress_dialogs(void);
 

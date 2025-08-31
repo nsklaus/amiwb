@@ -7,6 +7,7 @@
 #include "intuition.h"
 #include "workbench.h"
 #include "dialogs.h"
+#include "iconinfo.h"  // For iconinfo_check_size_calculations
 #include "render.h"  // For redraw_canvas
 #include "config.h"
 #include "amiwbrc.h"  // For config access
@@ -216,6 +217,9 @@ void handle_events(void) {
             
             // Check progress dialogs for updates
             workbench_check_progress_dialogs();
+            
+            // Check iconinfo dialogs for directory size calculations
+            iconinfo_check_size_calculations();
             
             // Very brief sleep to avoid busy-waiting but remain responsive
             usleep(1000);  // 1ms - much more responsive

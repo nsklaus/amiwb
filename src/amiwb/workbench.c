@@ -2674,3 +2674,149 @@ void cleanup_workbench(void) {
     if (def_dir_info)  { free(def_dir_info);  def_dir_info  = NULL; }
     if (def_foo_info)  { free(def_foo_info);  def_foo_info  = NULL; }
 }
+
+// Directory size calculation - non-blocking via fork
+// Returns child PID and sets pipe_fd for reading result
+pid_t calculate_directory_size(const char *path, int *pipe_fd) {
+    if (!path || !pipe_fd) {
+        log_error("[ERROR] calculate_directory_size: NULL parameters");
+        return -1;
+    }
+    
+    // Create pipe for communication
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        log_error("[ERROR] Failed to create pipe for directory size calculation: %s", strerror(errno));
+        return -1;
+    }
+    
+    pid_t pid = fork();
+    if (pid == -1) {
+        log_error("[ERROR] Failed to fork for directory size calculation: %s", strerror(errno));
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+    
+    if (pid == 0) {
+        // Child process - calculate directory size
+        close(pipefd[0]); // Close read end
+        
+        // Calculate total size recursively
+        off_t total_size = 0;
+        
+        // Use a stack-based approach to avoid deep recursion
+        struct dir_entry {
+            char path[PATH_SIZE];
+            struct dir_entry *next;
+        };
+        
+        struct dir_entry *stack = malloc(sizeof(struct dir_entry));
+        if (!stack) {
+            log_error("[ERROR] Failed to allocate memory in child process");
+            _exit(1);
+        }
+        
+        strncpy(stack->path, path, PATH_SIZE - 1);
+        stack->path[PATH_SIZE - 1] = '\0';
+        stack->next = NULL;
+        
+        while (stack) {
+            // Pop from stack
+            struct dir_entry *current = stack;
+            stack = stack->next;
+            
+            DIR *dir = opendir(current->path);
+            if (!dir) {
+                free(current);
+                continue;
+            }
+            
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL) {
+                // Skip . and ..
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                    continue;
+                }
+                
+                // Build full path safely
+                char full_path[PATH_SIZE];
+                int written = snprintf(full_path, sizeof(full_path), "%s/%s", current->path, entry->d_name);
+                
+                // Check if path was truncated
+                if (written >= PATH_SIZE) {
+                    // Path too long, skip this entry
+                    continue;
+                }
+                
+                struct stat st;
+                if (lstat(full_path, &st) == 0) {
+                    if (S_ISREG(st.st_mode)) {
+                        // Regular file - add its size
+                        total_size += st.st_size;
+                    } else if (S_ISDIR(st.st_mode)) {
+                        // Directory - push to stack for processing
+                        struct dir_entry *new_entry = malloc(sizeof(struct dir_entry));
+                        if (new_entry) {
+                            strncpy(new_entry->path, full_path, PATH_SIZE - 1);
+                            new_entry->path[PATH_SIZE - 1] = '\0';
+                            new_entry->next = stack;
+                            stack = new_entry;
+                        }
+                    }
+                    // Skip other file types (symlinks, devices, etc.)
+                }
+            }
+            
+            closedir(dir);
+            free(current);
+        }
+        
+        // Write result to pipe
+        if (write(pipefd[1], &total_size, sizeof(total_size)) != sizeof(total_size)) {
+            log_error("[ERROR] Failed to write size to pipe");
+        }
+        
+        close(pipefd[1]);
+        _exit(0);
+    }
+    
+    // Parent process
+    close(pipefd[1]); // Close write end
+    *pipe_fd = pipefd[0]; // Return read end
+    
+    // Make pipe non-blocking
+    int flags = fcntl(*pipe_fd, F_GETFL, 0);
+    fcntl(*pipe_fd, F_SETFL, flags | O_NONBLOCK);
+    
+    return pid;
+}
+
+// Read directory size result from pipe (non-blocking)
+// Returns -1 if not ready yet, otherwise returns size
+off_t read_directory_size_result(int pipe_fd) {
+    if (pipe_fd < 0) {
+        return -1;
+    }
+    
+    off_t size;
+    ssize_t bytes_read = read(pipe_fd, &size, sizeof(size));
+    
+    if (bytes_read == sizeof(size)) {
+        close(pipe_fd);
+        return size;
+    } else if (bytes_read == 0) {
+        // End of pipe - child finished but no data
+        close(pipe_fd);
+        log_error("[WARNING] Directory size calculation completed with no data");
+        return 0;
+    } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        // Not ready yet
+        return -1;
+    } else {
+        // Error
+        log_error("[ERROR] Failed to read from pipe: %s", strerror(errno));
+        close(pipe_fd);
+        return 0;
+    }
+}

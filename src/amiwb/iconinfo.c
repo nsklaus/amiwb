@@ -11,6 +11,7 @@
 #include <X11/keysym.h>
 #include <sys/stat.h>
 #include <sys/xattr.h>
+#include <sys/wait.h>
 #include <pwd.h>
 #include <grp.h>
 #include <time.h>
@@ -119,9 +120,6 @@ void show_icon_info_dialog(FileIcon *icon) {
                                           y_pos,
                                           field_width,
                                           20);
-    if (dialog->path_field) {
-        inputfield_set_disabled(dialog->path_field, true);
-    }
     
     y_pos = 395;  // Align with "Opens with:" label baseline (408 - ~13 for ascent)
     
@@ -179,19 +177,18 @@ static void load_file_info(IconInfoDialog *dialog) {
             snprintf(dialog->group_text, sizeof(dialog->group_text), "%d", st.st_gid);
         }
         
-        // Format dates
+        // Format dates (swapped - mtime is usually older, ctime is usually newer)
         struct tm *tm;
         
-        // Creation time (birth time) - not available on all filesystems
-        // Using ctime (change time) as fallback
-        tm = localtime(&st.st_ctime);
-        strftime(dialog->created_text, sizeof(dialog->created_text), 
-                "%Y-%m-%d %H:%M:%S", tm);
-        
-        // Modification time
+        // Modified time (when content was last changed)
         tm = localtime(&st.st_mtime);
+        strftime(dialog->created_text, sizeof(dialog->created_text), 
+                "%Y-%m-%d at %H:%M", tm);
+        
+        // Status change time (when metadata was last changed)
+        tm = localtime(&st.st_ctime);
         strftime(dialog->modified_text, sizeof(dialog->modified_text),
-                "%Y-%m-%d %H:%M:%S", tm);
+                "%Y-%m-%d at %H:%M", tm);
         
         // Set permission checkboxes
         dialog->perm_user_read = (st.st_mode & S_IRUSR) != 0;
@@ -205,17 +202,11 @@ static void load_file_info(IconInfoDialog *dialog) {
         dialog->perm_other_exec = (st.st_mode & S_IXOTH) != 0;
     }
     
-    // Get path (directory part)
-    char *path_copy = strdup(dialog->icon->path);
-    char *last_slash = strrchr(path_copy, '/');
-    if (last_slash && last_slash != path_copy) {
-        *last_slash = '\0';
-        if (dialog->path_field) {
-            inputfield_set_text(dialog->path_field, path_copy);
-            inputfield_scroll_to_end(dialog->path_field);
-        }
+    // Set the full path in the path field
+    if (dialog->path_field) {
+        inputfield_set_text(dialog->path_field, dialog->icon->path);
+        inputfield_scroll_to_end(dialog->path_field);
     }
-    free(path_copy);
     
     // Try to read comment from extended attributes
     char comment[256] = {0};
@@ -316,6 +307,23 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
     IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
     if (!dialog) return false;
     
+    // Check for "Get Size" button if this is a directory
+    if (dialog->is_directory && !dialog->calculating_size && dialog->size_calc_pid <= 0) {
+        // Calculate position of "Get Size" button (next to Size: label)
+        int text_x = ICONINFO_MARGIN + BORDER_WIDTH_LEFT + (ICONINFO_ICON_SIZE * 2) + (ICONINFO_SPACING * 2);
+        int text_y = ICONINFO_MARGIN + BORDER_HEIGHT_TOP + 60;
+        int button_x = text_x + 50;  // After "Size: " text
+        int button_width = 70;
+        int button_height = 20;
+        
+        if (event->x >= button_x && event->x < button_x + button_width &&
+            event->y >= text_y - 15 && event->y < text_y - 15 + button_height) {
+            dialog->get_size_pressed = true;
+            redraw_canvas(canvas);
+            return true;
+        }
+    }
+    
     // Calculate button positions (same as in render)
     int button_y = canvas->height - BORDER_HEIGHT_BOTTOM - ICONINFO_MARGIN - ICONINFO_BUTTON_HEIGHT;
     int ok_x = canvas->width / 2 - ICONINFO_BUTTON_WIDTH - 20;
@@ -350,6 +358,40 @@ bool iconinfo_handle_button_release(XButtonEvent *event) {
     
     IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
     if (!dialog) return false;
+    
+    // Check for "Get Size" button release
+    if (dialog->get_size_pressed) {
+        // Calculate position of "Get Size" button (same as in button_press)
+        int text_x = ICONINFO_MARGIN + BORDER_WIDTH_LEFT + (ICONINFO_ICON_SIZE * 2) + (ICONINFO_SPACING * 2);
+        int text_y = ICONINFO_MARGIN + BORDER_HEIGHT_TOP + 60;
+        int button_x = text_x + 50;
+        int button_width = 70;
+        int button_height = 20;
+        
+        if (event->x >= button_x && event->x < button_x + button_width &&
+            event->y >= text_y - 15 && event->y < text_y - 15 + button_height) {
+            // Start directory size calculation
+            dialog->get_size_pressed = false;
+            dialog->calculating_size = true;
+            strcpy(dialog->size_text, "Calculating...");
+            
+            // Start the calculation process
+            dialog->size_calc_pid = calculate_directory_size(dialog->icon->path, &dialog->size_pipe_fd);
+            if (dialog->size_calc_pid < 0) {
+                strcpy(dialog->size_text, "Error");
+                dialog->calculating_size = false;
+                log_error("[ERROR] Failed to start directory size calculation");
+            }
+            
+            redraw_canvas(canvas);
+            return true;
+        }
+        
+        // Button was pressed but released outside - reset state
+        dialog->get_size_pressed = false;
+        redraw_canvas(canvas);
+        return true;
+    }
     
     // Calculate button positions (same as in render)
     int button_y = canvas->height - BORDER_HEIGHT_BOTTOM - ICONINFO_MARGIN - ICONINFO_BUTTON_HEIGHT;
@@ -496,7 +538,30 @@ void cleanup_all_iconinfo_dialogs(void) {
 
 // Process monitoring for directory size calculation
 void iconinfo_check_size_calculations(void) {
-    // TODO: Implement directory size calculation monitoring
+    IconInfoDialog *dialog = g_iconinfo_dialogs;
+    while (dialog) {
+        if (dialog->calculating_size && dialog->size_calc_pid > 0) {
+            // Check if calculation is complete
+            off_t size = read_directory_size_result(dialog->size_pipe_fd);
+            if (size >= 0) {
+                // Calculation complete
+                format_file_size(size, dialog->size_text, sizeof(dialog->size_text));
+                dialog->calculating_size = false;
+                dialog->size_calc_pid = -1;
+                dialog->size_pipe_fd = -1;
+                
+                // Reap the child process
+                int status;
+                waitpid(dialog->size_calc_pid, &status, WNOHANG);
+                
+                // Redraw to show the result
+                if (dialog->canvas) {
+                    redraw_canvas(dialog->canvas);
+                }
+            }
+        }
+        dialog = dialog->next;
+    }
 }
 
 // Render the icon info dialog content
@@ -534,11 +599,15 @@ void render_iconinfo_content(Canvas *canvas) {
     XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
                         icon_x + icon_size, icon_y - 1, 1, icon_size + 2);
     
-    // Just render the icon normally like workbench does
+    // Center the icon in the sunken rectangle
+    int centered_x = icon_x + (icon_size - dialog->icon->width) / 2;
+    int centered_y = icon_y + (icon_size - dialog->icon->height) / 2;
+    
+    // Render the icon centered
     Picture src = dialog->icon->normal_picture;
     if (src != None) {
         XRenderComposite(dpy, PictOpOver, src, None, dest,
-                        0, 0, 0, 0, icon_x, icon_y, 
+                        0, 0, 0, 0, centered_x, centered_y, 
                         dialog->icon->width, dialog->icon->height);
     }
     
@@ -582,7 +651,7 @@ void render_iconinfo_content(Canvas *canvas) {
     // Move down for size info
     text_y += 60;
     
-    // Draw size text
+    // Draw size text or button
     if (xft) {
         XftColor color;
         XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
@@ -591,10 +660,28 @@ void render_iconinfo_content(Canvas *canvas) {
         
         XftFont *font = get_font();
         if (font) {
-            char size_label[128];
-            snprintf(size_label, sizeof(size_label), "Size: %s", dialog->size_text);
+            // Draw "Size: " label
             XftDrawStringUtf8(xft, &color, font, text_x, text_y,
-                             (XftChar8 *)size_label, strlen(size_label));
+                             (XftChar8 *)"Size: ", 6);
+            
+            // If it's a directory and not calculated yet, draw a button
+            if (dialog->is_directory && !dialog->calculating_size && dialog->size_calc_pid <= 0 
+                && strcmp(dialog->size_text, "[Get Size]") == 0) {
+                // Draw "Get Size" button
+                Button get_size_btn = {
+                    .x = text_x + 50,
+                    .y = text_y - 15,
+                    .width = 70,
+                    .height = 20,
+                    .label = "Get Size",
+                    .pressed = dialog->get_size_pressed
+                };
+                button_draw(&get_size_btn, dest, dpy, xft, font);
+            } else {
+                // Draw the size text (file size, calculating, or calculated dir size)
+                XftDrawStringUtf8(xft, &color, font, text_x + 50, text_y,
+                                 (XftChar8 *)dialog->size_text, strlen(dialog->size_text));
+            }
         }
         XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
                     DefaultColormap(dpy, DefaultScreen(dpy)), &color);
@@ -655,14 +742,14 @@ void render_iconinfo_content(Canvas *canvas) {
             
             // Created date
             char created_label[128];
-            snprintf(created_label, sizeof(created_label), "Created:  %s", dialog->created_text);
+            snprintf(created_label, sizeof(created_label), "Created  : %s", dialog->created_text);
             XftDrawStringUtf8(xft, &color, font, x, y + 15,
                              (XftChar8 *)created_label, strlen(created_label));
             y += 25;
             
             // Modified date
             char modified_label[128];
-            snprintf(modified_label, sizeof(modified_label), "Modified: %s", dialog->modified_text);
+            snprintf(modified_label, sizeof(modified_label), "Modified : %s", dialog->modified_text);
             XftDrawStringUtf8(xft, &color, font, x, y + 15,
                              (XftChar8 *)modified_label, strlen(modified_label));
             y += 35;
