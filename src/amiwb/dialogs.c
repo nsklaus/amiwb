@@ -59,7 +59,7 @@ void show_rename_dialog(const char *old_name,
     // Initialize dialog state
     dialog->dialog_type = DIALOG_RENAME;
     if (strlen(old_name) >= NAME_SIZE) {
-        printf("[WARNING] Name too long, will be truncated: %s\n", old_name);
+        log_error("[WARNING] Name too long, will be truncated: %s", old_name);
     }
     strncpy(dialog->text_buffer, old_name, NAME_SIZE - 1);
     dialog->text_buffer[NAME_SIZE - 1] = '\0';
@@ -235,7 +235,7 @@ static char *expand_tilde(const char *path) {
         size_t path_len = strlen(path + 1);
         char *result = malloc(home_len + path_len + 1);  // +1 for null terminator
         if (!result) {
-            printf("[ERROR] Failed to allocate memory for path expansion\n");
+            log_error("[ERROR] Failed to allocate memory for path expansion");
             return strdup(path);  // Return original on failure
         }
         
@@ -263,7 +263,7 @@ static void find_completions(RenameDialog *dialog, const char *partial) {
         // Has directory component
         size_t dir_len = last_slash - expanded + 1;
         if (dir_len >= PATH_SIZE) {
-            printf("[ERROR] Directory path too long\n");
+            log_error("[ERROR] Directory path too long");
             free(expanded);
             return;
         }
@@ -317,7 +317,7 @@ static void find_completions(RenameDialog *dialog, const char *partial) {
             char full_path[PATH_SIZE];
             int ret = snprintf(full_path, sizeof(full_path), "%s%s", expanded_dir, entry->d_name);
             if (ret >= PATH_SIZE) {
-                printf("[WARNING] Path too long for completion, skipping: %s%s\n", expanded_dir, entry->d_name);
+                log_error("[WARNING] Path too long for completion, skipping: %s%s", expanded_dir, entry->d_name);
                 continue;
             }
             struct stat st;
@@ -361,7 +361,7 @@ static void apply_completion(RenameDialog *dialog, int index) {
     // Build the completed path safely
     char completed[PATH_SIZE];
     if (dialog->completion_prefix_len >= PATH_SIZE) {
-        printf("[ERROR] Completion prefix too long\n");
+        log_error("[ERROR] Completion prefix too long");
         return;
     }
     strncpy(completed, dialog->completion_prefix, dialog->completion_prefix_len);
@@ -371,7 +371,7 @@ static void apply_completion(RenameDialog *dialog, int index) {
     size_t current_len = strlen(completed);
     size_t candidate_len = strlen(dialog->completion_candidates[index]);
     if (current_len + candidate_len >= PATH_SIZE) {
-        printf("[ERROR] Completed path too long\n");
+        log_error("[ERROR] Completed path too long");
         return;
     }
     strncat(completed, dialog->completion_candidates[index], PATH_SIZE - current_len - 1);
@@ -551,7 +551,7 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
     
     // Use cached XftDraw for text rendering
     if (!canvas->xft_draw) {
-        printf("[WARNING] No cached XftDraw for rename dialog\n");
+        log_error("[WARNING] No cached XftDraw for rename dialog");
         return;
     }
     
@@ -647,7 +647,7 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
         int ret = snprintf(title_text, sizeof(title_text), "Enter a new name for '%s'.", 
                  strlen(dialog->original_name) > 0 ? dialog->original_name : "file");
         if (ret >= (int)sizeof(title_text)) {
-            printf("[ERROR] Dialog title too long, using shortened version\n");
+            log_error("[ERROR] Dialog title too long, using shortened version");
             snprintf(title_text, sizeof(title_text), "Enter a new name.");
         }
         
@@ -852,7 +852,7 @@ void render_completion_dropdown(Canvas *canvas) {
     
     // Use cached XftDraw for text rendering
     if (!canvas->xft_draw) {
-        printf("[WARNING] No cached XftDraw for delete dialog\n");
+        log_error("[WARNING] No cached XftDraw for delete dialog");
         return;
     }
     
@@ -1369,7 +1369,7 @@ void show_delete_confirmation(const char *message,
     // Initialize dialog state for delete confirmation
     dialog->dialog_type = DIALOG_DELETE_CONFIRM;
     if (strlen(message) >= NAME_SIZE) {
-        printf("[WARNING] Delete confirmation message truncated: %s\n", message);
+        log_error("[WARNING] Delete confirmation message truncated: %s", message);
     }
     strncpy(dialog->text_buffer, message, NAME_SIZE - 1);
     dialog->text_buffer[NAME_SIZE - 1] = '\0';

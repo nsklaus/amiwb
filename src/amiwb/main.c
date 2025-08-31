@@ -2,6 +2,7 @@
 #include "intuition.h"
 #include "menus.h"
 #include "dialogs.h"
+#include "iconinfo.h"
 #include "workbench.h"
 #include "events.h"
 #include "compositor.h"
@@ -191,6 +192,9 @@ int main(int argc, char *argv[]) {
     // Initialize dialogs
     init_dialogs();
     
+    // Initialize icon info dialogs
+    init_iconinfo();
+    
     // Initialize workbench
     init_workbench();
     
@@ -213,6 +217,7 @@ int main(int argc, char *argv[]) {
     // Then tear down UI modules
     cleanup_menus();
     cleanup_dialogs();
+    cleanup_iconinfo();
     cleanup_workbench();
     // Finally close Display and render resources
     cleanup_intuition();

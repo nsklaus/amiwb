@@ -610,9 +610,9 @@ static int parse_coloricon(Display *dpy, const uint8_t *data, long size, long of
                             
                             if (state_count == 1) {  // Selected image
                                 if (transparent_count == width * height) {
-                                    printf("[WARNING] Selected image is fully transparent!\n");
+                                    log_error("[WARNING] Selected image is fully transparent!");
                                 } else if (transparent_count > (width * height * 0.9)) {
-                                    printf("[WARNING] Selected image is %d%% transparent\n", 
+                                    log_error("[WARNING] Selected image is %d%% transparent", 
                                            (transparent_count * 100) / (width * height));
                                 }
                             }

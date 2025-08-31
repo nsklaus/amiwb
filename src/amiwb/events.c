@@ -27,6 +27,7 @@
 extern void trigger_execute_action(void);
 extern void trigger_requester_action(void);
 extern void trigger_rename_action(void);
+extern void trigger_icon_info_action(void);
 extern void trigger_cleanup_action(void);
 extern void trigger_close_action(void);
 extern void trigger_parent_action(void);
@@ -153,14 +154,14 @@ static void handle_menu_canvas_motion(Canvas *canvas, XMotionEvent *event, int c
 #if 0
 static void debug_event_info(const char *event_type, Window window, int x, int y, unsigned int state) {
     if (wb_dbg()) {
-        fprintf(stderr, "[WB] %s win=0x%lx x,y=(%d,%d) state=0x%x\n", event_type, window, x, y, state);
+        log_error("[DEBUG] %s win=0x%lx x,y=(%d,%d) state=0x%x", event_type, window, x, y, state);
     }
 }
 
 // Helper function for debug canvas resolution info
 static void debug_canvas_resolved(Canvas *canvas, int tx, int ty, const char *context) {
     if (wb_dbg()) {
-        fprintf(stderr, "[WB]  %s resolved: canvas=0x%lx type=%d tx,ty=(%d,%d)\n", context, canvas->win, canvas->type, tx, ty);
+        log_error("[DEBUG]  %s resolved: canvas=0x%lx type=%d tx,ty=(%d,%d)", context, canvas->win, canvas->type, tx, ty);
     }
 }
 #endif
@@ -306,7 +307,7 @@ void handle_events(void) {
                                             DefaultRootWindow(get_display()),
                                             0, 0, &real_x, &real_y, &child);
                         
-                        printf("[INFO] ACTUAL position: %d,%d | Canvas THINKS: %d,%d | WANT: %d,%d\n", 
+                        log_error("[INFO] ACTUAL position: %d,%d | Canvas THINKS: %d,%d | WANT: %d,%d", 
                                real_x, real_y, canvas->x, canvas->y, frame_x, frame_y);
                         
                         // ALWAYS force move - don't trust canvas position
@@ -337,7 +338,7 @@ void handle_events(void) {
                                             DefaultRootWindow(get_display()),
                                             0, 0, &real_x, &real_y, &child);
                         if (real_x != frame_x || real_y != frame_y) {
-                            printf("[ERROR] Move FAILED! Still at %d,%d instead of %d,%d\n",
+                            log_error("[ERROR] Move FAILED! Still at %d,%d instead of %d,%d",
                                    real_x, real_y, frame_x, frame_y);
                         }
                     }
@@ -376,7 +377,7 @@ void handle_events(void) {
                                 
                                 if (actual_x != center_x || actual_y != center_y) {
                                     // Client is at wrong position
-                                    printf("[WARNING] Client at %d,%d instead of %d,%d\n",
+                                    log_error("[WARNING] Client at %d,%d instead of %d,%d",
                                            actual_x, actual_y, center_x, center_y);
                                 }
                                 
@@ -715,6 +716,11 @@ void handle_key_press(XKeyEvent *event) {
             // Super+R: Rename selected icon
             if (keysym == XK_r || keysym == XK_R) {
                 trigger_rename_action();
+                return;
+            }
+            // Super+I: Icon Information
+            if (keysym == XK_i || keysym == XK_I) {
+                trigger_icon_info_action();
                 return;
             }
             // Super+;: Clean up icons

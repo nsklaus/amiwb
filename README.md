@@ -3,8 +3,8 @@ window manager for linux using x11 and xlib, look at screenshots dir.
 
 dependencies:
 ```
--lSM -lICE -lXext -lXmu -lX11 -lXrender -lXft -lXfixes -lXdamage
--lXrandr -lXcomposite -lm -lImlib2 -lfontconfig 
+-lSM -lICE -lXext -lXmu -lX11 -lXrender -lXft -lXfixes 
+-lXdamage -lXrandr -lXcomposite -lm -lImlib2 -lfontconfig 
 ```
 
 install:
@@ -52,19 +52,27 @@ status: the base environment is mostly complete.
 
 - background pictures for desktop and windows, both can do tiling  
 
+- file operations:
+    copy, move, drag and drop (with progress dialog)
+    delete (with warning dialog)
+    rename (rename dialog) 
+    execute (execute dialog, with file completion)
+    information (icon info dialog)
+
 - reqasl:
 	browse the filesystem, using mouse or keyboard. 
 	open files (xdg-open) and dirs (in wb windows), 
 	clipboard support for inputfields.
 
 - toolkit:
-	using amiwb UI elements in new apps (buttons, listview, inputfields, ..) 
+	using amiwb UI elements in new apps:
+    button, listview, inputfield, progress bar 
 
 
 TODO:
 
-- make reqasl xdg-portal aware .. a file picker to load and save files from apps
+- make reqasl a file picker to load and save files from apps (wip)
 - make a GUI for system settings 
-- progress bar (copy/delete)
 - auto mount external drives as icons on the desktop
-- icon information UI window
+- icon information UI window (wip)
+

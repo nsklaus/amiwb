@@ -9,6 +9,7 @@
 #include "render.h"
 #include "compositor.h"
 #include "dialogs.h"
+#include "iconinfo.h"
 #include "events.h"
 #include "icons.h"
 #include <X11/Xlib.h>
@@ -84,7 +85,7 @@ static void rename_file_ok_callback(const char *new_name) {
         }
     }
     if (!icon_valid) {
-        printf("Rename failed: icon no longer valid\n");
+        log_error("[ERROR] Rename failed: icon no longer valid");
         return;
     }
     
@@ -100,7 +101,7 @@ static void rename_file_ok_callback(const char *new_name) {
     
     // Attempt rename with safety checks
     if (access(new_path, F_OK) == 0) {
-        printf("Rename failed: file '%s' already exists\n", new_name);
+        log_error("[ERROR] Rename failed: file '%s' already exists", new_name);
     } else if (rename(old_path, new_path) == 0) {
         // Success: update icon
         free(icon->label);
@@ -138,7 +139,7 @@ static void rename_file_ok_callback(const char *new_name) {
 }
 
 static void rename_file_cancel_callback(void) {
-    printf("Rename cancelled\n");
+    // Rename cancelled
     g_rename_icon = NULL;  // Clear the global icon reference
 }
 
@@ -339,7 +340,7 @@ void init_menus(void) {
     icons_submenu->shortcuts[0] = strdup("O");  // Open - Super+O
     icons_submenu->shortcuts[1] = strdup("C");  // Copy - Super+C
     icons_submenu->shortcuts[2] = strdup("R");  // Rename - Super+R
-    icons_submenu->shortcuts[3] = NULL;  // Information - no shortcut yet
+    icons_submenu->shortcuts[3] = strdup("I");  // Information - Super+I
     icons_submenu->shortcuts[4] = strdup("D");  // delete - Super+D
     
     init_menu_enabled(icons_submenu);  // Initialize all items as enabled
@@ -353,14 +354,14 @@ void init_menus(void) {
     // Tools submenu (index 3)
     // Quick launchers for external apps; editable in config later.
     Menu *tools_submenu = malloc(sizeof(Menu));
-    tools_submenu->item_count = 4;
+    tools_submenu->item_count = 3;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("XCalc");
     //tools_submenu->items[1] = strdup("PavuControl");
     //tools_submenu->items[2] = strdup("Brave Browser");
-    tools_submenu->items[1] = strdup("Sublime Text");
-    tools_submenu->items[2] = strdup("Shell");
-    tools_submenu->items[3] = strdup("Debug Console");
+    //tools_submenu->items[1] = strdup("Sublime Text");
+    tools_submenu->items[1] = strdup("Shell");
+    tools_submenu->items[2] = strdup("Debug Console");
     init_menu_shortcuts(tools_submenu);  // Initialize all shortcuts to NULL
     init_menu_enabled(tools_submenu);  // Initialize all items as enabled
     tools_submenu->selected_item = -1;
@@ -647,7 +648,7 @@ void cleanup_menus(void) {
     logo_items = NULL;
     logo_item_count = 0;
     
-    printf("Called cleanup_menus()\n");
+    // Cleanup menus
 }
 
 // Get show_menus state
@@ -966,7 +967,7 @@ void menu_handle_motion_notify(XMotionEvent *event) {
 // Handle key press for menu navigation
 // Keyboard navigation placeholder for menus.
 void menu_handle_key_press(XKeyEvent *event) {
-    printf("menu bar registered key press event\n");
+    // Menubar registered key press event
 }
 
 // Show dropdown menu 
@@ -1197,7 +1198,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
             } else if (strcmp(item, "Rename") == 0) {
                 trigger_rename_action();
             } else if (strcmp(item, "Information") == 0) {
-                // TODO: Show icon properties
+                trigger_icon_info_action();
             } else if (strcmp(item, "delete") == 0) {
                 trigger_delete_action();
             }
@@ -1223,12 +1224,15 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 //printf("launching brave\n");
                 //system("brave-browser --password-store=basic &");
             } 
-            */
+            
 
             else if (strcmp(item, "Sublime Text") == 0) {
                 system("subl &");   
 
-            } else if (strcmp(item, "Shell") == 0) {
+            } 
+	    */
+
+	    else if (strcmp(item, "Shell") == 0) {
                 system("kitty &"); 
 
             } else if (strcmp(item, "Debug Console") == 0) {
@@ -1517,7 +1521,7 @@ void trigger_copy_action(void) {
             size_t dir_len = last_slash - selected->path;
             dir_path = malloc(dir_len + 2);
             if (!dir_path) {
-                printf("[ERROR] Failed to allocate memory for directory path\n");
+                log_error("[ERROR] Failed to allocate memory for directory path");
                 return;
             }
             strncpy(dir_path, selected->path, dir_len);
@@ -1659,9 +1663,9 @@ void trigger_copy_action(void) {
                 compositor_sync_stacking(get_display());
                 XSync(get_display(), False);  // Ensure all X operations complete
             }
-            printf("[INFO] Copy created: %s\n", copy_path);
+            log_error("[INFO] Copy created: %s", copy_path);
         } else {
-            printf("[ERROR] Copy failed for: %s\n", saved_path);  // Use saved path
+            log_error("[ERROR] Copy failed for: %s", saved_path);  // Use saved path
         }
         
         free(dir_path);
@@ -1676,7 +1680,7 @@ static Canvas *g_pending_delete_canvas = NULL;
 // Actual delete execution after confirmation
 static void execute_pending_deletes(void) {
     if (!g_pending_delete_canvas || g_pending_delete_count == 0) {
-        printf("ERROR: No pending deletes or canvas lost!\n");
+        log_error("[ERROR] No pending deletes or canvas lost!");
         return;
     }
     
@@ -1699,7 +1703,7 @@ static void execute_pending_deletes(void) {
         }
         
         if (!icon_still_valid) {
-            printf("[WARNING] Icon no longer valid, skipping\n");
+            log_error("[WARNING] Icon no longer valid, skipping");
             continue;
         }
         
@@ -1759,7 +1763,7 @@ static void execute_pending_deletes(void) {
 }
 
 static void cancel_pending_deletes(void) {
-    printf("[INFO] Delete operation cancelled\n");
+    // Delete operation cancelled
     g_pending_delete_count = 0;
     g_pending_delete_canvas = NULL;
 }
@@ -1904,6 +1908,32 @@ void trigger_rename_action(void) {
     }
 }
 
+// Trigger icon information dialog (Super+I or Icons > Information menu)
+void trigger_icon_info_action(void) {
+    Canvas *active_window = get_active_window();
+    FileIcon *selected = NULL;
+    
+    // Check conditions for icon info:
+    // 1. Active window with selected icon, OR
+    // 2. No active window but desktop has selected icon
+    
+    if (active_window && active_window->type == WINDOW) {
+        // Active window exists - get selected icon from it
+        selected = get_selected_icon_from_canvas(active_window);
+    } else if (!active_window) {
+        // No active window - check desktop for selected icon
+        Canvas *desktop = get_desktop_canvas();
+        if (desktop) {
+            selected = get_selected_icon_from_canvas(desktop);
+        }
+    }
+    
+    // Show icon info dialog if an icon is selected
+    if (selected) {
+        show_icon_info_dialog(selected);
+    }
+}
+
 // Handle quit request (from menu or Super+Shift+Q)
 void handle_quit_request(void) {
     // Enter shutdown mode: silence X errors from teardown
@@ -2023,7 +2053,7 @@ void trigger_new_drawer_action(void) {
         int ret = snprintf(full_path, PATH_SIZE, "%s/%s", target_path, new_dir_name);
         if (ret >= PATH_SIZE) {
             // Path too long, stop trying
-            printf("[ERROR] Path too long for new directory: %s/%s\n", target_path, new_dir_name);
+            log_error("[ERROR] Path too long for new directory: %s/%s", target_path, new_dir_name);
             return;
         }
         

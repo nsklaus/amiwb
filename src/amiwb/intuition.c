@@ -103,7 +103,7 @@ static bool send_close_request_to_client(Window client_window) {
 // Handle close request for canvas - simple and forceful
 static void request_client_close(Canvas *canvas) {
     if (!canvas) {
-        printf("[ERROR] request_client_close called with NULL canvas\n");
+        log_error("[ERROR] request_client_close called with NULL canvas");
         return;
     }
     
@@ -124,7 +124,7 @@ static void request_client_close(Canvas *canvas) {
 // Check if window is a top-level window (direct child of root window)
 static bool is_toplevel_under_root(Window w) {
     if (w == None) {
-        printf("[ERROR] is_toplevel_under_root called with None window\n");
+        log_error("[ERROR] is_toplevel_under_root called with None window");
         return false;
     }
     XWindowAttributes attrs;
@@ -136,7 +136,7 @@ static bool is_toplevel_under_root(Window w) {
     bool ok = XQueryTree(display, w, &root_return, &parent_return, &children, &n);
     if (children) XFree(children);
     if (!ok) {
-        printf("[ERROR] XQueryTree failed for window 0x%lx\n", (unsigned long)w);
+        log_error("[ERROR] XQueryTree failed for window 0x%lx", (unsigned long)w);
         return false;
     }
     return parent_return == RootWindow(display, DefaultScreen(display));
@@ -164,7 +164,7 @@ static bool get_window_attributes_safely(Window win, XWindowAttributes *attrs) {
         return false;  // None window is a valid case - window doesn't exist
     }
     if (!attrs) {
-        printf("[ERROR] get_window_attributes_safely called with NULL attrs\n");
+        log_error("[ERROR] get_window_attributes_safely called with NULL attrs");
         return false;
     }
     return XGetWindowAttributes(display, win, attrs) == True;
@@ -355,7 +355,7 @@ static Canvas *add_new_canvas_to_array(void) {
         int new_size = canvas_array_size ? canvas_array_size * 2 : INITIAL_CANVAS_CAPACITY;
         Canvas **expanded_array = realloc(canvas_array, new_size * sizeof(Canvas *));
         if (!expanded_array) {
-            printf("[ERROR] realloc failed for canvas_array (new size=%d)\n", new_size);
+            log_error("[ERROR] realloc failed for canvas_array (new size=%d)", new_size);
             exit(1);
         }
         canvas_array = expanded_array;
@@ -365,7 +365,7 @@ static Canvas *add_new_canvas_to_array(void) {
     // Allocate new canvas
     Canvas *new_canvas = malloc(sizeof(Canvas));
     if (!new_canvas) {
-        printf("[ERROR] malloc failed for Canvas structure (size=%zu)\n", sizeof(Canvas));
+        log_error("[ERROR] malloc failed for Canvas structure (size=%zu)", sizeof(Canvas));
         return NULL;
     }
     
@@ -586,7 +586,7 @@ static Bool setup_visual_and_window(Canvas *c, CanvasType t,
     c->win = XCreateWindow(display, root, win_x, win_y, win_w, win_h,
                            0, vinfo.depth, InputOutput, c->visual, mask, &attrs);
     if (c->win == None) {
-        printf("[ERROR] XCreateWindow failed for frame at %d,%d size %dx%d\n", win_x, win_y, win_w, win_h);
+        log_error("[ERROR] XCreateWindow failed for frame at %d,%d size %dx%d", win_x, win_y, win_w, win_h);
         return False;
     }
     c->colormap = attrs.colormap;
@@ -599,7 +599,7 @@ static Bool setup_visual_and_window(Canvas *c, CanvasType t,
     // Backing pixmap for offscreen rendering
     c->canvas_buffer = XCreatePixmap(ctx->dpy, c->win, w, h, vinfo.depth);
     if (c->canvas_buffer == None) {
-        printf("[ERROR] XCreatePixmap failed for canvas buffer %dx%d depth=%d\n", w, h, vinfo.depth);
+        log_error("[ERROR] XCreatePixmap failed for canvas buffer %dx%d depth=%d", w, h, vinfo.depth);
         XDestroyWindow(ctx->dpy, c->win);
         return False;
     }
@@ -1222,7 +1222,7 @@ void iconify_canvas(Canvas *c) {
         if (stat(icon_full, &st) == 0) {
             icon_path = icon_full;
         } else {
-            printf("[ICON] Couldn't find %s.info at %s, using def_foo.info\n", c->title_base, icon_full);
+            log_error("[ICON] Couldn't find %s.info at %s, using def_foo.info", c->title_base, icon_full);
             icon_path = def_foo_path;
         }
     }
@@ -1230,7 +1230,7 @@ void iconify_canvas(Canvas *c) {
     // Verify the icon path exists, use def_foo as ultimate fallback
     struct stat st;
     if (stat(icon_path, &st) != 0) {
-        printf("[WARNING] Icon file not found: %s, using def_foo.info\n", icon_path);
+        log_error("[WARNING] Icon file not found: %s, using def_foo.info", icon_path);
         icon_path = def_foo_path;
     }
     
@@ -1240,13 +1240,13 @@ void iconify_canvas(Canvas *c) {
     
     // Ensure we actually got an icon, this is critical
     if (!ni) {
-        printf("[ERROR] Failed to create iconified icon for window, using emergency fallback\n");
+        log_error("[ERROR] Failed to create iconified icon for window, using emergency fallback");
         // Try one more time with def_foo
         create_icon(def_foo_path, desk, nx, ny);
         ia = get_icon_array();
         ni = ia[get_icon_count() - 1];
         if (!ni) {
-            printf("[ERROR] CRITICAL: Cannot create iconified icon - window will be lost!\n");
+            log_error("[ERROR] CRITICAL: Cannot create iconified icon - window will be lost!");
             free(label);
             return;
         }

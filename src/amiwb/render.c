@@ -7,6 +7,7 @@
 #include "amiwbrc.h"  // For config access
 #include "menus.h"
 #include "dialogs.h"
+#include "iconinfo.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
@@ -269,7 +270,7 @@ static void create_checkerboard_pattern(RenderContext *ctx);
 void init_render(void) {
     RenderContext *ctx = get_render_context();
     if (!ctx) { 
-        printf("Failed to get render_context (call init_intuition first)\n");
+        log_error("[ERROR] Failed to get render_context (call init_intuition first)");
         return; 
     }
 
@@ -363,15 +364,15 @@ void cleanup_render(void) {
                      DefaultColormap(ctx->dpy, DefaultScreen(ctx->dpy)), &text_color_white);
     }
     FcFini();
-    printf("Called cleanup_render() \n");
+    // Cleanup render resources
 }
 
 // Render a single icon
 void render_icon(FileIcon *icon, Canvas *canvas) {
     //printf("render_icon called\n");
     if (!icon || icon->display_window == None || !icon->current_picture) {
-        printf("[ERROR] render_icon: Invalid icon "
-                "(icon=%p, canvas=%p, picture=%p, filename=%s )\n", 
+        log_error("[ERROR] render_icon: Invalid icon "
+                "(icon=%p, canvas=%p, picture=%p, filename=%s )", 
             (void*)icon, 
             (void*)icon->display_window, 
             (void*)icon->current_picture,
@@ -384,7 +385,7 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
         log_error("[ERROR] render_icon: No render context");
         return;
     }
-    if (!canvas) { printf("in render.c, render_icon(), canvas failled  \n"); }
+    if (!canvas) { log_error("[ERROR] in render.c, render_icon(), canvas failed"); }
     int base_x = (canvas->type == WINDOW) ? BORDER_WIDTH_LEFT : 0;
     int base_y = (canvas->type == WINDOW) ? BORDER_HEIGHT_TOP : 0;
     int render_x = base_x + icon->x - canvas->scroll_x;
@@ -482,7 +483,7 @@ static void draw_checkerboard(Display *dpy, Picture dest, int x, int y, int w, i
     }
     
     if (pattern == None) {
-        printf("[WARNING] Checkerboard pattern not cached, using fallback\n");
+        log_error("[WARNING] Checkerboard pattern not cached, using fallback");
         return;
     }
     
@@ -668,7 +669,7 @@ void redraw_canvas(Canvas *canvas) {
 
     // Use cached XftDraw instead of creating a new one
     if (!canvas->xft_draw) {
-        printf("[WARNING] No cached XftDraw for menu rendering\n");
+        log_error("[WARNING] No cached XftDraw for menu rendering");
         return;
     }
 
@@ -864,6 +865,9 @@ void redraw_canvas(Canvas *canvas) {
         // Check if it's a progress dialog first
         if (is_progress_dialog(canvas)) {
             render_progress_dialog_content(canvas);
+        } else if (is_iconinfo_canvas(canvas)) {
+            // Check if it's an icon info dialog
+            render_iconinfo_content(canvas);
         } else {
             render_dialog_content(canvas);
         }
@@ -1182,7 +1186,7 @@ void render_recreate_canvas_surfaces(Canvas *canvas) {
         canvas->visual ? canvas->visual : DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)),
         canvas->colormap);
     if (!canvas->xft_draw) {
-        printf("[WARNING] Failed to create XftDraw for canvas buffer\n");
+        log_error("[WARNING] Failed to create XftDraw for canvas buffer");
     }
 
     // For the on-screen window picture, desktop uses root visual
