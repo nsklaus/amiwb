@@ -92,6 +92,7 @@ void render_iconinfo_content(Canvas *canvas);
 
 // Cleanup
 void close_icon_info_dialog(IconInfoDialog *dialog);
+void close_icon_info_dialog_by_canvas(Canvas *canvas);
 void cleanup_all_iconinfo_dialogs(void);
 
 // Initialize/cleanup subsystem

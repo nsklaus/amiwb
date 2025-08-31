@@ -2336,6 +2336,24 @@ void destroy_canvas(Canvas *canvas) {
     if (!canvas || canvas->type == DESKTOP) return;
     clear_canvas_icons(canvas);
 
+    // Clean up dialog-specific structures before destroying canvas
+    if (canvas->type == DIALOG) {
+        // Check if it's an iconinfo dialog and clean it up
+        extern bool is_iconinfo_canvas(Canvas *canvas);
+        extern void close_icon_info_dialog_by_canvas(Canvas *canvas);
+        extern void close_dialog_by_canvas(Canvas *canvas);
+        extern void close_progress_dialog_by_canvas(Canvas *canvas);
+        
+        if (is_iconinfo_canvas(canvas)) {
+            close_icon_info_dialog_by_canvas(canvas);
+        } else {
+            // Try regular dialogs (rename/delete/execute)
+            close_dialog_by_canvas(canvas);
+            // Try progress dialogs
+            close_progress_dialog_by_canvas(canvas);
+        }
+    }
+
     Display *dpy = get_display();
 
     // If this canvas frames a client, handle it appropriately

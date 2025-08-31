@@ -74,6 +74,7 @@ void show_execute_dialog(void (*on_ok)(const char *command),
 
 // Close specific dialog
 void close_rename_dialog(RenameDialog *dialog);
+void close_dialog_by_canvas(Canvas *canvas);
 
 // Event handlers (called from events.c)
 bool dialogs_handle_key_press(XKeyEvent *event);
@@ -105,6 +106,7 @@ typedef struct ProgressDialog {
 ProgressDialog* show_progress_dialog(ProgressOperation op, const char *title);
 void update_progress_dialog(ProgressDialog *dialog, const char *file, float percent);
 void close_progress_dialog(ProgressDialog *dialog);
+void close_progress_dialog_by_canvas(Canvas *canvas);
 bool is_progress_dialog(Canvas *canvas);
 ProgressDialog* get_progress_dialog_for_canvas(Canvas *canvas);
 void render_progress_dialog_content(Canvas *canvas);

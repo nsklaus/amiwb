@@ -539,7 +539,15 @@ void handle_button_press(XButtonEvent *event) {
         // For dialogs, try dialog-specific handling first
         bool dialog_consumed = false;
         if (canvas->type == DIALOG) {
-            dialog_consumed = dialogs_handle_button_press(&ev);
+            // Check if it's an iconinfo dialog first
+            extern bool is_iconinfo_canvas(Canvas *canvas);
+            extern bool iconinfo_handle_button_press(XButtonEvent *event);
+            
+            if (is_iconinfo_canvas(canvas)) {
+                dialog_consumed = iconinfo_handle_button_press(&ev);
+            } else {
+                dialog_consumed = dialogs_handle_button_press(&ev);
+            }
         }
         
         // If dialog didn't consume the event, handle as normal window
@@ -592,7 +600,15 @@ void handle_button_release(XButtonEvent *event) {
             // For dialogs, try dialog-specific handling first
             bool dialog_consumed = false;
             if (tc && tc->type == DIALOG) {
-                dialog_consumed = dialogs_handle_button_release(&ev);
+                // Check if it's an iconinfo dialog first
+                extern bool is_iconinfo_canvas(Canvas *canvas);
+                extern bool iconinfo_handle_button_release(XButtonEvent *event);
+                
+                if (is_iconinfo_canvas(tc)) {
+                    dialog_consumed = iconinfo_handle_button_release(&ev);
+                } else {
+                    dialog_consumed = dialogs_handle_button_release(&ev);
+                }
             }
             
             // If dialog didn't consume the event, handle as normal window
@@ -613,7 +629,15 @@ void handle_button_release(XButtonEvent *event) {
     // For dialogs, try dialog-specific handling first
     bool dialog_consumed = false;
     if (canvas->type == DIALOG) {
-        dialog_consumed = dialogs_handle_button_release(&ev);
+        // Check if it's an iconinfo dialog first
+        extern bool is_iconinfo_canvas(Canvas *canvas);
+        extern bool iconinfo_handle_button_release(XButtonEvent *event);
+        
+        if (is_iconinfo_canvas(canvas)) {
+            dialog_consumed = iconinfo_handle_button_release(&ev);
+        } else {
+            dialog_consumed = dialogs_handle_button_release(&ev);
+        }
     }
     
     // If dialog didn't consume the event, handle as normal window

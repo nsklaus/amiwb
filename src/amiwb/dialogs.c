@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <limits.h>
+#include <signal.h>
 
 // Global dialog list (for multiple dialogs)
 static RenameDialog *g_dialogs = NULL;
@@ -189,6 +190,39 @@ void close_rename_dialog(RenameDialog *dialog) {
         destroy_canvas(dialog->canvas);
     }
     free(dialog);
+}
+
+// Close dialog by canvas (called from intuition.c when window X button is clicked)
+void close_dialog_by_canvas(Canvas *canvas) {
+    if (!canvas) return;
+    
+    RenameDialog *dialog = get_dialog_for_canvas(canvas);
+    if (dialog) {
+        // Remove from dialog list
+        if (g_dialogs == dialog) {
+            g_dialogs = dialog->next;
+        } else {
+            for (RenameDialog *d = g_dialogs; d; d = d->next) {
+                if (d->next == dialog) {
+                    d->next = dialog->next;
+                    break;
+                }
+            }
+        }
+        
+        // Clean up completion dropdown first
+        hide_completion_dropdown(dialog);
+        
+        // Don't destroy canvas here - intuition.c will do it
+        dialog->canvas = NULL;
+        
+        // Call cancel callback if it exists
+        if (dialog->on_cancel) {
+            dialog->on_cancel();
+        }
+        
+        free(dialog);
+    }
 }
 
 // ========================
@@ -1511,6 +1545,54 @@ void close_progress_dialog(ProgressDialog *dialog) {
         destroy_canvas(dialog->canvas);
     }
     free(dialog);
+}
+
+// Close progress dialog by canvas (called from intuition.c when window X button is clicked)
+void close_progress_dialog_by_canvas(Canvas *canvas) {
+    if (!canvas) return;
+    
+    ProgressDialog *dialog = get_progress_dialog_for_canvas(canvas);
+    if (dialog) {
+        // If there's a child process running, abort it (same as clicking Abort button)
+        if (dialog->child_pid > 0) {
+            // Set abort flag so child knows to clean up
+            dialog->abort_requested = true;
+            
+            // Send SIGTERM to child process to trigger clean abort
+            kill(dialog->child_pid, SIGTERM);
+            
+            // Give child a moment to clean up (it will remove partial files)
+            // The actual cleanup and dialog removal happens in workbench_check_progress_dialogs
+            // when it detects the child has exited
+            
+            // Don't remove from list or free here - let the normal cleanup happen
+            // This ensures partial files are properly cleaned up
+            return;
+        }
+        
+        // No child process - just clean up the dialog immediately
+        // Remove from list
+        if (g_progress_dialogs == dialog) {
+            g_progress_dialogs = dialog->next;
+        } else {
+            for (ProgressDialog *d = g_progress_dialogs; d; d = d->next) {
+                if (d->next == dialog) {
+                    d->next = dialog->next;
+                    break;
+                }
+            }
+        }
+        
+        // Call abort callback if it exists
+        if (dialog->on_abort) {
+            dialog->on_abort();
+        }
+        
+        // Don't destroy canvas here - intuition.c will do it
+        dialog->canvas = NULL;
+        
+        free(dialog);
+    }
 }
 
 

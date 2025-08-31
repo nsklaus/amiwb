@@ -23,10 +23,11 @@
 // Global dialog list
 static IconInfoDialog *g_iconinfo_dialogs = NULL;
 
+// External functions
+extern XftFont *get_font(void);
+
 // Forward declarations
 static void load_file_info(IconInfoDialog *dialog);
-static void save_file_changes(IconInfoDialog *dialog);
-static void draw_scaled_icon(IconInfoDialog *dialog, Picture dest, Display *dpy);
 static Picture create_2x_icon(FileIcon *icon);
 static void format_file_size(off_t size, char *buffer, size_t bufsize);
 static void format_permissions(mode_t mode, char *buffer, size_t bufsize);
@@ -48,7 +49,6 @@ void show_icon_info_dialog(FileIcon *icon) {
         return;
     }
     
-    log_error("[INFO] Opening Icon Information for: %s", icon->label);
     
     // Create dialog structure
     IconInfoDialog *dialog = calloc(1, sizeof(IconInfoDialog));
@@ -97,7 +97,6 @@ void show_icon_info_dialog(FileIcon *icon) {
     dialog->name_field = inputfield_create(field_x, y_pos, field_width, 20);
     if (dialog->name_field) {
         inputfield_set_text(dialog->name_field, icon->label);
-        log_error("[INFO] Created name field at %d,%d size %dx20", field_x, y_pos, field_width);
     } else {
         log_error("[WARNING] Failed to create name field");
     }
@@ -272,7 +271,6 @@ static Picture create_2x_icon(FileIcon *icon) {
     }
     
     int size = ICONINFO_ICON_SIZE * 2;
-    log_error("[INFO] Creating 2x icon, size: %d", size);
     
     // Create pixmap for 2x icon
     Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), 
@@ -287,28 +285,13 @@ static Picture create_2x_icon(FileIcon *icon) {
     XRenderColor clear = {0, 0, 0, 0};
     XRenderFillRectangle(dpy, PictOpSrc, dest, &clear, 0, 0, size, size);
     
-    // Set up 2x scaling transform
-    XTransform transform = {
-        {{XDoubleToFixed(2.0), XDoubleToFixed(0.0), XDoubleToFixed(0.0)},
-         {XDoubleToFixed(0.0), XDoubleToFixed(2.0), XDoubleToFixed(0.0)},
-         {XDoubleToFixed(0.0), XDoubleToFixed(0.0), XDoubleToFixed(1.0)}}
-    };
-    
-    // Apply transform and composite icon
+    // Just composite the icon without transform - XRender will scale automatically
     Picture src = icon->selected ? icon->selected_picture : icon->normal_picture;
     if (src != None) {
-        log_error("[INFO] Using %s picture for 2x icon", icon->selected ? "selected" : "normal");
-        XRenderSetPictureTransform(dpy, src, &transform);
+        // Source is ICONINFO_ICON_SIZE, dest is size (2x)
+        // This should scale the icon up by 2x
         XRenderComposite(dpy, PictOpOver, src, None, dest,
                         0, 0, 0, 0, 0, 0, size, size);
-        
-        // Reset transform
-        XTransform identity = {
-            {{XDoubleToFixed(1.0), XDoubleToFixed(0.0), XDoubleToFixed(0.0)},
-             {XDoubleToFixed(0.0), XDoubleToFixed(1.0), XDoubleToFixed(0.0)},
-             {XDoubleToFixed(0.0), XDoubleToFixed(0.0), XDoubleToFixed(1.0)}}
-        };
-        XRenderSetPictureTransform(dpy, src, &identity);
     } else {
         log_error("[WARNING] Icon has no picture (normal=%ld, selected=%ld)", 
                   (long)icon->normal_picture, (long)icon->selected_picture);
@@ -318,251 +301,91 @@ static Picture create_2x_icon(FileIcon *icon) {
     return dest;
 }
 
-// Render icon info dialog content
-void render_iconinfo_content(Canvas *canvas) {
-    if (!canvas) {
-        log_error("[ERROR] render_iconinfo_content called with NULL canvas");
-        return;
-    }
-    
-    IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
-    if (!dialog) {
-        log_error("[WARNING] render_iconinfo_content: no dialog found for canvas");
-        return;
-    }
-    
-    log_error("[INFO] Rendering icon info dialog for: %s", dialog->icon ? dialog->icon->label : "unknown");
-    
-    Display *dpy = get_display();
-    if (!dpy) {
-        log_error("[ERROR] render_iconinfo_content: NULL display");
-        return;
-    }
-    
-    // Use the canvas's render target
-    Picture dest = canvas->canvas_render;
-    
-    // Clear only the content area inside the borders to dialog gray
-    int content_x = BORDER_WIDTH_LEFT;
-    int content_y = BORDER_HEIGHT_TOP;
-    int content_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
-    int content_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
-    XRenderColor gray = GRAY;
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &gray, content_x, content_y, content_w, content_h);
-    
-    // Create XftDraw for text rendering on the canvas buffer
-    XftDraw *xft_draw = XftDrawCreate(dpy, canvas->canvas_buffer,
-                                     DefaultVisual(dpy, DefaultScreen(dpy)),
-                                     DefaultColormap(dpy, DefaultScreen(dpy)));
-    if (!xft_draw) {
-        log_error("[ERROR] Failed to create XftDraw in render_iconinfo_content");
-        return;
-    }
-    
-    // Get font from render context
-    XftFont *font = get_font();
-    if (!font) {
-        log_error("[ERROR] No font available in render_iconinfo_content");
-        XftDrawDestroy(xft_draw);
-        return;
-    }
-    
-    // Draw 2x icon with sunken frame (adjust for borders)
-    int icon_x = content_x + ICONINFO_MARGIN;
-    int icon_y = content_y + ICONINFO_MARGIN;
-    
-    // Draw sunken frame (black top/left, white bottom/right)
-    XRenderColor black = BLACK;
-    XRenderColor white = WHITE;
-    
-    // Top and left borders (black)
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &black,
-                        icon_x - 1, icon_y - 1, 
-                        dialog->icon_display_size + 2, 1);
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &black,
-                        icon_x - 1, icon_y - 1,
-                        1, dialog->icon_display_size + 2);
-    
-    // Bottom and right borders (white)
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &white,
-                        icon_x - 1, icon_y + dialog->icon_display_size,
-                        dialog->icon_display_size + 2, 1);
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &white,
-                        icon_x + dialog->icon_display_size, icon_y - 1,
-                        1, dialog->icon_display_size + 2);
-    
-    // Draw the 2x icon
-    if (dialog->icon_2x != None) {
-        log_error("[INFO] Drawing 2x icon at %d,%d size %d", icon_x, icon_y, dialog->icon_display_size);
-        XRenderComposite(dpy, PictOpOver, dialog->icon_2x, None, dest,
-                        0, 0, 0, 0, icon_x, icon_y,
-                        dialog->icon_display_size, dialog->icon_display_size);
-    } else {
-        log_error("[WARNING] No 2x icon available for rendering");
-    }
-    
-    // Draw labels
-    XftColor text_color;
-    XRenderColor text_render = BLACK;
-    XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                      DefaultColormap(dpy, DefaultScreen(dpy)),
-                      &text_render, &text_color);
-    
-    int label_x = content_x + ICONINFO_MARGIN;
-    int y = content_y + ICONINFO_MARGIN;
-    
-    // Filename label
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x + dialog->icon_display_size + 20, y + font->ascent,
-                     (FcChar8*)"Filename:", 9);
-    
-    // Size label
-    y += 30;
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x + dialog->icon_display_size + 20, y + font->ascent,
-                     (FcChar8*)"Size:", 5);
-    
-    // Size value or button
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x + dialog->icon_display_size + 100, y + font->ascent,
-                     (FcChar8*)dialog->size_text, strlen(dialog->size_text));
-    
-    // Move below icon for more fields
-    y = icon_y + dialog->icon_display_size + 20;
-    
-    // Comment label
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x, y + font->ascent,
-                     (FcChar8*)"Comment:", 8);
-    
-    y += 30;
-    
-    // Permissions label
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x, y + font->ascent,
-                     (FcChar8*)"Permissions:", 12);
-    
-    // Draw permission checkboxes mockup - stacked in 2 columns of 3 each
-    y += 25;  // Move to next line after "Permissions:"
-    int perm_x = label_x;  // Same x as "Permissions:" label
-    
-    // First column (Owner permissions)
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     perm_x, y + font->ascent,
-                     (FcChar8*)"[X] Owner Read", 14);
-    y += 20;
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     perm_x, y + font->ascent,
-                     (FcChar8*)"[X] Owner Write", 15);
-    y += 20;
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     perm_x, y + font->ascent,
-                     (FcChar8*)"[ ] Owner Execute", 17);
-    
-    // Second column (Group/Other permissions) - same Y positions as first column
-    y -= 40;  // Go back to start of permissions
-    int perm_x2 = perm_x + 150;  // Second column offset
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     perm_x2, y + font->ascent,
-                     (FcChar8*)"[ ] Group Read", 14);
-    y += 20;
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     perm_x2, y + font->ascent,
-                     (FcChar8*)"[ ] Group Write", 15);
-    y += 20;
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     perm_x2, y + font->ascent,
-                     (FcChar8*)"[ ] Other All", 13);
-    
-    y += 60;
-    
-    // Created label and value
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x, y + font->ascent,
-                     (FcChar8*)"Created:", 8);
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x + ICONINFO_LABEL_WIDTH, y + font->ascent,
-                     (FcChar8*)dialog->created_text, strlen(dialog->created_text));
-    
-    y += 25;
-    
-    // Modified label and value
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x, y + font->ascent,
-                     (FcChar8*)"Modified:", 9);
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x + ICONINFO_LABEL_WIDTH, y + font->ascent,
-                     (FcChar8*)dialog->modified_text, strlen(dialog->modified_text));
-    
-    y += 25;
-    
-    // Path label
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x, y + font->ascent,
-                     (FcChar8*)"Path:", 5);
-    
-    y += 30;
-    
-    // Opens with label
-    XftDrawStringUtf8(xft_draw, &text_color, font,
-                     label_x, y + font->ascent,
-                     (FcChar8*)"Opens with:", 11);
-    
-    // Draw input fields
-    if (dialog->name_field) {
-        inputfield_draw(dialog->name_field, dest, dpy, xft_draw, font);
-    }
-    if (dialog->comment_field) {
-        inputfield_draw(dialog->comment_field, dest, dpy, xft_draw, font);
-    }
-    if (dialog->path_field) {
-        inputfield_draw(dialog->path_field, dest, dpy, xft_draw, font);
-    }
-    if (dialog->app_field) {
-        inputfield_draw(dialog->app_field, dest, dpy, xft_draw, font);
-    }
-    
-    // Draw buttons (adjusted for window borders)
-    int button_y = canvas->height - BORDER_HEIGHT_BOTTOM - ICONINFO_MARGIN - ICONINFO_BUTTON_HEIGHT;
-    int ok_x = canvas->width / 2 - ICONINFO_BUTTON_WIDTH - 20;
-    int cancel_x = canvas->width / 2 + 20;
-    
-    Button ok_btn = {
-        .x = ok_x, .y = button_y,
-        .width = ICONINFO_BUTTON_WIDTH, .height = ICONINFO_BUTTON_HEIGHT,
-        .label = "OK",
-        .pressed = dialog->ok_pressed
-    };
-    button_draw(&ok_btn, dest, dpy, xft_draw, font);
-    
-    Button cancel_btn = {
-        .x = cancel_x, .y = button_y,
-        .width = ICONINFO_BUTTON_WIDTH, .height = ICONINFO_BUTTON_HEIGHT,
-        .label = "Cancel",
-        .pressed = dialog->cancel_pressed
-    };
-    button_draw(&cancel_btn, dest, dpy, xft_draw, font);
-    
-    // Cleanup
-    XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                DefaultColormap(dpy, DefaultScreen(dpy)), &text_color);
-    XftDrawDestroy(xft_draw);
-}
-
 // Event handlers
 bool iconinfo_handle_key_press(XKeyEvent *event) {
-    // TODO: Implement keyboard handling
+    // TODO: Implement keyboard handling (Tab, Enter, Escape)
     return false;
 }
 
 bool iconinfo_handle_button_press(XButtonEvent *event) {
-    // TODO: Implement button press handling
+    if (!event) return false;
+    
+    Canvas *canvas = find_canvas(event->window);
+    if (!canvas) return false;
+    
+    IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
+    if (!dialog) return false;
+    
+    // Calculate button positions (same as in render)
+    int button_y = canvas->height - BORDER_HEIGHT_BOTTOM - ICONINFO_MARGIN - ICONINFO_BUTTON_HEIGHT;
+    int ok_x = canvas->width / 2 - ICONINFO_BUTTON_WIDTH - 20;
+    int cancel_x = canvas->width / 2 + 20;
+    
+    // Check if click is on OK button
+    if (event->x >= ok_x && event->x < ok_x + ICONINFO_BUTTON_WIDTH &&
+        event->y >= button_y && event->y < button_y + ICONINFO_BUTTON_HEIGHT) {
+        dialog->ok_pressed = true;
+        redraw_canvas(canvas);
+        return true;
+    }
+    
+    // Check if click is on Cancel button
+    if (event->x >= cancel_x && event->x < cancel_x + ICONINFO_BUTTON_WIDTH &&
+        event->y >= button_y && event->y < button_y + ICONINFO_BUTTON_HEIGHT) {
+        dialog->cancel_pressed = true;
+        redraw_canvas(canvas);
+        return true;
+    }
+    
+    // TODO: Handle input field clicks
+    
     return false;
 }
 
 bool iconinfo_handle_button_release(XButtonEvent *event) {
-    // TODO: Implement button release handling
-    return false;
+    if (!event) return false;
+    
+    Canvas *canvas = find_canvas(event->window);
+    if (!canvas) return false;
+    
+    IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
+    if (!dialog) return false;
+    
+    // Calculate button positions (same as in render)
+    int button_y = canvas->height - BORDER_HEIGHT_BOTTOM - ICONINFO_MARGIN - ICONINFO_BUTTON_HEIGHT;
+    int ok_x = canvas->width / 2 - ICONINFO_BUTTON_WIDTH - 20;
+    int cancel_x = canvas->width / 2 + 20;
+    
+    bool handled = false;
+    
+    // Check if release is on OK button while it was pressed
+    if (dialog->ok_pressed && 
+        event->x >= ok_x && event->x < ok_x + ICONINFO_BUTTON_WIDTH &&
+        event->y >= button_y && event->y < button_y + ICONINFO_BUTTON_HEIGHT) {
+        dialog->ok_pressed = false;
+        // TODO: save_file_changes(dialog);
+        close_icon_info_dialog(dialog);
+        return true;  // Return immediately to avoid use-after-free
+    }
+    
+    // Check if release is on Cancel button while it was pressed
+    else if (dialog->cancel_pressed && 
+             event->x >= cancel_x && event->x < cancel_x + ICONINFO_BUTTON_WIDTH &&
+             event->y >= button_y && event->y < button_y + ICONINFO_BUTTON_HEIGHT) {
+        dialog->cancel_pressed = false;
+        close_icon_info_dialog(dialog);
+        return true;  // Return immediately to avoid use-after-free
+    }
+    
+    // Reset button states if we had any pressed
+    if (dialog->ok_pressed || dialog->cancel_pressed) {
+        dialog->ok_pressed = false;
+        dialog->cancel_pressed = false;
+        redraw_canvas(canvas);
+        handled = true;
+    }
+    
+    return handled;
 }
 
 bool iconinfo_handle_motion(XMotionEvent *event) {
@@ -594,11 +417,14 @@ IconInfoDialog* get_iconinfo_for_canvas(Canvas *canvas) {
 void close_icon_info_dialog(IconInfoDialog *dialog) {
     if (!dialog) return;
     
+    log_error("[DEBUG] Closing iconinfo dialog, canvas=%p", dialog->canvas);
+    
     // Remove from list
     IconInfoDialog **prev = &g_iconinfo_dialogs;
     while (*prev) {
         if (*prev == dialog) {
             *prev = dialog->next;
+            log_error("[DEBUG] Removed iconinfo dialog from list");
             break;
         }
         prev = &(*prev)->next;
@@ -623,6 +449,43 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
     free(dialog);
 }
 
+// Close dialog by canvas (called from intuition.c when window is closed)
+void close_icon_info_dialog_by_canvas(Canvas *canvas) {
+    if (!canvas) return;
+    
+    IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
+    if (dialog) {
+        log_error("[DEBUG] Closing iconinfo via window close button, canvas=%p", canvas);
+        
+        // Remove from list
+        IconInfoDialog **prev = &g_iconinfo_dialogs;
+        while (*prev) {
+            if (*prev == dialog) {
+                *prev = dialog->next;
+                log_error("[DEBUG] Removed iconinfo dialog from list");
+                break;
+            }
+            prev = &(*prev)->next;
+        }
+        
+        // Free resources
+        if (dialog->icon_2x != None) {
+            XRenderFreePicture(get_display(), dialog->icon_2x);
+        }
+        
+        // Destroy input fields
+        if (dialog->name_field) inputfield_destroy(dialog->name_field);
+        if (dialog->comment_field) inputfield_destroy(dialog->comment_field);
+        if (dialog->path_field) inputfield_destroy(dialog->path_field);
+        if (dialog->app_field) inputfield_destroy(dialog->app_field);
+        
+        // Don't destroy canvas here - intuition.c will do it
+        dialog->canvas = NULL;
+        
+        free(dialog);
+    }
+}
+
 void cleanup_all_iconinfo_dialogs(void) {
     while (g_iconinfo_dialogs) {
         IconInfoDialog *next = g_iconinfo_dialogs->next;
@@ -634,4 +497,253 @@ void cleanup_all_iconinfo_dialogs(void) {
 // Process monitoring for directory size calculation
 void iconinfo_check_size_calculations(void) {
     // TODO: Implement directory size calculation monitoring
+}
+
+// Render the icon info dialog content
+void render_iconinfo_content(Canvas *canvas) {
+    if (!canvas) return;
+    
+    IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
+    if (!dialog) return;
+    
+    Display *dpy = get_display();
+    if (!dpy) return;
+    
+    Picture dest = canvas->canvas_render;
+    if (dest == None) return;
+    
+    // Clear content area to gray
+    int content_x = BORDER_WIDTH_LEFT;
+    int content_y = BORDER_HEIGHT_TOP;
+    int content_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+    int content_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, content_x, content_y, content_w, content_h);
+    
+    // Draw 2x icon with sunken frame
+    int icon_x = content_x + ICONINFO_MARGIN;
+    int icon_y = content_y + ICONINFO_MARGIN;
+    int icon_size = ICONINFO_ICON_SIZE * 2;
+    
+    // Draw sunken frame (black top/left, white bottom/right)
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
+                        icon_x - 1, icon_y - 1, icon_size + 2, 1);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
+                        icon_x - 1, icon_y - 1, 1, icon_size + 2);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
+                        icon_x - 1, icon_y + icon_size, icon_size + 2, 1);
+    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
+                        icon_x + icon_size, icon_y - 1, 1, icon_size + 2);
+    
+    // Just render the icon normally like workbench does
+    Picture src = dialog->icon->normal_picture;
+    if (src != None) {
+        XRenderComposite(dpy, PictOpOver, src, None, dest,
+                        0, 0, 0, 0, icon_x, icon_y, 
+                        dialog->icon->width, dialog->icon->height);
+    }
+    
+    // Get XftDraw for text rendering
+    XftDraw *xft = canvas->xft_draw;
+    
+    // Layout constants
+    int x = ICONINFO_MARGIN + BORDER_WIDTH_LEFT;
+    int y = ICONINFO_MARGIN + BORDER_HEIGHT_TOP;
+    int field_width = content_w - (2 * ICONINFO_MARGIN);
+    
+    // Position for text fields (to the right of icon)
+    int text_x = icon_x + icon_size + ICONINFO_SPACING * 2;
+    int text_y = icon_y;
+    
+    // Draw "Filename:" label and input field
+    if (xft) {
+        XftColor color;
+        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                          DefaultColormap(dpy, DefaultScreen(dpy)),
+                          &(XRenderColor){0, 0, 0, 0xffff}, &color);
+        
+        XftFont *font = get_font();
+        if (font) {
+            XftDrawStringUtf8(xft, &color, font, text_x, text_y + 15,
+                             (XftChar8 *)"Filename:", 9);
+        }
+        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                    DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+    }
+    
+    // Draw input fields
+    if (dialog->name_field) {
+        dialog->name_field->x = text_x;
+        dialog->name_field->y = text_y + 20;
+        dialog->name_field->width = field_width - (text_x - x);
+        XftFont *font = get_font();
+        inputfield_draw(dialog->name_field, dest, dpy, xft, font);
+    }
+    
+    // Move down for size info
+    text_y += 60;
+    
+    // Draw size text
+    if (xft) {
+        XftColor color;
+        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                          DefaultColormap(dpy, DefaultScreen(dpy)),
+                          &(XRenderColor){0, 0, 0, 0xffff}, &color);
+        
+        XftFont *font = get_font();
+        if (font) {
+            char size_label[128];
+            snprintf(size_label, sizeof(size_label), "Size: %s", dialog->size_text);
+            XftDrawStringUtf8(xft, &color, font, text_x, text_y,
+                             (XftChar8 *)size_label, strlen(size_label));
+        }
+        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                    DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+    }
+    
+    // Continue with other fields below the icon
+    y = icon_y + icon_size + ICONINFO_SPACING * 2;
+    
+    // Comment field
+    if (dialog->comment_field) {
+        // Draw label
+        if (xft) {
+            XftColor color;
+            XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                              DefaultColormap(dpy, DefaultScreen(dpy)),
+                              &(XRenderColor){0, 0, 0, 0xffff}, &color);
+            
+            XftFont *font = get_font();
+            if (font) {
+                XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                                 (XftChar8 *)"Comment:", 8);
+            }
+            XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                        DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+        }
+        
+        dialog->comment_field->x = x + ICONINFO_LABEL_WIDTH;
+        dialog->comment_field->y = y;
+        dialog->comment_field->width = field_width - ICONINFO_LABEL_WIDTH;
+        XftFont *font = get_font();
+        inputfield_draw(dialog->comment_field, dest, dpy, xft, font);
+        y += 30;
+    }
+    
+    // Draw permissions, dates, etc.
+    if (xft) {
+        XftColor color;
+        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                          DefaultColormap(dpy, DefaultScreen(dpy)),
+                          &(XRenderColor){0, 0, 0, 0xffff}, &color);
+        
+        XftFont *font = get_font();
+        if (font) {
+            // Permissions
+            y += ICONINFO_SPACING;
+            char perm_label[128];
+            snprintf(perm_label, sizeof(perm_label), "Permissions: %s", dialog->perms_text);
+            XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                             (XftChar8 *)perm_label, strlen(perm_label));
+            
+            // Owner and Group on same line
+            char owner_label[128];
+            snprintf(owner_label, sizeof(owner_label), "    Owner: %s  Group: %s", 
+                    dialog->owner_text, dialog->group_text);
+            XftDrawStringUtf8(xft, &color, font, x, y + 35,
+                             (XftChar8 *)owner_label, strlen(owner_label));
+            y += 50;
+            
+            // Created date
+            char created_label[128];
+            snprintf(created_label, sizeof(created_label), "Created:  %s", dialog->created_text);
+            XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                             (XftChar8 *)created_label, strlen(created_label));
+            y += 25;
+            
+            // Modified date
+            char modified_label[128];
+            snprintf(modified_label, sizeof(modified_label), "Modified: %s", dialog->modified_text);
+            XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                             (XftChar8 *)modified_label, strlen(modified_label));
+            y += 35;
+        }
+        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                    DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+    }
+    
+    // Path field
+    if (dialog->path_field) {
+        if (xft) {
+            XftColor color;
+            XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                              DefaultColormap(dpy, DefaultScreen(dpy)),
+                              &(XRenderColor){0, 0, 0, 0xffff}, &color);
+            
+            XftFont *font = get_font();
+            if (font) {
+                XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                                 (XftChar8 *)"Path:", 5);
+            }
+            XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                        DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+        }
+        
+        dialog->path_field->x = x + ICONINFO_LABEL_WIDTH;
+        dialog->path_field->y = y;
+        dialog->path_field->width = field_width - ICONINFO_LABEL_WIDTH;
+        XftFont *font = get_font();
+        inputfield_draw(dialog->path_field, dest, dpy, xft, font);
+        y += 35;
+    }
+    
+    // App field
+    if (dialog->app_field) {
+        if (xft) {
+            XftColor color;
+            XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                              DefaultColormap(dpy, DefaultScreen(dpy)),
+                              &(XRenderColor){0, 0, 0, 0xffff}, &color);
+            
+            XftFont *font = get_font();
+            if (font) {
+                XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                                 (XftChar8 *)"Opens with:", 11);
+            }
+            XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                        DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+        }
+        
+        dialog->app_field->x = x + ICONINFO_LABEL_WIDTH;
+        dialog->app_field->y = y;
+        dialog->app_field->width = field_width - ICONINFO_LABEL_WIDTH;
+        XftFont *font = get_font();
+        inputfield_draw(dialog->app_field, dest, dpy, xft, font);
+        y += 40;
+    }
+    
+    // Draw OK and Cancel buttons at bottom
+    int button_y = canvas->height - BORDER_HEIGHT_BOTTOM - ICONINFO_BUTTON_HEIGHT - ICONINFO_MARGIN;
+    int ok_x = canvas->width / 2 - ICONINFO_BUTTON_WIDTH - 20;
+    int cancel_x = canvas->width / 2 + 20;
+    
+    // Create temporary button structures for drawing
+    Button ok_btn = {
+        .x = ok_x, .y = button_y,
+        .width = ICONINFO_BUTTON_WIDTH, .height = ICONINFO_BUTTON_HEIGHT,
+        .label = "OK",
+        .pressed = dialog->ok_pressed
+    };
+    
+    Button cancel_btn = {
+        .x = cancel_x, .y = button_y,
+        .width = ICONINFO_BUTTON_WIDTH, .height = ICONINFO_BUTTON_HEIGHT,
+        .label = "Cancel",
+        .pressed = dialog->cancel_pressed
+    };
+    
+    XftFont *font = get_font();
+    if (font) {
+        button_draw(&ok_btn, dest, dpy, xft, font);
+        button_draw(&cancel_btn, dest, dpy, xft, font);
+    }
 }
