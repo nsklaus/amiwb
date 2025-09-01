@@ -82,6 +82,7 @@ typedef struct {
 static Canvas *canvas_under_pointer(void);
 static int move_file_to_directory(const char *src_path, const char *dst_dir, char *dst_path, size_t dst_sz);
 static bool is_directory(const char *path);
+static int ensure_parent_dirs(const char *path);
 static int copy_file(const char *src, const char *dst);
 static int copy_file_with_progress(const char *src, const char *dst, int pipe_fd);
 static int copy_directory_recursive(const char *src_dir, const char *dst_dir);
@@ -1058,6 +1059,42 @@ int remove_directory_recursive(const char *path);
 
 // Recursively copy a directory from src to dst
 // Returns 0 on success, -1 on failure
+// Helper function to create parent directories recursively
+static int ensure_parent_dirs(const char *path) {
+    char tmp[PATH_SIZE];
+    char *p = NULL;
+    size_t len;
+    
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+    
+    // Remove trailing slash if present
+    if (tmp[len - 1] == '/') {
+        tmp[len - 1] = 0;
+    }
+    
+    // Create each parent directory in the path
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            // Try to create directory, ignore if exists
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+                log_error("[ERROR] Cannot create directory: %s - %s\n", tmp, strerror(errno));
+                *p = '/';
+                return -1;
+            }
+            *p = '/';
+        }
+    }
+    
+    // Create the final directory
+    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+        log_error("[ERROR] Cannot create final directory: %s - %s\n", tmp, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
 static int copy_directory_recursive(const char *src_dir, const char *dst_dir) {
     if (!src_dir || !dst_dir || !*src_dir || !*dst_dir) return -1;
     
@@ -1067,8 +1104,12 @@ static int copy_directory_recursive(const char *src_dir, const char *dst_dir) {
         return -1;
     }
     
-    // Create destination directory with same permissions
-    if (mkdir(dst_dir, src_stat.st_mode & 0777) != 0) {
+    // Ensure all parent directories exist first
+    ensure_parent_dirs(dst_dir);
+    
+    // Create destination directory with write permissions (0755)
+    // This ensures we can copy files into it, even if source is read-only
+    if (mkdir(dst_dir, 0755) != 0) {
         // If it exists and is a directory, that's OK
         struct stat dst_stat;
         if (stat(dst_dir, &dst_stat) != 0 || !S_ISDIR(dst_stat.st_mode)) {
@@ -1465,8 +1506,9 @@ static int copy_directory_recursive_with_progress(const char *src_dir, const cha
             break;
         }
         
-        // Create destination directory with same permissions
-        if (mkdir(current_dst, src_stat.st_mode & 0777) != 0) {
+        // Create destination directory with write permissions (0755)
+        // to avoid issues with read-only source directories
+        if (mkdir(current_dst, 0755) != 0) {
             // If it exists and is a directory, that's OK
             struct stat dst_stat;
             if (stat(current_dst, &dst_stat) != 0 || !S_ISDIR(dst_stat.st_mode)) {
