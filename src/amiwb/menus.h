@@ -76,4 +76,15 @@ void execute_custom_command(const char *cmd);   // Execute a custom menu command
 // Date/time display
 void update_menubar_time(void);                 // Check if time changed and redraw menubar if needed
 
+// Menu substitution system
+void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus, int item_count, Window app_window);
+void restore_system_menu(void);
+bool is_app_menu_active(void);
+Window get_app_menu_window(void);
+void check_for_app_menus(Window win);  // Check X11 properties for app menus
+
+// TEST FUNCTIONS - Remove after menu substitution is complete
+void test_editpad_menu_substitution(Window test_window);
+void test_restore_system_menus(void);
+
 #endif

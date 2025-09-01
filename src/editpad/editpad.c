@@ -77,8 +77,22 @@ EditPad* editpad_create(Display *display) {
     ep->modified = false;
     strcpy(ep->current_file, "");
     
-    // Register with AmiWB for menu override
-    // TODO: Set properties for menu/shortcut override
+    // Register with AmiWB for menu substitution
+    // Set X11 properties to identify this as a toolkit app
+    Atom app_type_atom = XInternAtom(display, "_AMIWB_APP_TYPE", False);
+    Atom menu_data_atom = XInternAtom(display, "_AMIWB_MENU_DATA", False);
+    
+    // Set app type
+    const char *app_type = "EDITPAD";
+    XChangeProperty(display, ep->main_window, app_type_atom,
+                   XA_STRING, 8, PropModeReplace,
+                   (unsigned char*)app_type, strlen(app_type));
+    
+    // Set menu data (simple format for now)
+    const char *menu_data = "File:New,Open,Save,SaveAs,Quit|Edit:Cut,Copy,Paste,SelectAll,Undo|Search:Find,Replace,GotoLine|View:WordWrap,LineNumbers";
+    XChangeProperty(display, ep->main_window, menu_data_atom,
+                   XA_STRING, 8, PropModeReplace,
+                   (unsigned char*)menu_data, strlen(menu_data));
     
     XMapWindow(display, ep->main_window);
     XFlush(display);

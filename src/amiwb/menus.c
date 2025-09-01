@@ -55,6 +55,14 @@ static char **full_menu_items = NULL;
 static int full_menu_item_count = 0;
 static Menu **full_submenus = NULL;
 
+// Menu substitution system - save system menus when app menus active
+static char *system_logo_item = NULL;      // Original "AmiWB" logo
+static char **system_menu_items = NULL;    // System menu items backup
+static Menu **system_submenus = NULL;      // System submenus backup
+static int system_menu_item_count = 0;     // System menu count backup
+static bool app_menu_active = false;       // True when app menus are shown
+static Window current_app_window = None;   // Window that owns current app menus
+
 // Resolve menu resources from user config first, then system dir.
 static char *get_resource_path(const char *rel_path) {
     char *home = getenv("HOME");
@@ -354,12 +362,15 @@ void init_menus(void) {
     // Tools submenu (index 3)
     // Quick launchers for external apps; editable in config later.
     Menu *tools_submenu = malloc(sizeof(Menu));
-    tools_submenu->item_count = 4;
+    tools_submenu->item_count = 7;  // Added test items
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("Text Editor");
     tools_submenu->items[1] = strdup("XCalc");
     tools_submenu->items[2] = strdup("Shell");
     tools_submenu->items[3] = strdup("Debug Console");
+    tools_submenu->items[4] = strdup("----------");  // Separator
+    tools_submenu->items[5] = strdup("TEST: EditPad Menu");
+    tools_submenu->items[6] = strdup("TEST: System Menu");
     init_menu_shortcuts(tools_submenu);  // Initialize all shortcuts to NULL
     init_menu_enabled(tools_submenu);  // Initialize all items as enabled
     tools_submenu->selected_item = -1;
@@ -1090,6 +1101,16 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
 // Handles nested Window submenu toggles inline.
 void handle_menu_selection(Menu *menu, int item_index) {
     const char *item = menu->items[item_index];
+    
+    // TEST: Check for system menu restore in app menus
+    if (app_menu_active && strcmp(item, "TEST: System Menu") == 0) {
+        test_restore_system_menus();
+        if (get_show_menus_state()) {
+            toggle_menubar_state();
+        }
+        return;
+    }
+    
     // If this is a nested submenu under Window, handle here
     if (menu->parent_menu && menu->parent_menu->parent_menu == menubar && 
         menu->parent_menu->parent_index == 1) {
@@ -1246,6 +1267,14 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 system("sh -lc 'exec kitty -e sh -lc "
                        "\"echo Logging is disabled in config.h; echo Enable LOGGING_ENABLED and rebuild.; echo; read -p '""'Press Enter to close'""' \"\"\"' &");
                 #endif
+            } else if (strcmp(item, "TEST: EditPad Menu") == 0) {
+                // TEST: Switch to EditPad menus
+                test_editpad_menu_substitution(None);
+                return;  // Don't toggle menubar state
+            } else if (strcmp(item, "TEST: System Menu") == 0) {
+                // TEST: Restore system menus
+                test_restore_system_menus();
+                return;  // Don't toggle menubar state
             }
 
             break;
@@ -2132,5 +2161,286 @@ static void free_menu(Menu *menu) {
     
     // Free the menu struct itself
     free(menu);
+}
+
+// Menu substitution: switch menubar to app-specific menus
+void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus, int item_count, Window app_window) {
+    if (!menubar || !app_name || !menu_items || !submenus || item_count <= 0) {
+        log_error("[WARNING] switch_to_app_menu called with invalid parameters");
+        return;
+    }
+    
+    // Save system menus on first app menu activation
+    if (!system_menu_items && !app_menu_active) {
+        system_logo_item = strdup(logo_items[0]);
+        system_menu_items = full_menu_items;
+        system_submenus = full_submenus;
+        system_menu_item_count = full_menu_item_count;
+        log_error("[INFO] Saved system menus: %d items", system_menu_item_count);
+    }
+    
+    // Switch logo to app name
+    free(logo_items[0]);
+    logo_items[0] = strdup(app_name);
+    
+    // Switch full menu arrays to app menus
+    full_menu_items = menu_items;
+    full_submenus = submenus;
+    full_menu_item_count = item_count;
+    
+    // If currently showing menus, update menubar
+    if (show_menus) {
+        menubar->items = full_menu_items;
+        menubar->submenus = full_submenus;
+        menubar->item_count = full_menu_item_count;
+    }
+    
+    // Mark app menu as active
+    app_menu_active = true;
+    current_app_window = app_window;
+    
+    log_error("[INFO] Switched to %s menus (%d items)", app_name, item_count);
+    
+    // Redraw menubar with new content
+    redraw_canvas(menubar->canvas);
+}
+
+// Menu substitution: restore system menus
+void restore_system_menu(void) {
+    if (!app_menu_active || !system_menu_items) {
+        return;  // Already showing system menus or not initialized
+    }
+    
+    // Restore logo
+    free(logo_items[0]);
+    logo_items[0] = strdup(system_logo_item);
+    
+    // Restore full menu arrays
+    full_menu_items = system_menu_items;
+    full_submenus = system_submenus;
+    full_menu_item_count = system_menu_item_count;
+    
+    // If currently showing menus, update menubar
+    if (show_menus) {
+        menubar->items = full_menu_items;
+        menubar->submenus = full_submenus;
+        menubar->item_count = full_menu_item_count;
+    }
+    
+    // Mark system menu as active
+    app_menu_active = false;
+    current_app_window = None;
+    
+    log_error("[INFO] Restored system menus");
+    
+    // Redraw menubar
+    redraw_canvas(menubar->canvas);
+}
+
+// Check if app menus are currently active
+bool is_app_menu_active(void) {
+    return app_menu_active;
+}
+
+// Get the window that owns current app menus
+Window get_app_menu_window(void) {
+    return current_app_window;
+}
+
+// TEST FUNCTION: Create hardcoded EditPad menus for testing menu substitution
+static Menu **create_test_editpad_menus(void) {
+    // Create top-level menu array (File, Edit, Search, View)
+    Menu **editpad_menus = calloc(4, sizeof(Menu*));
+    
+    // File menu
+    Menu *file_menu = calloc(1, sizeof(Menu));
+    file_menu->item_count = 8;  // Added test item
+    file_menu->items = calloc(file_menu->item_count, sizeof(char*));
+    file_menu->items[0] = strdup("New");
+    file_menu->items[1] = strdup("Open...");
+    file_menu->items[2] = strdup("Save");
+    file_menu->items[3] = strdup("Save As...");
+    file_menu->items[4] = strdup("----------");
+    file_menu->items[5] = strdup("Quit");
+    file_menu->items[6] = strdup("----------");
+    file_menu->items[7] = strdup("TEST: System Menu");
+    
+    file_menu->shortcuts = calloc(file_menu->item_count, sizeof(char*));
+    file_menu->shortcuts[0] = strdup("N");      // Super+N
+    file_menu->shortcuts[1] = strdup("O");      // Super+O
+    file_menu->shortcuts[2] = strdup("S");      // Super+S
+    file_menu->shortcuts[3] = strdup("^S");     // Super+Shift+S
+    file_menu->shortcuts[4] = NULL;
+    file_menu->shortcuts[5] = strdup("Q");      // Super+Q
+    file_menu->shortcuts[6] = NULL;
+    file_menu->shortcuts[7] = NULL;
+    
+    file_menu->enabled = calloc(file_menu->item_count, sizeof(bool));
+    for (int i = 0; i < file_menu->item_count; i++) {
+        file_menu->enabled[i] = true;
+    }
+    file_menu->selected_item = -1;
+    file_menu->parent_menu = menubar;
+    file_menu->parent_index = 0;
+    file_menu->submenus = NULL;
+    file_menu->canvas = NULL;
+    editpad_menus[0] = file_menu;
+    
+    // Edit menu
+    Menu *edit_menu = calloc(1, sizeof(Menu));
+    edit_menu->item_count = 7;
+    edit_menu->items = calloc(edit_menu->item_count, sizeof(char*));
+    edit_menu->items[0] = strdup("Cut");
+    edit_menu->items[1] = strdup("Copy");
+    edit_menu->items[2] = strdup("Paste");
+    edit_menu->items[3] = strdup("----------");
+    edit_menu->items[4] = strdup("Select All");
+    edit_menu->items[5] = strdup("----------");
+    edit_menu->items[6] = strdup("Undo");
+    
+    edit_menu->shortcuts = calloc(edit_menu->item_count, sizeof(char*));
+    edit_menu->shortcuts[0] = strdup("X");      // Super+X
+    edit_menu->shortcuts[1] = strdup("C");      // Super+C
+    edit_menu->shortcuts[2] = strdup("V");      // Super+V
+    edit_menu->shortcuts[3] = NULL;
+    edit_menu->shortcuts[4] = strdup("A");      // Super+A
+    edit_menu->shortcuts[5] = NULL;
+    edit_menu->shortcuts[6] = strdup("Z");      // Super+Z
+    
+    edit_menu->enabled = calloc(edit_menu->item_count, sizeof(bool));
+    for (int i = 0; i < edit_menu->item_count; i++) {
+        edit_menu->enabled[i] = true;
+    }
+    edit_menu->selected_item = -1;
+    edit_menu->parent_menu = menubar;
+    edit_menu->parent_index = 1;
+    edit_menu->submenus = NULL;
+    edit_menu->canvas = NULL;
+    editpad_menus[1] = edit_menu;
+    
+    // Search menu
+    Menu *search_menu = calloc(1, sizeof(Menu));
+    search_menu->item_count = 4;
+    search_menu->items = calloc(search_menu->item_count, sizeof(char*));
+    search_menu->items[0] = strdup("Find...");
+    search_menu->items[1] = strdup("Find Next");
+    search_menu->items[2] = strdup("Replace...");
+    search_menu->items[3] = strdup("Go to Line...");
+    
+    search_menu->shortcuts = calloc(search_menu->item_count, sizeof(char*));
+    search_menu->shortcuts[0] = strdup("F");      // Super+F
+    search_menu->shortcuts[1] = strdup("G");      // Super+G
+    search_menu->shortcuts[2] = strdup("R");      // Super+R
+    search_menu->shortcuts[3] = strdup("L");      // Super+L
+    
+    search_menu->enabled = calloc(search_menu->item_count, sizeof(bool));
+    for (int i = 0; i < search_menu->item_count; i++) {
+        search_menu->enabled[i] = false;  // Disabled for now (not implemented)
+    }
+    search_menu->selected_item = -1;
+    search_menu->parent_menu = menubar;
+    search_menu->parent_index = 2;
+    search_menu->submenus = NULL;
+    search_menu->canvas = NULL;
+    editpad_menus[2] = search_menu;
+    
+    // View menu
+    Menu *view_menu = calloc(1, sizeof(Menu));
+    view_menu->item_count = 3;
+    view_menu->items = calloc(view_menu->item_count, sizeof(char*));
+    view_menu->items[0] = strdup("Word Wrap");
+    view_menu->items[1] = strdup("----------");
+    view_menu->items[2] = strdup("Syntax Highlighting");
+    
+    view_menu->shortcuts = calloc(view_menu->item_count, sizeof(char*));
+    view_menu->shortcuts[0] = strdup("W");      // Super+W
+    view_menu->shortcuts[1] = NULL;
+    view_menu->shortcuts[2] = strdup("H");      // Super+H
+    
+    view_menu->enabled = calloc(view_menu->item_count, sizeof(bool));
+    view_menu->enabled[0] = false;  // Word wrap not implemented
+    view_menu->enabled[1] = true;   // Separator
+    view_menu->enabled[2] = false;  // Syntax highlighting not implemented
+    view_menu->selected_item = -1;
+    view_menu->parent_menu = menubar;
+    view_menu->parent_index = 3;
+    view_menu->submenus = NULL;
+    view_menu->canvas = NULL;
+    editpad_menus[3] = view_menu;
+    
+    return editpad_menus;
+}
+
+// TEST FUNCTION: Simulate EditPad getting focus
+void test_editpad_menu_substitution(Window test_window) {
+    log_error("[INFO] TEST: Switching to EditPad menus");
+    
+    // Create EditPad menu items
+    char **editpad_items = calloc(4, sizeof(char*));
+    editpad_items[0] = strdup("File");
+    editpad_items[1] = strdup("Edit");
+    editpad_items[2] = strdup("Search");
+    editpad_items[3] = strdup("View");
+    
+    // Create EditPad submenus
+    Menu **editpad_submenus = create_test_editpad_menus();
+    
+    // Switch to EditPad menus
+    switch_to_app_menu("EditPad", editpad_items, editpad_submenus, 4, test_window);
+}
+
+// TEST FUNCTION: Simulate EditPad losing focus
+void test_restore_system_menus(void) {
+    log_error("[INFO] TEST: Restoring system menus");
+    restore_system_menu();
+}
+
+// Check if a window has toolkit app menus via X11 properties
+void check_for_app_menus(Window win) {
+    if (win == None) {
+        restore_system_menu();
+        return;
+    }
+    
+    Display *dpy = get_display();
+    if (!dpy) return;
+    
+    // Define atoms for app properties
+    Atom type_atom = XInternAtom(dpy, "_AMIWB_APP_TYPE", False);
+    Atom menu_atom = XInternAtom(dpy, "_AMIWB_MENU_DATA", False);
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char *app_type = NULL;
+    unsigned char *menu_data = NULL;
+    
+    // Check if window has _AMIWB_APP_TYPE property
+    if (XGetWindowProperty(dpy, win, type_atom, 0, 1024, False,
+                          AnyPropertyType, &actual_type, &actual_format,
+                          &nitems, &bytes_after, &app_type) == Success && app_type) {
+        
+        log_error("[INFO] Found toolkit app: %s", (char*)app_type);
+        
+        // It's a toolkit app! Get menu data
+        if (XGetWindowProperty(dpy, win, menu_atom, 0, 65536, False,
+                              AnyPropertyType, &actual_type, &actual_format,
+                              &nitems, &bytes_after, &menu_data) == Success && menu_data) {
+            
+            log_error("[INFO] Found menu data: %s", (char*)menu_data);
+            
+            // For now, just use test EditPad menus as proof of concept
+            // TODO: Parse menu_data and create Menu structures
+            if (strcmp((char*)app_type, "EDITPAD") == 0) {
+                test_editpad_menu_substitution(win);
+            }
+            
+            XFree(menu_data);
+        }
+        XFree(app_type);
+    } else {
+        // Not a toolkit app - restore system menus
+        log_error("[INFO] Not a toolkit app, restoring system menus");
+        restore_system_menu();
+    }
 }
 

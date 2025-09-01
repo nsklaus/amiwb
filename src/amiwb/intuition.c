@@ -524,6 +524,9 @@ void deactivate_all_windows(void) {
     for (int i = 0; i < canvas_count; i++) { Canvas *c = canvas_array[i];
         if (c->type == WINDOW || c->type == DIALOG) { c->active = false; redraw_canvas(c); } }
     active_window = NULL;
+    
+    // No window active - restore system menus
+    restore_system_menu();
 }
 
 static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
@@ -963,6 +966,15 @@ void set_active_window(Canvas *c) {
     Window focus = (c->client_win != None) ? c->client_win : c->win;
     XSetInputFocus(display, focus, RevertToParent, CurrentTime);
     redraw_canvas(c);
+    
+    // Check for app menus on client windows
+    if (c->client_win != None) {
+        check_for_app_menus(c->client_win);
+    } else {
+        // Workbench window - restore system menus
+        restore_system_menu();
+    }
+    
     XSync(display, False);
 }
 
