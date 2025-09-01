@@ -112,6 +112,93 @@ void editpad_run(EditPad *ep) {
                     if ((Atom)event.xclient.data.l[0] == XInternAtom(ep->display, "WM_DELETE_WINDOW", False)) {
                         running = false;
                     }
+                    // Check for menu selection from AmiWB
+                    else if (event.xclient.message_type == XInternAtom(ep->display, "_AMIWB_MENU_SELECT", False)) {
+                        int menu_index = event.xclient.data.l[0];
+                        int item_index = event.xclient.data.l[1];
+                        
+                        fprintf(stderr, "[EditPad] Menu selection: menu=%d, item=%d\n", menu_index, item_index);
+                        
+                        // Handle File menu (index 0)
+                        if (menu_index == 0) {
+                            switch (item_index) {
+                                case 0:  // New
+                                    editpad_new_file(ep);
+                                    break;
+                                case 1:  // Open
+                                    // Launch ReqASL to select file
+                                    fprintf(stderr, "[EditPad] Launching ReqASL for file open\n");
+                                    FILE *fp = popen("reqasl --mode open", "r");
+                                    if (fp) {
+                                        char filepath[PATH_SIZE];
+                                        if (fgets(filepath, sizeof(filepath), fp)) {
+                                            // Remove newline
+                                            filepath[strcspn(filepath, "\n")] = 0;
+                                            if (strlen(filepath) > 0) {
+                                                fprintf(stderr, "[EditPad] Opening file: %s\n", filepath);
+                                                editpad_open_file(ep, filepath);
+                                            }
+                                        }
+                                        pclose(fp);
+                                    }
+                                    break;
+                                case 2:  // Save
+                                    editpad_save_file(ep);
+                                    break;
+                                case 3:  // SaveAs
+                                    editpad_save_file_as(ep);
+                                    break;
+                                case 5:  // Quit (skip separator at 4)
+                                    running = false;
+                                    break;
+                            }
+                        }
+                        // Handle Edit menu (index 1)
+                        else if (menu_index == 1) {
+                            switch (item_index) {
+                                case 0:  // Cut
+                                    editpad_cut(ep);
+                                    break;
+                                case 1:  // Copy
+                                    editpad_copy(ep);
+                                    break;
+                                case 2:  // Paste
+                                    editpad_paste(ep);
+                                    break;
+                                case 4:  // SelectAll (skip separator at 3)
+                                    editpad_select_all(ep);
+                                    break;
+                                case 6:  // Undo (skip separator at 5)
+                                    editpad_undo(ep);
+                                    break;
+                            }
+                        }
+                        // Handle Search menu (index 2)
+                        else if (menu_index == 2) {
+                            switch (item_index) {
+                                case 0:  // Find
+                                    editpad_find(ep);
+                                    break;
+                                case 2:  // Replace
+                                    editpad_replace(ep);
+                                    break;
+                                case 3:  // GotoLine
+                                    editpad_goto_line(ep);
+                                    break;
+                            }
+                        }
+                        // Handle View menu (index 3)
+                        else if (menu_index == 3) {
+                            switch (item_index) {
+                                case 0:  // WordWrap
+                                    editpad_toggle_word_wrap(ep);
+                                    break;
+                                case 1:  // LineNumbers
+                                    editpad_toggle_line_numbers(ep);
+                                    break;
+                            }
+                        }
+                    }
                     break;
             }
         } else if (ep->text_view && event.xany.window == ep->text_view->window) {

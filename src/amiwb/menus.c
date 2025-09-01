@@ -48,6 +48,9 @@ void handle_restart_request(void);
 // Global variable to store the icon being renamed
 static FileIcon *g_rename_icon = NULL;
 
+// Forward declarations for menu substitution
+static void send_menu_selection_to_app(Window app_window, int menu_index, int item_index);
+
 // Mode-specific arrays
 static char **logo_items = NULL;
 static int logo_item_count = 1;
@@ -362,15 +365,12 @@ void init_menus(void) {
     // Tools submenu (index 3)
     // Quick launchers for external apps; editable in config later.
     Menu *tools_submenu = malloc(sizeof(Menu));
-    tools_submenu->item_count = 7;  // Added test items
+    tools_submenu->item_count = 4;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("Text Editor");
     tools_submenu->items[1] = strdup("XCalc");
     tools_submenu->items[2] = strdup("Shell");
     tools_submenu->items[3] = strdup("Debug Console");
-    tools_submenu->items[4] = strdup("----------");  // Separator
-    tools_submenu->items[5] = strdup("TEST: EditPad Menu");
-    tools_submenu->items[6] = strdup("TEST: System Menu");
     init_menu_shortcuts(tools_submenu);  // Initialize all shortcuts to NULL
     init_menu_enabled(tools_submenu);  // Initialize all items as enabled
     tools_submenu->selected_item = -1;
@@ -1102,9 +1102,12 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
 void handle_menu_selection(Menu *menu, int item_index) {
     const char *item = menu->items[item_index];
     
-    // TEST: Check for system menu restore in app menus
-    if (app_menu_active && strcmp(item, "TEST: System Menu") == 0) {
-        test_restore_system_menus();
+    // Handle app menu selections
+    if (app_menu_active && current_app_window != None) {
+        // Send selection to app via client message
+        send_menu_selection_to_app(current_app_window, menu->parent_index, item_index);
+        
+        // Close menus after selection
         if (get_show_menus_state()) {
             toggle_menubar_state();
         }
@@ -1267,14 +1270,6 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 system("sh -lc 'exec kitty -e sh -lc "
                        "\"echo Logging is disabled in config.h; echo Enable LOGGING_ENABLED and rebuild.; echo; read -p '""'Press Enter to close'""' \"\"\"' &");
                 #endif
-            } else if (strcmp(item, "TEST: EditPad Menu") == 0) {
-                // TEST: Switch to EditPad menus
-                test_editpad_menu_substitution(None);
-                return;  // Don't toggle menubar state
-            } else if (strcmp(item, "TEST: System Menu") == 0) {
-                // TEST: Restore system menus
-                test_restore_system_menus();
-                return;  // Don't toggle menubar state
             }
 
             break;
@@ -2395,6 +2390,125 @@ void test_restore_system_menus(void) {
     restore_system_menu();
 }
 
+// Parse menu data string and create Menu structures
+// Format: "File:New,Open,Save|Edit:Cut,Copy,Paste|..."
+static void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Window app_window) {
+    if (!menu_data || !app_name) {
+        log_error("[ERROR] parse_and_switch_app_menus: NULL parameters");
+        return;
+    }
+    
+    log_error("[INFO] Parsing menu data for %s: %s", app_name, menu_data);
+    
+    // Count top-level menus (separated by |)
+    int menu_count = 1;
+    for (const char *p = menu_data; *p; p++) {
+        if (*p == '|') menu_count++;
+    }
+    
+    // Allocate top-level arrays
+    char **menu_items = calloc(menu_count, sizeof(char*));
+    Menu **submenus = calloc(menu_count, sizeof(Menu*));
+    
+    // Parse the menu data - use strtok_r to avoid issues
+    char *data_copy = strdup(menu_data);
+    char *saveptr;
+    char *menu_str = strtok_r(data_copy, "|", &saveptr);
+    int menu_index = 0;
+    
+    while (menu_str && menu_index < menu_count) {
+        // Split "File:New,Open,Save" into "File" and "New,Open,Save"
+        char *colon = strchr(menu_str, ':');
+        if (!colon) continue;
+        
+        *colon = '\0';
+        char *menu_name = menu_str;
+        char *items_str = colon + 1;
+        
+        // Store menu name
+        menu_items[menu_index] = strdup(menu_name);
+        
+        // Count items in this menu
+        int item_count = 1;
+        for (const char *p = items_str; *p; p++) {
+            if (*p == ',') item_count++;
+        }
+        
+        // Create submenu
+        Menu *submenu = calloc(1, sizeof(Menu));
+        submenu->item_count = item_count;
+        submenu->items = calloc(item_count, sizeof(char*));
+        submenu->shortcuts = calloc(item_count, sizeof(char*));
+        submenu->enabled = calloc(item_count, sizeof(bool));
+        
+        // Parse items - use strtok_r for thread safety and to avoid nested strtok issues
+        char *saveptr2;
+        char *items_copy = strdup(items_str);  // Make a copy for strtok_r
+        char *item = strtok_r(items_copy, ",", &saveptr2);
+        int item_index = 0;
+        while (item && item_index < item_count) {
+            submenu->items[item_index] = strdup(item);
+            submenu->enabled[item_index] = true;
+            submenu->shortcuts[item_index] = NULL;  // Initialize to NULL first
+            
+            // Add shortcuts for known items (EditPad specific for now)
+            if (strcmp(item, "New") == 0) submenu->shortcuts[item_index] = strdup("N");
+            else if (strcmp(item, "Open") == 0) submenu->shortcuts[item_index] = strdup("O");
+            else if (strcmp(item, "Save") == 0) submenu->shortcuts[item_index] = strdup("S");
+            else if (strcmp(item, "SaveAs") == 0) submenu->shortcuts[item_index] = strdup("^S");
+            else if (strcmp(item, "Quit") == 0) submenu->shortcuts[item_index] = strdup("Q");
+            else if (strcmp(item, "Cut") == 0) submenu->shortcuts[item_index] = strdup("X");
+            else if (strcmp(item, "Copy") == 0) submenu->shortcuts[item_index] = strdup("C");
+            else if (strcmp(item, "Paste") == 0) submenu->shortcuts[item_index] = strdup("V");
+            else if (strcmp(item, "SelectAll") == 0) submenu->shortcuts[item_index] = strdup("A");
+            else if (strcmp(item, "Undo") == 0) submenu->shortcuts[item_index] = strdup("Z");
+            else if (strcmp(item, "Find") == 0) submenu->shortcuts[item_index] = strdup("F");
+            else if (strcmp(item, "Replace") == 0) submenu->shortcuts[item_index] = strdup("R");
+            else if (strcmp(item, "GotoLine") == 0) submenu->shortcuts[item_index] = strdup("L");
+            
+            item = strtok_r(NULL, ",", &saveptr2);
+            item_index++;
+        }
+        free(items_copy);
+        
+        submenu->selected_item = -1;
+        submenu->parent_menu = menubar;
+        submenu->parent_index = menu_index;
+        submenu->submenus = NULL;
+        submenu->canvas = NULL;
+        
+        submenus[menu_index] = submenu;
+        
+        menu_str = strtok_r(NULL, "|", &saveptr);
+        menu_index++;
+    }
+    
+    free(data_copy);
+    
+    // Switch to the parsed menus
+    switch_to_app_menu(app_name, menu_items, submenus, menu_count, app_window);
+}
+
+// Send menu selection back to app via client message
+static void send_menu_selection_to_app(Window app_window, int menu_index, int item_index) {
+    Display *dpy = get_display();
+    if (!dpy) return;
+    
+    XEvent event;
+    memset(&event, 0, sizeof(event));
+    event.type = ClientMessage;
+    event.xclient.window = app_window;
+    event.xclient.message_type = XInternAtom(dpy, "_AMIWB_MENU_SELECT", False);
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = menu_index;  // Which menu (0=File, 1=Edit, etc)
+    event.xclient.data.l[1] = item_index;  // Which item in that menu
+    
+    XSendEvent(dpy, app_window, False, NoEventMask, &event);
+    XFlush(dpy);
+    
+    log_error("[INFO] Sent menu selection to app: menu=%d, item=%d", menu_index, item_index);
+}
+
 // Check if a window has toolkit app menus via X11 properties
 void check_for_app_menus(Window win) {
     if (win == None) {
@@ -2428,11 +2542,8 @@ void check_for_app_menus(Window win) {
             
             log_error("[INFO] Found menu data: %s", (char*)menu_data);
             
-            // For now, just use test EditPad menus as proof of concept
-            // TODO: Parse menu_data and create Menu structures
-            if (strcmp((char*)app_type, "EDITPAD") == 0) {
-                test_editpad_menu_substitution(win);
-            }
+            // Parse menu data and switch menus
+            parse_and_switch_app_menus((char*)app_type, (char*)menu_data, win);
             
             XFree(menu_data);
         }
