@@ -63,6 +63,16 @@ typedef struct {
     char current_file[NAME_SIZE];
     size_t bytes_done;      // For large file progress
     size_t bytes_total;     // Size of current file (0 if unknown)
+    
+    // Icon creation metadata for copy operations (used on MSG_COMPLETE)
+    char dest_path[PATH_SIZE];        // Full destination path
+    char dest_dir[PATH_SIZE];          // Destination directory (for canvas lookup)
+    bool create_icon;                  // Whether to create icon on completion
+    bool has_sidecar;                  // Whether source had .info file
+    char sidecar_src[PATH_SIZE];       // Source .info path if exists
+    char sidecar_dst[PATH_SIZE];       // Dest .info path if exists
+    int icon_x, icon_y;                // Position for new icon
+    Window target_window;              // Window to create icon in
 } ProgressMessage;
 
 // Progress dialog time threshold (seconds)
@@ -77,6 +87,9 @@ static int copy_file_with_progress(const char *src, const char *dst, int pipe_fd
 static int copy_directory_recursive(const char *src_dir, const char *dst_dir);
 int perform_file_operation_with_progress(FileOperation op, const char *src_path, 
                                         const char *dst_path, const char *custom_title);
+int perform_file_operation_with_progress_ex(FileOperation op, const char *src_path, 
+                                           const char *dst_path, const char *custom_title,
+                                           ProgressMessage *icon_metadata);
 int remove_directory_recursive(const char *path);
 static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas);
 static void refresh_canvas(Canvas *canvas);
@@ -137,14 +150,15 @@ static char *def_pdf_info  = NULL;
 static char *def_avi_info  = NULL;
 static char *def_mp4_info  = NULL;
 static char *def_mkv_info  = NULL;
-static char *def_html_info  = NULL;
+static char *def_html_info = NULL;
 static char *def_webp_info = NULL;
 static char *def_zip_info  = NULL;
 static char *def_lha_info  = NULL;
 static char *def_mp3_info  = NULL;
 static char *def_m4a_info  = NULL;
-static char *def_webm_info  = NULL;
+static char *def_webm_info = NULL;
 static char *def_rar_info  = NULL;
+static char *def_epub_info = NULL;
 static char *def_dir_info  = NULL;   // for directories
 static char *def_foo_info  = NULL;   // generic fallback for unknown filetypes
 
@@ -186,6 +200,7 @@ static void load_deficons(void) {
     load_one_deficon("def_m4a.info",  &def_m4a_info);
     load_one_deficon("def_webm.info", &def_webm_info);
     load_one_deficon("def_rar.info",  &def_rar_info);
+    load_one_deficon("def_epub.info", &def_epub_info);
     load_one_deficon("def_dir.info",  &def_dir_info);
     load_one_deficon("def_foo.info",  &def_foo_info);
 }
@@ -246,6 +261,7 @@ const char *definfo_for_file(const char *name, bool is_dir) {
     if (strcasecmp(ext, "mkv")  == 0  && def_mkv_info)  return def_mkv_info;
     if (strcasecmp(ext, "webm") == 0  && def_webm_info) return def_webm_info;
     if (strcasecmp(ext, "rar")  == 0  && def_rar_info)  return def_rar_info;
+    if (strcasecmp(ext, "epub") == 0  && def_epub_info) return def_epub_info;
     // Unknown or unmapped extension -> generic tool icon if available
     if (def_foo_info) return def_foo_info;
     return NULL;
@@ -1595,11 +1611,13 @@ static int move_file_to_directory(const char *src_path, const char *dst_dir, cha
 // Shows progress only if operation takes longer than threshold
 // ============================================================================
 
-int perform_file_operation_with_progress(
+// Extended version that accepts icon creation metadata
+int perform_file_operation_with_progress_ex(
     FileOperation op,
     const char *src_path,
-    const char *dst_path,  // NULL for delete operations
-    const char *custom_title
+    const char *dst_path,
+    const char *custom_title,
+    ProgressMessage *icon_metadata
 ) {
     if (!src_path) return -1;
     if ((op == FILE_OP_COPY || op == FILE_OP_MOVE) && !dst_path) return -1;
@@ -1660,11 +1678,25 @@ int perform_file_operation_with_progress(
             .type = MSG_START,
             .start_time = time(NULL),
             .files_done = 0,
-            .files_total = -1,  // Unknown initially
+            .files_total = -1,
             .bytes_done = 0,
             .bytes_total = is_directory ? 0 : st.st_size
         };
         strncpy(msg.current_file, basename(strdup(src_path)), NAME_SIZE - 1);
+        
+        // Copy icon metadata if provided
+        if (icon_metadata) {
+            msg.create_icon = icon_metadata->create_icon;
+            msg.has_sidecar = icon_metadata->has_sidecar;
+            msg.icon_x = icon_metadata->icon_x;
+            msg.icon_y = icon_metadata->icon_y;
+            msg.target_window = icon_metadata->target_window;
+            strncpy(msg.dest_path, icon_metadata->dest_path, PATH_SIZE - 1);
+            strncpy(msg.dest_dir, icon_metadata->dest_dir, PATH_SIZE - 1);
+            strncpy(msg.sidecar_src, icon_metadata->sidecar_src, PATH_SIZE - 1);
+            strncpy(msg.sidecar_dst, icon_metadata->sidecar_dst, PATH_SIZE - 1);
+        }
+        
         write(pipefd[1], &msg, sizeof(msg));
         
         int result = 0;
@@ -1672,7 +1704,6 @@ int perform_file_operation_with_progress(
         switch (op) {
             case FILE_OP_COPY:
                 if (is_directory) {
-                    // Count files quickly (optional - could skip for faster start)
                     int total_files = 0;
                     count_files_in_directory(src_path, &total_files);
                     
@@ -1685,17 +1716,14 @@ int perform_file_operation_with_progress(
                     };
                     result = copy_directory_recursive_with_progress(src_path, dst_path, &progress);
                 } else {
-                    // Single file copy with byte-level progress
                     result = copy_file_with_progress(src_path, dst_path, pipefd[1]);
                 }
                 break;
                 
             case FILE_OP_MOVE:
-                // Try rename first
                 if (rename(src_path, dst_path) == 0) {
                     result = 0;
                 } else if (errno == EXDEV) {
-                    // Cross-filesystem move
                     if (is_directory) {
                         int total_files = 0;
                         count_files_in_directory(src_path, &total_files);
@@ -1714,7 +1742,7 @@ int perform_file_operation_with_progress(
                     } else {
                         result = copy_file_with_progress(src_path, dst_path, pipefd[1]);
                         if (result == 0) {
-                            unlink(src_path);
+                            result = unlink(src_path);
                         }
                     }
                 } else {
@@ -1724,8 +1752,6 @@ int perform_file_operation_with_progress(
                 
             case FILE_OP_DELETE:
                 if (is_directory) {
-                    // For delete, we could send progress updates from remove_directory_recursive
-                    // but for now, just do it
                     result = remove_directory_recursive(src_path);
                 } else {
                     result = unlink(src_path);
@@ -1733,24 +1759,16 @@ int perform_file_operation_with_progress(
                 break;
         }
         
-        // Send completion message
+        // Send completion message with icon metadata
         msg.type = (result == 0) ? MSG_COMPLETE : MSG_ERROR;
         write(pipefd[1], &msg, sizeof(msg));
         close(pipefd[1]);
-        _exit(result);  // Exit child
+        _exit(result);
     }
     
     // ===== PARENT PROCESS - Return immediately =====
-    close(pipefd[1]);  // Close write end
-    
-    // Set pipe to non-blocking
+    close(pipefd[1]);
     fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
-    
-    // Store operation info for monitoring
-    // Dialog will be created after 1 second if operation still running
-    // For now, we need to track the operation somehow...
-    // Actually we DO need a ProgressDialog structure to track pipe_fd and child_pid
-    // But we'll create it without a visible window
     
     ProgressOperation prog_op = (op == FILE_OP_COPY) ? PROGRESS_COPY :
                                 (op == FILE_OP_MOVE) ? PROGRESS_MOVE : PROGRESS_DELETE;
@@ -1764,8 +1782,6 @@ int perform_file_operation_with_progress(
         }
     }
     
-    // Create progress dialog structure (but NOT the window yet)
-    // We'll create the actual window after 1 second if needed
     ProgressDialog *dialog = calloc(1, sizeof(ProgressDialog));
     if (!dialog) {
         close(pipefd[0]);
@@ -1777,14 +1793,25 @@ int perform_file_operation_with_progress(
     dialog->operation = prog_op;
     dialog->pipe_fd = pipefd[0];
     dialog->child_pid = pid;
-    dialog->canvas = NULL;  // No window yet
-    dialog->percent = -1.0f;  // Use -1 to indicate "not started"
+    dialog->start_time = time(NULL);  // Track when operation started
+    dialog->canvas = NULL;
+    dialog->percent = -1.0f;  // Indicate not started yet
+    strncpy(dialog->current_file, basename(strdup(src_path)), PATH_SIZE - 1);
     
-    // Add to global list
     extern void add_progress_dialog_to_list(ProgressDialog *dialog);
     add_progress_dialog_to_list(dialog);
     
-    return 0;  // Return immediately - operation runs in background
+    return 0;
+}
+
+// Wrapper for backward compatibility
+int perform_file_operation_with_progress(
+    FileOperation op,
+    const char *src_path,
+    const char *dst_path,
+    const char *custom_title
+) {
+    return perform_file_operation_with_progress_ex(op, src_path, dst_path, custom_title, NULL);
 }
 
 // ============================================================================
@@ -1806,12 +1833,9 @@ void workbench_check_progress_dialogs(void) {
             ssize_t bytes_read = read(dialog->pipe_fd, &msg, sizeof(msg));
             
             if (bytes_read == sizeof(msg)) {
-                // Store start time if this is the first message
-                if (dialog->percent < 0 && msg.start_time > 0) {
+                // Mark as started when we get first message
+                if (dialog->percent < 0) {
                     dialog->percent = 0.0f;  // Mark as started
-                    // Store start time in abort_requested field (hack - should add proper field)
-                    dialog->abort_requested = false;
-                    dialog->on_abort = (void*)msg.start_time;  // Store start time
                 }
                 
                 if (msg.type == MSG_PROGRESS) {
@@ -1824,9 +1848,8 @@ void workbench_check_progress_dialogs(void) {
                     }
                     
                     // Create window if 1 second has passed and window doesn't exist
-                    if (!dialog->canvas && dialog->on_abort) {
-                        time_t start_time = (time_t)dialog->on_abort;
-                        if (now - start_time >= PROGRESS_DIALOG_THRESHOLD) {
+                    if (!dialog->canvas && dialog->start_time > 0) {
+                        if (now - dialog->start_time >= PROGRESS_DIALOG_THRESHOLD) {
                             // Create the actual dialog window now
                             const char *title = dialog->operation == PROGRESS_COPY ? "Copying Files..." :
                                               dialog->operation == PROGRESS_MOVE ? "Moving Files..." :
@@ -1846,6 +1869,55 @@ void workbench_check_progress_dialogs(void) {
                     
                 } else if (msg.type == MSG_COMPLETE || msg.type == MSG_ERROR) {
                     // Operation finished
+                    
+                    // If copy succeeded and we have icon metadata, create the icon now
+                    if (msg.type == MSG_COMPLETE && msg.create_icon && strlen(msg.dest_path) > 0) {
+                        // Copy sidecar if needed (small file, do synchronously)
+                        if (msg.has_sidecar && strlen(msg.sidecar_src) > 0 && strlen(msg.sidecar_dst) > 0) {
+                            copy_file(msg.sidecar_src, msg.sidecar_dst);
+                        }
+                        
+                        // Find the target canvas by window
+                        Canvas *target = NULL;
+                        if (msg.target_window != None) {
+                            target = find_canvas(msg.target_window);
+                        }
+                        
+                        if (target) {
+                            // Determine file type NOW (after copy is done)
+                            struct stat st;
+                            bool is_dir = (stat(msg.dest_path, &st) == 0 && S_ISDIR(st.st_mode));
+                            int file_type = is_dir ? TYPE_DRAWER : TYPE_FILE;
+                            
+                            // Get appropriate icon path
+                            const char *icon_path = NULL;
+                            const char *filename = strrchr(msg.dest_path, '/');
+                            filename = filename ? filename + 1 : msg.dest_path;
+                            
+                            if (msg.has_sidecar && strlen(msg.sidecar_dst) > 0) {
+                                icon_path = msg.sidecar_dst;
+                            } else {
+                                icon_path = definfo_for_file(filename, is_dir);
+                            }
+                            
+                            if (icon_path) {
+                                // Create the icon at the specified position
+                                create_icon_with_metadata(icon_path, target, msg.icon_x, msg.icon_y,
+                                                        msg.dest_path, filename, file_type);
+                                
+                                // Apply layout if in list view
+                                if (target->view_mode == VIEW_NAMES) {
+                                    apply_view_layout(target);
+                                }
+                                
+                                // Refresh display
+                                compute_content_bounds(target);
+                                compute_max_scroll(target);
+                                redraw_canvas(target);
+                            }
+                        }
+                    }
+                    
                     close(dialog->pipe_fd);
                     dialog->pipe_fd = -1;
                     if (dialog->canvas) {
@@ -2671,6 +2743,7 @@ void cleanup_workbench(void) {
     if (def_zip_info)  { free(def_zip_info);  def_zip_info  = NULL; }
     if (def_rar_info)  { free(def_rar_info);  def_rar_info  = NULL; }
     if (def_lha_info)  { free(def_lha_info);  def_lha_info  = NULL; }
+    if (def_epub_info) { free(def_epub_info); def_epub_info = NULL; }
     if (def_dir_info)  { free(def_dir_info);  def_dir_info  = NULL; }
     if (def_foo_info)  { free(def_foo_info);  def_foo_info  = NULL; }
 }

@@ -74,5 +74,4 @@ TODO:
 - make reqasl a file picker to load and save files from apps (wip)
 - make a GUI for system settings 
 - auto mount external drives as icons on the desktop
-- icon information UI window (wip)
 

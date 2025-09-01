@@ -58,10 +58,10 @@ static Menu **full_submenus = NULL;
 // Resolve menu resources from user config first, then system dir.
 static char *get_resource_path(const char *rel_path) {
     char *home = getenv("HOME");
-    char user_path[1024];
+    char user_path[PATH_SIZE];
     snprintf(user_path, sizeof(user_path), "%s/%s/%s", home, RESOURCE_DIR_USER, rel_path);
     if (access(user_path, F_OK) == 0) return strdup(user_path);
-    char sys_path[1024];
+    char sys_path[PATH_SIZE];
     snprintf(sys_path, sizeof(sys_path), "%s/%s", RESOURCE_DIR_SYSTEM, rel_path);
     return strdup(sys_path);
 }
@@ -1115,7 +1115,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
                     // Desktop uses ~/Desktop as its path
                     const char *home = getenv("HOME");
                     if (home) {
-                        char desktop_path[1024];
+                        char desktop_path[PATH_SIZE];
                         snprintf(desktop_path, sizeof(desktop_path), "%s/Desktop", home);
                         refresh_canvas_from_directory(target, desktop_path);
                     }
@@ -1359,7 +1359,7 @@ void trigger_parent_action(void) {
     // Only works if there's an active window with a path
     if (active_window && active_window->type == WINDOW && active_window->path) {
         // Get parent directory path
-        char parent_path[1024];
+        char parent_path[PATH_SIZE];
         strncpy(parent_path, active_window->path, sizeof(parent_path) - 1);
         parent_path[sizeof(parent_path) - 1] = '\0';
         
@@ -1511,8 +1511,8 @@ void trigger_copy_action(void) {
         }
         
         // Generate copy name
-        char copy_path[1024];
-        char base_name[512];
+        char copy_path[PATH_SIZE];
+        char base_name[NAME_SIZE];
         char *last_slash = strrchr(selected->path, '/');
         char *dir_path = NULL;
         
@@ -1540,130 +1540,124 @@ void trigger_copy_action(void) {
         int copy_num = 0;
         do {
             if (copy_num == 0) {
-                snprintf(copy_path, sizeof(copy_path), "%s/copy_%s", dir_path, base_name);
+                // Ensure we don't overflow: dir_path + "/" + "copy_" + base_name
+                if (strlen(dir_path) + strlen(base_name) + 7 < sizeof(copy_path)) {
+                    snprintf(copy_path, sizeof(copy_path), "%s/copy_%s", dir_path, base_name);
+                } else {
+                    log_error("[ERROR] Path too long for copy operation");
+                    free(dir_path);
+                    return;
+                }
             } else {
-                snprintf(copy_path, sizeof(copy_path), "%s/copy%d_%s", dir_path, copy_num, base_name);
+                // Ensure we don't overflow: dir_path + "/" + "copy" + num + "_" + base_name
+                if (strlen(dir_path) + strlen(base_name) + 12 < sizeof(copy_path)) {
+                    snprintf(copy_path, sizeof(copy_path), "%s/copy%d_%s", dir_path, copy_num, base_name);
+                } else {
+                    log_error("[ERROR] Path too long for copy operation");
+                    free(dir_path);
+                    return;
+                }
             }
             copy_num++;
         } while (access(copy_path, F_OK) == 0 && copy_num < 100);
         
         // Save path before refresh as it will destroy the icon
-        char saved_path[1024];
+        char saved_path[PATH_SIZE];
         strncpy(saved_path, selected->path, sizeof(saved_path) - 1);
         saved_path[sizeof(saved_path) - 1] = '\0';
         
-        // Check if source has a sidecar .info file and copy it first if it exists
-        char src_info_path[1030];  // 1024 + 6 for ".info\0"
-        char dst_info_path[1030];  // 1024 + 6 for ".info\0"
+        // Check if source has a sidecar .info file
+        char src_info_path[PATH_SIZE + 10];  // PATH_SIZE + room for ".info"
+        char dst_info_path[PATH_SIZE + 10];  // PATH_SIZE + room for ".info"
         bool has_sidecar = false;
         
-        if (strlen(selected->path) < 1024 && strlen(copy_path) < 1024) {
+        if (strlen(selected->path) < PATH_SIZE && strlen(copy_path) < PATH_SIZE) {
             snprintf(src_info_path, sizeof(src_info_path), "%s.info", selected->path);
             struct stat info_stat;
             if (stat(src_info_path, &info_stat) == 0) {
                 has_sidecar = true;
-                // Build destination .info path
                 snprintf(dst_info_path, sizeof(dst_info_path), "%s.info", copy_path);
             }
         }
         
-        // Use safe file operation with progress dialog
-        extern int perform_file_operation_with_progress(int op, const char *src_path, 
-                                                       const char *dst_path, const char *custom_title);
-        int result = perform_file_operation_with_progress(0, // FILE_OP_COPY = 0
-                                                         selected->path, 
-                                                         copy_path, 
-                                                         "Copying Files...");
+        // Find a good position for the new icon
+        int new_x = selected->x + 110;
+        int new_y = selected->y;
         
-        if (result == 0) {
-            // Copy succeeded - now copy sidecar if it exists
-            if (has_sidecar) {
-                // Copy the sidecar .info file (synchronous, it's small)
-                perform_file_operation_with_progress(0, // FILE_OP_COPY
-                                                    src_info_path,
-                                                    dst_info_path,
-                                                    NULL); // No progress dialog for .info file
-            }
+        if (target_canvas) {
+            // Check for overlaps and adjust position
+            FileIcon **icon_array = get_icon_array();
+            int icon_count = get_icon_count();
+            bool position_occupied = true;
+            int attempts = 0;
             
-            // NOW create the icon after everything is copied
-            if (target_canvas) {
-                // Find a good position for the new icon, avoiding overlaps
-                int new_x = selected->x + 110;  // Standard icon spacing to the right
-                int new_y = selected->y;
-                
-                // Check if position would overlap with existing icons
-                FileIcon **icon_array = get_icon_array();
-                int icon_count = get_icon_count();
-                bool position_occupied = true;
-                int attempts = 0;
-                
-                while (position_occupied && attempts < 10) {
-                    position_occupied = false;
-                    for (int i = 0; i < icon_count; i++) {
-                        FileIcon *other = icon_array[i];
-                        if (other && other != selected && 
-                            other->display_window == target_canvas->win) {
-                            // Check for overlap (icons are roughly 80x80 with labels)
-                            if (abs(other->x - new_x) < 100 && abs(other->y - new_y) < 80) {
-                                position_occupied = true;
-                                // Try next column or row
-                                if (attempts < 5) {
-                                    new_x += 110;  // Move to next column
-                                } else {
-                                    new_x = selected->x + 110;  // Reset to first column
-                                    new_y += 80;  // Move to next row
-                                }
-                                break;
+            while (position_occupied && attempts < 10) {
+                position_occupied = false;
+                for (int i = 0; i < icon_count; i++) {
+                    FileIcon *other = icon_array[i];
+                    if (other && other != selected && 
+                        other->display_window == target_canvas->win) {
+                        if (abs(other->x - new_x) < 100 && abs(other->y - new_y) < 80) {
+                            position_occupied = true;
+                            if (attempts < 5) {
+                                new_x += 110;
+                            } else {
+                                new_x = selected->x + 110;
+                                new_y += 80;
                             }
+                            break;
                         }
                     }
-                    attempts++;
                 }
-                
-                // Determine the icon path to use (sidecar or def_icon)
-                const char *icon_path_to_use = copy_path;
-                
-                // Extract filename for def_icon lookup
-                const char *filename = strrchr(copy_path, '/');
-                filename = filename ? filename + 1 : copy_path;
-                
-                // Determine file type
-                struct stat st;
-                int file_type = TYPE_FILE;
-                if (stat(copy_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-                    file_type = TYPE_DRAWER;
-                }
-                
-                // Find the appropriate icon path
-                if (has_sidecar) {
-                    icon_path_to_use = dst_info_path;
-                } else {
-                    // Use def_icon system
-                    const char *def_icon = definfo_for_file(filename, file_type == TYPE_DRAWER);
-                    if (def_icon) {
-                        icon_path_to_use = def_icon;
-                    }
-                }
-                
-                // Use the proper workbench function that handles everything correctly
-                create_icon_with_metadata(icon_path_to_use, target_canvas, new_x, new_y,
-                                        copy_path, filename, file_type);
-                
-                // Apply layout if in list view
-                if (target_canvas->view_mode == VIEW_NAMES) {
-                    apply_view_layout(target_canvas);
-                }
-                
-                // Use same refresh pattern as drag-and-drop (which works!)
-                compute_content_bounds(target_canvas);
-                compute_max_scroll(target_canvas);
-                redraw_canvas(target_canvas);
-                
-                // Force compositor to repaint for immediate visual update
-                compositor_sync_stacking(get_display());
-                XSync(get_display(), False);  // Ensure all X operations complete
+                attempts++;
             }
-            log_error("[INFO] Copy created: %s", copy_path);
+        }
+        
+        // Prepare icon metadata for deferred creation
+        typedef struct {
+            enum { MSG_START, MSG_PROGRESS, MSG_COMPLETE, MSG_ERROR } type;
+            time_t start_time;
+            int files_done;
+            int files_total;
+            char current_file[128];
+            size_t bytes_done;
+            size_t bytes_total;
+            char dest_path[512];
+            char dest_dir[512];
+            bool create_icon;
+            bool has_sidecar;
+            char sidecar_src[512];
+            char sidecar_dst[512];
+            int icon_x, icon_y;
+            Window target_window;
+        } ProgressMessage;
+        
+        ProgressMessage icon_metadata = {0};
+        icon_metadata.create_icon = (target_canvas != NULL);
+        icon_metadata.has_sidecar = has_sidecar;
+        icon_metadata.icon_x = new_x;
+        icon_metadata.icon_y = new_y;
+        icon_metadata.target_window = target_canvas ? target_canvas->win : None;
+        strncpy(icon_metadata.dest_path, copy_path, sizeof(icon_metadata.dest_path) - 1);
+        strncpy(icon_metadata.dest_dir, dir_path, sizeof(icon_metadata.dest_dir) - 1);
+        if (has_sidecar) {
+            strncpy(icon_metadata.sidecar_src, src_info_path, sizeof(icon_metadata.sidecar_src) - 1);
+            strncpy(icon_metadata.sidecar_dst, dst_info_path, sizeof(icon_metadata.sidecar_dst) - 1);
+        }
+        
+        // Use extended file operation with icon metadata
+        extern int perform_file_operation_with_progress_ex(int op, const char *src_path, 
+                                                          const char *dst_path, const char *custom_title,
+                                                          void *icon_metadata);
+        int result = perform_file_operation_with_progress_ex(0, // FILE_OP_COPY = 0
+                                                            selected->path, 
+                                                            copy_path, 
+                                                            "Copying Files...",
+                                                            &icon_metadata);
+        
+        if (result == 0) {
+            // Copy started successfully - icon will be created when it completes
+            log_error("[INFO] Copy started: %s -> %s", saved_path, copy_path);
         } else {
             log_error("[ERROR] Copy failed for: %s", saved_path);  // Use saved path
         }
@@ -1718,7 +1712,7 @@ static void execute_pending_deletes(void) {
         }
         
         // Save path before operations as destroy_icon will free it
-        char saved_path[1024];
+        char saved_path[PATH_SIZE];
         strncpy(saved_path, selected->path, sizeof(saved_path) - 1);
         saved_path[sizeof(saved_path) - 1] = '\0';
         
@@ -1736,6 +1730,16 @@ static void execute_pending_deletes(void) {
         }
         
         if (result == 0) {
+            // Also delete the sidecar .info file if it exists
+            char sidecar_path[PATH_SIZE + 10];  // PATH_SIZE + room for ".info"
+            snprintf(sidecar_path, sizeof(sidecar_path), "%s.info", saved_path);
+            if (access(sidecar_path, F_OK) == 0) {
+                // Sidecar exists, delete it
+                if (unlink(sidecar_path) != 0) {
+                    log_error("[WARNING] Failed to delete sidecar: %s\n", sidecar_path);
+                }
+            }
+            
             destroy_icon(selected);
             delete_count++;
             if (g_pending_delete_canvas->view_mode == VIEW_NAMES) {

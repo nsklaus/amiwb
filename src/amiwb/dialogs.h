@@ -97,6 +97,7 @@ typedef struct ProgressDialog {
     float percent;
     int pipe_fd;
     pid_t child_pid;
+    time_t start_time;              // When operation started
     bool abort_requested;
     void (*on_abort)(void);
     struct ProgressDialog *next;
