@@ -354,14 +354,12 @@ void init_menus(void) {
     // Tools submenu (index 3)
     // Quick launchers for external apps; editable in config later.
     Menu *tools_submenu = malloc(sizeof(Menu));
-    tools_submenu->item_count = 3;
+    tools_submenu->item_count = 4;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
-    tools_submenu->items[0] = strdup("XCalc");
-    //tools_submenu->items[1] = strdup("PavuControl");
-    //tools_submenu->items[2] = strdup("Brave Browser");
-    //tools_submenu->items[1] = strdup("Sublime Text");
-    tools_submenu->items[1] = strdup("Shell");
-    tools_submenu->items[2] = strdup("Debug Console");
+    tools_submenu->items[0] = strdup("Text Editor");
+    tools_submenu->items[1] = strdup("XCalc");
+    tools_submenu->items[2] = strdup("Shell");
+    tools_submenu->items[3] = strdup("Debug Console");
     init_menu_shortcuts(tools_submenu);  // Initialize all shortcuts to NULL
     init_menu_enabled(tools_submenu);  // Initialize all items as enabled
     tools_submenu->selected_item = -1;
@@ -1205,7 +1203,9 @@ void handle_menu_selection(Menu *menu, int item_index) {
             break;
 
         case 3:  // Tools
-            if (strcmp(item, "XCalc") == 0) {
+            if (strcmp(item, "Text Editor") == 0) {
+                system("editpad &");
+            } else if (strcmp(item, "XCalc") == 0) {
                 system("xcalc &");  // TODO: Handle errors and paths
             } 
 
