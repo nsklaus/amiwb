@@ -800,6 +800,27 @@ void handle_key_press(XKeyEvent *event) {
         // Add more global shortcuts here in the future
     }
     
+    // Check if active window is a dialog and route keyboard events to it
+    Canvas *active = get_active_window();
+    if (active && active->type == DIALOG) {
+        bool dialog_consumed = false;
+        
+        // Check if it's an iconinfo dialog
+        extern bool is_iconinfo_canvas(Canvas *canvas);
+        extern bool iconinfo_handle_key_press(XKeyEvent *event);
+        
+        if (is_iconinfo_canvas(active)) {
+            dialog_consumed = iconinfo_handle_key_press(event);
+        } else {
+            // Try other dialog types
+            dialog_consumed = dialogs_handle_key_press(event);
+        }
+        
+        if (dialog_consumed) {
+            return;
+        }
+    }
+    
     menu_handle_key_press(event);
 }
 

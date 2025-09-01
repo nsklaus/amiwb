@@ -8,6 +8,7 @@
 #include "intuition.h"
 #include "icons.h"
 #include "../toolkit/inputfield.h"
+#include "../toolkit/button.h"
 #include <stdbool.h>
 #include <sys/types.h>
 
@@ -36,7 +37,7 @@ typedef struct IconInfoDialog {
     InputField *name_field;      // Filename (editable)
     InputField *comment_field;   // File comment via xattr (editable)
     InputField *app_field;       // Default application (editable)
-    InputField *path_field;      // Path display (read-only but scrollable)
+    // Path is now displayed as plain text, not an InputField
     
     // Read-only display strings
     char size_text[64];          // File/dir size display
@@ -61,6 +62,11 @@ typedef struct IconInfoDialog {
     bool ok_pressed;
     bool cancel_pressed;
     bool get_size_pressed;       // For directory size calculation
+    
+    // Toolkit buttons (for proper hit testing)
+    Button *get_size_button;     // Get Size button for directories
+    Button *ok_button;           // OK button at bottom
+    Button *cancel_button;       // Cancel button at bottom
     
     // Directory size calculation
     bool calculating_size;       // Currently calculating

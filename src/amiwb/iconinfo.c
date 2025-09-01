@@ -20,6 +20,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <libgen.h>
 
 // Global dialog list
 static IconInfoDialog *g_iconinfo_dialogs = NULL;
@@ -32,6 +33,7 @@ static void load_file_info(IconInfoDialog *dialog);
 static Picture create_2x_icon(FileIcon *icon);
 static void format_file_size(off_t size, char *buffer, size_t bufsize);
 static void format_permissions(mode_t mode, char *buffer, size_t bufsize);
+static void save_file_changes(IconInfoDialog *dialog);
 
 // Initialize icon info subsystem
 void init_iconinfo(void) {
@@ -113,13 +115,8 @@ void show_icon_info_dialog(FileIcon *icon) {
         inputfield_set_text(dialog->comment_field, "comment");
     }
     
-    y_pos = 365;  // Align with "Path:" label baseline (378 - ~13 for ascent)
-    
-    // Path field (read-only but scrollable) - same alignment as above fields
-    dialog->path_field = inputfield_create(field_x,
-                                          y_pos,
-                                          field_width,
-                                          20);
+    // Path is now rendered as plain text, not an input field
+    // (Path is not editable through the iconinfo dialog)
     
     y_pos = 395;  // Align with "Opens with:" label baseline (408 - ~13 for ascent)
     
@@ -202,11 +199,7 @@ static void load_file_info(IconInfoDialog *dialog) {
         dialog->perm_other_exec = (st.st_mode & S_IXOTH) != 0;
     }
     
-    // Set the full path in the path field
-    if (dialog->path_field) {
-        inputfield_set_text(dialog->path_field, dialog->icon->path);
-        inputfield_scroll_to_end(dialog->path_field);
-    }
+    // Path is now displayed as plain text, not an input field
     
     // Try to read comment from extended attributes
     char comment[256] = {0};
@@ -218,7 +211,150 @@ static void load_file_info(IconInfoDialog *dialog) {
         }
     }
     
-    // TODO: Get default application using xdg-mime
+    // Get default application using xdg-mime for files (not directories)
+    if (!dialog->is_directory && dialog->app_field) {
+        // Get MIME type for the file
+        char cmd[PATH_SIZE * 2];
+        snprintf(cmd, sizeof(cmd), "xdg-mime query filetype '%s' 2>/dev/null", dialog->icon->path);
+        
+        FILE *fp = popen(cmd, "r");
+        if (fp) {
+            char mimetype[256];
+            if (fgets(mimetype, sizeof(mimetype), fp)) {
+                // Remove newline
+                size_t len = strlen(mimetype);
+                if (len > 0 && mimetype[len-1] == '\n') {
+                    mimetype[len-1] = '\0';
+                }
+                
+                // Get default application for this MIME type
+                snprintf(cmd, sizeof(cmd), "xdg-mime query default '%s' 2>/dev/null", mimetype);
+                pclose(fp);
+                
+                fp = popen(cmd, "r");
+                if (fp) {
+                    char desktop_file[256];
+                    if (fgets(desktop_file, sizeof(desktop_file), fp)) {
+                        // Remove newline and .desktop extension
+                        len = strlen(desktop_file);
+                        if (len > 0 && desktop_file[len-1] == '\n') {
+                            desktop_file[len-1] = '\0';
+                        }
+                        if (strstr(desktop_file, ".desktop")) {
+                            *strstr(desktop_file, ".desktop") = '\0';
+                        }
+                        
+                        // Set the app field to the application name
+                        inputfield_set_text(dialog->app_field, desktop_file);
+                    }
+                    pclose(fp);
+                }
+            } else {
+                pclose(fp);
+            }
+        }
+    }
+    
+    // Disable "Opens with" field for directories
+    if (dialog->is_directory && dialog->app_field) {
+        inputfield_set_disabled(dialog->app_field, true);
+    }
+}
+
+// Save changes made in the dialog
+static void save_file_changes(IconInfoDialog *dialog) {
+    if (!dialog || !dialog->icon) return;
+    
+    bool needs_refresh = false;
+    
+    // 1. Check if filename changed and rename if needed
+    if (dialog->name_field) {
+        const char *new_name = inputfield_get_text(dialog->name_field);
+        if (new_name && strcmp(new_name, dialog->icon->label) != 0) {
+            // Build new path
+            char new_path[PATH_SIZE];
+            char *last_slash = strrchr(dialog->icon->path, '/');
+            if (last_slash) {
+                size_t dir_len = last_slash - dialog->icon->path;
+                snprintf(new_path, sizeof(new_path), "%.*s/%s", 
+                        (int)dir_len, dialog->icon->path, new_name);
+                
+                // Rename the file
+                if (rename(dialog->icon->path, new_path) == 0) {
+                    log_error("[INFO] Renamed '%s' to '%s'", dialog->icon->path, new_path);
+                    needs_refresh = true;
+                } else {
+                    log_error("[WARNING] Failed to rename '%s' to '%s': %s", 
+                             dialog->icon->path, new_path, strerror(errno));
+                }
+            }
+        }
+    }
+    
+    // 2. Save comment to extended attributes
+    if (dialog->comment_field) {
+        const char *comment = inputfield_get_text(dialog->comment_field);
+        if (comment && *comment) {
+            // Set the comment xattr
+            if (setxattr(dialog->icon->path, "user.comment", comment, 
+                        strlen(comment), 0) == -1) {
+                log_error("[WARNING] Failed to set comment xattr: %s", strerror(errno));
+            } else {
+                log_error("[INFO] Set comment for '%s': %s", dialog->icon->path, comment);
+            }
+        } else {
+            // Remove comment if empty
+            removexattr(dialog->icon->path, "user.comment");
+        }
+    }
+    
+    // 3. Update default application (xdg-mime) for files only
+    if (!dialog->is_directory && dialog->app_field) {
+        const char *app = inputfield_get_text(dialog->app_field);
+        if (app && *app) {
+            // Get MIME type for the file
+            char cmd[PATH_SIZE * 2];
+            snprintf(cmd, sizeof(cmd), "xdg-mime query filetype '%s' 2>/dev/null", 
+                    dialog->icon->path);
+            
+            FILE *fp = popen(cmd, "r");
+            if (fp) {
+                char mimetype[256];
+                if (fgets(mimetype, sizeof(mimetype), fp)) {
+                    // Remove newline
+                    size_t len = strlen(mimetype);
+                    if (len > 0 && mimetype[len-1] == '\n') {
+                        mimetype[len-1] = '\0';
+                    }
+                    
+                    // Set default application for this MIME type
+                    // Add .desktop extension if not present
+                    char desktop_file[256];
+                    if (strstr(app, ".desktop")) {
+                        snprintf(desktop_file, sizeof(desktop_file), "%s", app);
+                    } else {
+                        snprintf(desktop_file, sizeof(desktop_file), "%s.desktop", app);
+                    }
+                    
+                    snprintf(cmd, sizeof(cmd), "xdg-mime default '%s' '%s' 2>/dev/null", 
+                            desktop_file, mimetype);
+                    int result = system(cmd);
+                    if (result == 0) {
+                        log_error("[INFO] Set default app for %s to %s", mimetype, desktop_file);
+                    } else {
+                        log_error("[WARNING] Failed to set default app for %s", mimetype);
+                    }
+                }
+                pclose(fp);
+            }
+        }
+    }
+    
+    // TODO: Refresh the workbench window if needed
+    // For now, user needs to manually refresh after rename
+    if (needs_refresh) {
+        log_error("[INFO] File renamed - manual refresh may be needed");
+    }
 }
 
 // Format file size for display
@@ -294,8 +430,73 @@ static Picture create_2x_icon(FileIcon *icon) {
 
 // Event handlers
 bool iconinfo_handle_key_press(XKeyEvent *event) {
-    // TODO: Implement keyboard handling (Tab, Enter, Escape)
-    return false;
+    if (!event) return false;
+    
+    Canvas *canvas = find_canvas(event->window);
+    if (!canvas) return false;
+    
+    IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
+    if (!dialog) return false;
+    
+    // Route keyboard events to the focused InputField
+    bool handled = false;
+    
+    // Check which field has focus and route the event to it
+    if (dialog->name_field && dialog->name_field->has_focus) {
+        handled = inputfield_handle_key(dialog->name_field, event);
+    } else if (dialog->comment_field && dialog->comment_field->has_focus) {
+        handled = inputfield_handle_key(dialog->comment_field, event);
+    } else if (dialog->app_field && dialog->app_field->has_focus) {
+        handled = inputfield_handle_key(dialog->app_field, event);
+    }
+    
+    // Handle Tab key to switch between fields
+    if (!handled) {
+        KeySym keysym = XLookupKeysym(event, 0);
+        if (keysym == XK_Tab) {
+            // Find which field has focus and move to the next one
+            if (dialog->name_field && dialog->name_field->has_focus) {
+                dialog->name_field->has_focus = false;
+                if (dialog->comment_field) {
+                    dialog->comment_field->has_focus = true;
+                    dialog->comment_field->cursor_pos = strlen(dialog->comment_field->text);
+                }
+            } else if (dialog->comment_field && dialog->comment_field->has_focus) {
+                dialog->comment_field->has_focus = false;
+                if (dialog->app_field && !dialog->app_field->disabled) {
+                    dialog->app_field->has_focus = true;
+                    dialog->app_field->cursor_pos = strlen(dialog->app_field->text);
+                } else if (dialog->name_field) {
+                    // Wrap around if app field is disabled
+                    dialog->name_field->has_focus = true;
+                    dialog->name_field->cursor_pos = strlen(dialog->name_field->text);
+                }
+            } else if (dialog->app_field && dialog->app_field->has_focus) {
+                dialog->app_field->has_focus = false;
+                if (dialog->name_field) {
+                    dialog->name_field->has_focus = true;
+                    dialog->name_field->cursor_pos = strlen(dialog->name_field->text);
+                }
+            } else {
+                // No field has focus, give it to the first one
+                if (dialog->name_field) {
+                    dialog->name_field->has_focus = true;
+                    dialog->name_field->cursor_pos = strlen(dialog->name_field->text);
+                }
+            }
+            handled = true;
+        } else if (keysym == XK_Escape) {
+            // Close dialog on Escape
+            close_icon_info_dialog(dialog);
+            return true;
+        }
+    }
+    
+    if (handled) {
+        redraw_canvas(canvas);
+    }
+    
+    return handled;
 }
 
 bool iconinfo_handle_button_press(XButtonEvent *event) {
@@ -308,44 +509,65 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
     if (!dialog) return false;
     
     // Check for "Get Size" button if this is a directory
-    if (dialog->is_directory && !dialog->calculating_size && dialog->size_calc_pid <= 0) {
-        // Calculate position of "Get Size" button (next to Size: label)
-        int text_x = ICONINFO_MARGIN + BORDER_WIDTH_LEFT + (ICONINFO_ICON_SIZE * 2) + (ICONINFO_SPACING * 2);
-        int text_y = ICONINFO_MARGIN + BORDER_HEIGHT_TOP + 60;
-        int button_x = text_x + 50;  // After "Size: " text
-        int button_width = 70;
-        int button_height = 20;
-        
-        if (event->x >= button_x && event->x < button_x + button_width &&
-            event->y >= text_y - 15 && event->y < text_y - 15 + button_height) {
+    if (dialog->get_size_button && dialog->is_directory && 
+        !dialog->calculating_size && dialog->size_calc_pid <= 0) {
+        // Use the button's own hit testing
+        if (button_handle_click(dialog->get_size_button, event->x, event->y)) {
             dialog->get_size_pressed = true;
             redraw_canvas(canvas);
             return true;
         }
     }
     
-    // Calculate button positions (same as in render)
-    int button_y = canvas->height - BORDER_HEIGHT_BOTTOM - ICONINFO_MARGIN - ICONINFO_BUTTON_HEIGHT;
-    int ok_x = canvas->width / 2 - ICONINFO_BUTTON_WIDTH - 20;
-    int cancel_x = canvas->width / 2 + 20;
-    
-    // Check if click is on OK button
-    if (event->x >= ok_x && event->x < ok_x + ICONINFO_BUTTON_WIDTH &&
-        event->y >= button_y && event->y < button_y + ICONINFO_BUTTON_HEIGHT) {
+    // Check OK button using toolkit hit testing
+    if (dialog->ok_button && button_handle_click(dialog->ok_button, event->x, event->y)) {
         dialog->ok_pressed = true;
         redraw_canvas(canvas);
         return true;
     }
     
-    // Check if click is on Cancel button
-    if (event->x >= cancel_x && event->x < cancel_x + ICONINFO_BUTTON_WIDTH &&
-        event->y >= button_y && event->y < button_y + ICONINFO_BUTTON_HEIGHT) {
+    // Check Cancel button using toolkit hit testing
+    if (dialog->cancel_button && button_handle_click(dialog->cancel_button, event->x, event->y)) {
         dialog->cancel_pressed = true;
         redraw_canvas(canvas);
         return true;
     }
     
-    // TODO: Handle input field clicks
+    // Handle input field clicks for focus and cursor positioning
+    bool field_clicked = false;
+    
+    // Check name field
+    if (dialog->name_field && inputfield_handle_click(dialog->name_field, event->x, event->y)) {
+        // Remove focus from other fields
+        if (dialog->comment_field) dialog->comment_field->has_focus = false;
+        if (dialog->app_field) dialog->app_field->has_focus = false;
+        field_clicked = true;
+    }
+    // Check comment field
+    else if (dialog->comment_field && inputfield_handle_click(dialog->comment_field, event->x, event->y)) {
+        // Remove focus from other fields
+        if (dialog->name_field) dialog->name_field->has_focus = false;
+        if (dialog->app_field) dialog->app_field->has_focus = false;
+        field_clicked = true;
+    }
+    // Check app field
+    else if (dialog->app_field && inputfield_handle_click(dialog->app_field, event->x, event->y)) {
+        // Remove focus from other fields
+        if (dialog->name_field) dialog->name_field->has_focus = false;
+        if (dialog->comment_field) dialog->comment_field->has_focus = false;
+        field_clicked = true;
+    }
+    // Click outside all fields - remove focus from all
+    else {
+        if (dialog->name_field) dialog->name_field->has_focus = false;
+        if (dialog->comment_field) dialog->comment_field->has_focus = false;
+        if (dialog->app_field) dialog->app_field->has_focus = false;
+    }
+    
+    if (field_clicked) {
+        redraw_canvas(canvas);
+        return true;
+    }
     
     return false;
 }
@@ -360,16 +582,9 @@ bool iconinfo_handle_button_release(XButtonEvent *event) {
     if (!dialog) return false;
     
     // Check for "Get Size" button release
-    if (dialog->get_size_pressed) {
-        // Calculate position of "Get Size" button (same as in button_press)
-        int text_x = ICONINFO_MARGIN + BORDER_WIDTH_LEFT + (ICONINFO_ICON_SIZE * 2) + (ICONINFO_SPACING * 2);
-        int text_y = ICONINFO_MARGIN + BORDER_HEIGHT_TOP + 60;
-        int button_x = text_x + 50;
-        int button_width = 70;
-        int button_height = 20;
-        
-        if (event->x >= button_x && event->x < button_x + button_width &&
-            event->y >= text_y - 15 && event->y < text_y - 15 + button_height) {
+    if (dialog->get_size_pressed && dialog->get_size_button) {
+        // Use the button's own hit testing
+        if (button_handle_release(dialog->get_size_button, event->x, event->y)) {
             // Start directory size calculation
             dialog->get_size_pressed = false;
             dialog->calculating_size = true;
@@ -389,40 +604,40 @@ bool iconinfo_handle_button_release(XButtonEvent *event) {
         
         // Button was pressed but released outside - reset state
         dialog->get_size_pressed = false;
+        if (dialog->get_size_button) {
+            dialog->get_size_button->pressed = false;
+        }
         redraw_canvas(canvas);
         return true;
     }
     
-    // Calculate button positions (same as in render)
-    int button_y = canvas->height - BORDER_HEIGHT_BOTTOM - ICONINFO_MARGIN - ICONINFO_BUTTON_HEIGHT;
-    int ok_x = canvas->width / 2 - ICONINFO_BUTTON_WIDTH - 20;
-    int cancel_x = canvas->width / 2 + 20;
-    
     bool handled = false;
     
-    // Check if release is on OK button while it was pressed
-    if (dialog->ok_pressed && 
-        event->x >= ok_x && event->x < ok_x + ICONINFO_BUTTON_WIDTH &&
-        event->y >= button_y && event->y < button_y + ICONINFO_BUTTON_HEIGHT) {
+    // Check OK button using toolkit hit testing
+    if (dialog->ok_pressed && dialog->ok_button) {
+        if (button_handle_release(dialog->ok_button, event->x, event->y)) {
+            dialog->ok_pressed = false;
+            save_file_changes(dialog);
+            close_icon_info_dialog(dialog);
+            return true;  // Return immediately to avoid use-after-free
+        }
+        // Button was pressed but released outside
         dialog->ok_pressed = false;
-        // TODO: save_file_changes(dialog);
-        close_icon_info_dialog(dialog);
-        return true;  // Return immediately to avoid use-after-free
+        dialog->ok_button->pressed = false;
+        redraw_canvas(canvas);
+        handled = true;
     }
     
-    // Check if release is on Cancel button while it was pressed
-    else if (dialog->cancel_pressed && 
-             event->x >= cancel_x && event->x < cancel_x + ICONINFO_BUTTON_WIDTH &&
-             event->y >= button_y && event->y < button_y + ICONINFO_BUTTON_HEIGHT) {
+    // Check Cancel button using toolkit hit testing
+    if (dialog->cancel_pressed && dialog->cancel_button) {
+        if (button_handle_release(dialog->cancel_button, event->x, event->y)) {
+            dialog->cancel_pressed = false;
+            close_icon_info_dialog(dialog);
+            return true;  // Return immediately to avoid use-after-free
+        }
+        // Button was pressed but released outside
         dialog->cancel_pressed = false;
-        close_icon_info_dialog(dialog);
-        return true;  // Return immediately to avoid use-after-free
-    }
-    
-    // Reset button states if we had any pressed
-    if (dialog->ok_pressed || dialog->cancel_pressed) {
-        dialog->ok_pressed = false;
-        dialog->cancel_pressed = false;
+        dialog->cancel_button->pressed = false;
         redraw_canvas(canvas);
         handled = true;
     }
@@ -480,8 +695,12 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
     // Destroy input fields
     if (dialog->name_field) inputfield_destroy(dialog->name_field);
     if (dialog->comment_field) inputfield_destroy(dialog->comment_field);
-    if (dialog->path_field) inputfield_destroy(dialog->path_field);
     if (dialog->app_field) inputfield_destroy(dialog->app_field);
+    
+    // Destroy buttons
+    if (dialog->get_size_button) button_destroy(dialog->get_size_button);
+    if (dialog->ok_button) button_destroy(dialog->ok_button);
+    if (dialog->cancel_button) button_destroy(dialog->cancel_button);
     
     // Destroy canvas
     if (dialog->canvas) {
@@ -518,7 +737,6 @@ void close_icon_info_dialog_by_canvas(Canvas *canvas) {
         // Destroy input fields
         if (dialog->name_field) inputfield_destroy(dialog->name_field);
         if (dialog->comment_field) inputfield_destroy(dialog->comment_field);
-        if (dialog->path_field) inputfield_destroy(dialog->path_field);
         if (dialog->app_field) inputfield_destroy(dialog->app_field);
         
         // Don't destroy canvas here - intuition.c will do it
@@ -584,10 +802,10 @@ void render_iconinfo_content(Canvas *canvas) {
     int content_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
     XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, content_x, content_y, content_w, content_h);
     
-    // Draw 2x icon with sunken frame
+    // Draw icon with sunken frame (reduced to half size)
     int icon_x = content_x + ICONINFO_MARGIN;
     int icon_y = content_y + ICONINFO_MARGIN;
-    int icon_size = ICONINFO_ICON_SIZE * 2;
+    int icon_size = ICONINFO_ICON_SIZE;  // Changed from * 2 to just the base size (64)
     
     // Draw sunken frame (black top/left, white bottom/right)
     XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
@@ -599,9 +817,18 @@ void render_iconinfo_content(Canvas *canvas) {
     XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
                         icon_x + icon_size, icon_y - 1, 1, icon_size + 2);
     
-    // Center the icon in the sunken rectangle
+    // Center the icon in the smaller sunken rectangle
+    // Most icons are smaller than 64x64, so they'll fit nicely centered
     int centered_x = icon_x + (icon_size - dialog->icon->width) / 2;
     int centered_y = icon_y + (icon_size - dialog->icon->height) / 2;
+    
+    // If icon is larger than the rectangle, we need to scale or clip
+    // For now, we'll just center and let it overflow (could add scaling later)
+    if (dialog->icon->width > icon_size || dialog->icon->height > icon_size) {
+        // Icon is too big - center it anyway, it will be clipped by the rectangle visually
+        centered_x = icon_x + (icon_size - dialog->icon->width) / 2;
+        centered_y = icon_y + (icon_size - dialog->icon->height) / 2;
+    }
     
     // Render the icon centered
     Picture src = dialog->icon->normal_picture;
@@ -619,7 +846,7 @@ void render_iconinfo_content(Canvas *canvas) {
     int y = ICONINFO_MARGIN + BORDER_HEIGHT_TOP;
     int field_width = content_w - (2 * ICONINFO_MARGIN);
     
-    // Position for text fields (to the right of icon)
+    // Position for text fields (to the right of icon - now using smaller icon)
     int text_x = icon_x + icon_size + ICONINFO_SPACING * 2;
     int text_y = icon_y;
     
@@ -667,16 +894,24 @@ void render_iconinfo_content(Canvas *canvas) {
             // If it's a directory and not calculated yet, draw a button
             if (dialog->is_directory && !dialog->calculating_size && dialog->size_calc_pid <= 0 
                 && strcmp(dialog->size_text, "[Get Size]") == 0) {
-                // Draw "Get Size" button
-                Button get_size_btn = {
-                    .x = text_x + 50,
-                    .y = text_y - 15,
-                    .width = 70,
-                    .height = 20,
-                    .label = "Get Size",
-                    .pressed = dialog->get_size_pressed
-                };
-                button_draw(&get_size_btn, dest, dpy, xft, font);
+                // Create/update the button struct if needed
+                if (!dialog->get_size_button) {
+                    dialog->get_size_button = button_create(
+                        text_x + 50,
+                        text_y - 15,
+                        70,
+                        20,
+                        "Get Size"
+                    );
+                } else {
+                    // Update position in case window was resized or layout changed
+                    dialog->get_size_button->x = text_x + 50;
+                    dialog->get_size_button->y = text_y - 15;
+                    dialog->get_size_button->pressed = dialog->get_size_pressed;
+                }
+                
+                // Draw the button using toolkit
+                button_draw(dialog->get_size_button, dest, dpy, xft, font);
             } else {
                 // Draw the size text (file size, calculating, or calculated dir size)
                 XftDrawStringUtf8(xft, &color, font, text_x + 50, text_y,
@@ -758,8 +993,8 @@ void render_iconinfo_content(Canvas *canvas) {
                     DefaultColormap(dpy, DefaultScreen(dpy)), &color);
     }
     
-    // Path field
-    if (dialog->path_field) {
+    // Path (read-only text, not an input field)
+    if (dialog->icon && dialog->icon->path) {
         if (xft) {
             XftColor color;
             XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
@@ -768,18 +1003,47 @@ void render_iconinfo_content(Canvas *canvas) {
             
             XftFont *font = get_font();
             if (font) {
+                // Draw "Path:" label
                 XftDrawStringUtf8(xft, &color, font, x, y + 15,
                                  (XftChar8 *)"Path:", 5);
+                
+                // Draw the path as plain text (not editable)
+                int path_x = x + ICONINFO_LABEL_WIDTH;
+                int path_width = field_width - ICONINFO_LABEL_WIDTH;
+                
+                // Truncate path if too long (show end of path with "...")
+                const char *path = dialog->icon->path;
+                char display_path[256];
+                XGlyphInfo extents;
+                XftTextExtentsUtf8(dpy, font, (FcChar8 *)path, strlen(path), &extents);
+                
+                if (extents.width > path_width) {
+                    // Path is too long, show "..." and the end part
+                    int path_len = strlen(path);
+                    int chars_to_show = path_len;
+                    
+                    // Find how many characters from the end fit
+                    while (chars_to_show > 0) {
+                        const char *end_part = path + (path_len - chars_to_show);
+                        snprintf(display_path, sizeof(display_path), "...%s", end_part);
+                        XftTextExtentsUtf8(dpy, font, (FcChar8 *)display_path, strlen(display_path), &extents);
+                        if (extents.width <= path_width) {
+                            break;
+                        }
+                        chars_to_show--;
+                    }
+                } else {
+                    // Path fits, show it as-is
+                    snprintf(display_path, sizeof(display_path), "%s", path);
+                }
+                
+                // Draw the path text
+                XftDrawStringUtf8(xft, &color, font, path_x, y + 15,
+                                 (XftChar8 *)display_path, strlen(display_path));
             }
             XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
                         DefaultColormap(dpy, DefaultScreen(dpy)), &color);
         }
-        
-        dialog->path_field->x = x + ICONINFO_LABEL_WIDTH;
-        dialog->path_field->y = y;
-        dialog->path_field->width = field_width - ICONINFO_LABEL_WIDTH;
-        XftFont *font = get_font();
-        inputfield_draw(dialog->path_field, dest, dpy, xft, font);
         y += 35;
     }
     
@@ -813,24 +1077,31 @@ void render_iconinfo_content(Canvas *canvas) {
     int ok_x = canvas->width / 2 - ICONINFO_BUTTON_WIDTH - 20;
     int cancel_x = canvas->width / 2 + 20;
     
-    // Create temporary button structures for drawing
-    Button ok_btn = {
-        .x = ok_x, .y = button_y,
-        .width = ICONINFO_BUTTON_WIDTH, .height = ICONINFO_BUTTON_HEIGHT,
-        .label = "OK",
-        .pressed = dialog->ok_pressed
-    };
+    // Create/update OK button
+    if (!dialog->ok_button) {
+        dialog->ok_button = button_create(ok_x, button_y, 
+                                         ICONINFO_BUTTON_WIDTH, ICONINFO_BUTTON_HEIGHT, "OK");
+    } else {
+        // Update position in case window was resized
+        dialog->ok_button->x = ok_x;
+        dialog->ok_button->y = button_y;
+        dialog->ok_button->pressed = dialog->ok_pressed;
+    }
     
-    Button cancel_btn = {
-        .x = cancel_x, .y = button_y,
-        .width = ICONINFO_BUTTON_WIDTH, .height = ICONINFO_BUTTON_HEIGHT,
-        .label = "Cancel",
-        .pressed = dialog->cancel_pressed
-    };
+    // Create/update Cancel button
+    if (!dialog->cancel_button) {
+        dialog->cancel_button = button_create(cancel_x, button_y,
+                                             ICONINFO_BUTTON_WIDTH, ICONINFO_BUTTON_HEIGHT, "Cancel");
+    } else {
+        // Update position in case window was resized
+        dialog->cancel_button->x = cancel_x;
+        dialog->cancel_button->y = button_y;
+        dialog->cancel_button->pressed = dialog->cancel_pressed;
+    }
     
     XftFont *font = get_font();
     if (font) {
-        button_draw(&ok_btn, dest, dpy, xft, font);
-        button_draw(&cancel_btn, dest, dpy, xft, font);
+        button_draw(dialog->ok_button, dest, dpy, xft, font);
+        button_draw(dialog->cancel_button, dest, dpy, xft, font);
     }
 }

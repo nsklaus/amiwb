@@ -1203,7 +1203,7 @@ static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy) {
 }
 
 void iconify_canvas(Canvas *c) {
-    if (!c || c->type != WINDOW) return;
+    if (!c || (c->type != WINDOW && c->type != DIALOG)) return;
     Canvas *desk = get_desktop_canvas(); if (!desk) return;
     int nx = 20, ny = 40; find_next_desktop_slot(desk, &nx, &ny);
     const char *icon_path = NULL; char *label = NULL;
@@ -1213,7 +1213,41 @@ void iconify_canvas(Canvas *c) {
     label = c->title_base ? strdup(c->title_base) : strdup("Untitled");
     
     if (c->client_win == None) { 
-        icon_path = "/usr/local/share/amiwb/icons/filer.info";
+        // For workbench windows and dialogs without client
+        if (c->type == DIALOG) {
+            // Use specific icons for different dialog types based on title
+            if (c->title_base) {
+                if (strstr(c->title_base, "Rename")) {
+                    icon_path = "/usr/local/share/amiwb/icons/rename.info";
+                } else if (strstr(c->title_base, "Delete")) {
+                    icon_path = "/usr/local/share/amiwb/icons/delete.info";
+                } else if (strstr(c->title_base, "Execute")) {
+                    icon_path = "/usr/local/share/amiwb/icons/execute.info";
+                } else if (strstr(c->title_base, "Progress") || strstr(c->title_base, "Copying") || strstr(c->title_base, "Moving")) {
+                    icon_path = "/usr/local/share/amiwb/icons/progress.info";
+                } else if (strstr(c->title_base, "Information")) {
+                    icon_path = "/usr/local/share/amiwb/icons/iconinfo.info";
+                } else {
+                    icon_path = "/usr/local/share/amiwb/icons/dialog.info";  // Generic dialog icon
+                }
+            } else {
+                icon_path = "/usr/local/share/amiwb/icons/dialog.info";
+            }
+            
+            // Check if dialog-specific icon exists, fall back to generic dialog icon or filer
+            struct stat st;
+            if (stat(icon_path, &st) != 0) {
+                // Try generic dialog icon
+                icon_path = "/usr/local/share/amiwb/icons/dialog.info";
+                if (stat(icon_path, &st) != 0) {
+                    // Fall back to filer icon as last resort
+                    icon_path = "/usr/local/share/amiwb/icons/filer.info";
+                }
+            }
+        } else {
+            // Regular workbench window
+            icon_path = "/usr/local/share/amiwb/icons/filer.info";
+        }
     } else {
         // Try to find a specific icon for this app using the title_base
         char icon_full[256]; 
