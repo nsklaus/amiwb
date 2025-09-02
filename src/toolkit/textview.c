@@ -98,7 +98,26 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
         XftTextExtentsUtf8(display, tv->font, (FcChar8*)"M", 1, &extents);
         tv->char_width = extents.xOff;
         tv->line_height = tv->font->height + 2;  // Small padding
+        
+        // Defensive check: ensure line_height is reasonable
+        if (tv->line_height <= 0) {
+            fprintf(stderr, "[ERROR] TextView: Invalid line_height calculated: %d\n", tv->line_height);
+            tv->line_height = 16;  // Fallback to a reasonable default
+        }
+        
         tv->visible_lines = tv->height / tv->line_height;
+        if (tv->visible_lines <= 0) {
+            tv->visible_lines = 1;  // At least 1 line must be visible
+        }
+    } else {
+        // No font loaded - use defaults
+        fprintf(stderr, "[WARNING] TextView: No font loaded, using defaults\n");
+        tv->char_width = 8;
+        tv->line_height = 16;
+        tv->visible_lines = tv->height / tv->line_height;
+        if (tv->visible_lines <= 0) {
+            tv->visible_lines = 1;
+        }
     }
     
     // Initialize clipboard atoms
@@ -179,10 +198,17 @@ void textview_set_text(TextView *tv, const char *text) {
             tv->lines_dirty = realloc(tv->lines_dirty, tv->line_capacity * sizeof(bool));
         }
         
-        // Copy line
+        // Copy line (strip \r if present)
         int len = end - start;
+        // Check if line ends with \r (CRLF)
+        if (len > 0 && start[len - 1] == '\r') {
+            len--;  // Remove the \r
+        }
+        
         tv->lines[tv->line_count] = malloc(len + 1);
-        strncpy(tv->lines[tv->line_count], start, len);
+        if (len > 0) {
+            strncpy(tv->lines[tv->line_count], start, len);
+        }
         tv->lines[tv->line_count][len] = '\0';
         tv->lines_dirty[tv->line_count] = true;
         tv->line_count++;
@@ -196,9 +222,11 @@ void textview_set_text(TextView *tv, const char *text) {
         tv->line_count = 1;
     }
     
-    // Reset cursor
+    // Reset cursor and scroll position
     tv->cursor_line = 0;
     tv->cursor_col = 0;
+    tv->scroll_x = 0;
+    tv->scroll_y = 0;
     tv->has_selection = false;
     tv->modified = false;
     
@@ -657,8 +685,17 @@ void textview_draw(TextView *tv) {
     
     // Draw visible lines
     int y = tv->line_height;
+    
+    // Defensive check for visible_lines
+    int lines_to_draw = tv->visible_lines;
+    if (lines_to_draw <= 0) {
+        fprintf(stderr, "[DEBUG] TextView: visible_lines is %d, forcing to viewport calculation\n", lines_to_draw);
+        lines_to_draw = tv->height / 16;  // Use default line height
+        if (lines_to_draw <= 0) lines_to_draw = 1;
+    }
+    
     for (int i = tv->scroll_y; 
-         i < tv->line_count && i < tv->scroll_y + tv->visible_lines; 
+         i < tv->line_count && i < tv->scroll_y + lines_to_draw; 
          i++) {
         
         // Draw line number if enabled
@@ -1761,6 +1798,14 @@ bool textview_handle_configure(TextView *tv, XConfigureEvent *event) {
     // Recalculate visible lines
     if (tv->line_height > 0) {
         tv->visible_lines = tv->height / tv->line_height;
+        if (tv->visible_lines <= 0) {
+            fprintf(stderr, "[DEBUG] TextView: Calculated visible_lines as %d, forcing to 1\n", tv->visible_lines);
+            tv->visible_lines = 1;
+        }
+    } else {
+        fprintf(stderr, "[WARNING] TextView: line_height is %d during resize, using default\n", tv->line_height);
+        tv->visible_lines = tv->height / 16;  // Use default
+        if (tv->visible_lines <= 0) tv->visible_lines = 1;
     }
     
     // Update scrollbar and redraw
@@ -1779,6 +1824,14 @@ void textview_update_scrollbar(TextView *tv) {
     if (tv->h_scrollbar_visible) viewable_height -= HORI_SCROLLBAR_HEIGHT;
     if (tv->line_height > 0) {
         tv->visible_lines = viewable_height / tv->line_height;
+        if (tv->visible_lines <= 0) {
+            fprintf(stderr, "[DEBUG] TextView: In scrollbar update, visible_lines = %d, forcing to 1\n", tv->visible_lines);
+            tv->visible_lines = 1;
+        }
+    } else {
+        fprintf(stderr, "[WARNING] TextView: line_height is %d in scrollbar update\n", tv->line_height);
+        tv->visible_lines = viewable_height / 16;
+        if (tv->visible_lines <= 0) tv->visible_lines = 1;
     }
     
     // Calculate maximum line width for horizontal scrollbar
