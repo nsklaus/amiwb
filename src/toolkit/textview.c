@@ -95,7 +95,7 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     // Calculate font metrics
     if (tv->font) {
         XGlyphInfo extents;
-        XftTextExtents8(display, tv->font, (FcChar8*)"M", 1, &extents);
+        XftTextExtentsUtf8(display, tv->font, (FcChar8*)"M", 1, &extents);
         tv->char_width = extents.xOff;
         tv->line_height = tv->font->height + 2;  // Small padding
         tv->visible_lines = tv->height / tv->line_height;
@@ -539,7 +539,7 @@ void textview_ensure_cursor_visible(TextView *tv) {
             int chars_to_measure = (tv->cursor_col > strlen(line)) ? strlen(line) : tv->cursor_col;
             if (chars_to_measure > 0) {
                 XGlyphInfo extents;
-                XftTextExtents8(tv->display, tv->font, (FcChar8*)line,
+                XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line,
                                chars_to_measure, &extents);
                 cursor_x += extents.xOff;
             }
@@ -605,7 +605,7 @@ void textview_draw(TextView *tv) {
         char line_num_str[32];
         snprintf(line_num_str, sizeof(line_num_str), "%d ", tv->line_count);
         XGlyphInfo extents;
-        XftTextExtents8(tv->display, tv->font, (FcChar8*)line_num_str, 
+        XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line_num_str, 
                        strlen(line_num_str), &extents);
         tv->line_number_width = extents.xOff + 10;
         x_start = tv->line_number_width;
@@ -621,7 +621,7 @@ void textview_draw(TextView *tv) {
     for (int i = 0; i < tv->line_count; i++) {
         if (tv->lines[i] && *tv->lines[i]) {
             XGlyphInfo extents;
-            XftTextExtents8(tv->display, tv->font, (FcChar8*)tv->lines[i],
+            XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)tv->lines[i],
                           strlen(tv->lines[i]), &extents);
             int line_width = x_start + extents.xOff + 10;  // Include margins
             if (line_width > tv->max_line_width) {
@@ -665,7 +665,7 @@ void textview_draw(TextView *tv) {
         if (tv->line_numbers) {
             char line_num[32];
             snprintf(line_num, sizeof(line_num), "%4d", i + 1);
-            XftDrawString8(tv->xft_draw, &line_num_color, tv->font,
+            XftDrawStringUtf8(tv->xft_draw, &line_num_color, tv->font,
                           5, y - 2, (FcChar8*)line_num, strlen(line_num));
         }
         
@@ -709,14 +709,14 @@ void textview_draw(TextView *tv) {
                     int sel_x = x_start - tv->scroll_x;
                     if (draw_start > 0) {
                         XGlyphInfo extents;
-                        XftTextExtents8(tv->display, tv->font, (FcChar8*)line, draw_start, &extents);
+                        XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line, draw_start, &extents);
                         sel_x += extents.xOff;
                     }
                     
                     int sel_width = 0;
                     if (draw_end > draw_start) {
                         XGlyphInfo extents;
-                        XftTextExtents8(tv->display, tv->font, (FcChar8*)&line[draw_start], 
+                        XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[draw_start], 
                                       draw_end - draw_start, &extents);
                         sel_width = extents.xOff;
                     }
@@ -755,7 +755,7 @@ void textview_draw(TextView *tv) {
             XUnionRectWithRegion(&clip_rect, clip_region, clip_region);
             XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
             
-            XftDrawString8(tv->xft_draw, &fg_color, tv->font,
+            XftDrawStringUtf8(tv->xft_draw, &fg_color, tv->font,
                           text_x, y - 2, (FcChar8*)line, strlen(line));
             
             // Reset clipping
@@ -772,7 +772,7 @@ void textview_draw(TextView *tv) {
                 int chars_to_measure = (tv->cursor_col > strlen(line)) ? strlen(line) : tv->cursor_col;
                 if (chars_to_measure > 0) {
                     XGlyphInfo extents;
-                    XftTextExtents8(tv->display, tv->font, (FcChar8*)line,
+                    XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line,
                                    chars_to_measure, &extents);
                     cursor_x += extents.xOff;
                 }
@@ -786,7 +786,7 @@ void textview_draw(TextView *tv) {
                 // Draw blue rectangle cursor like InputField
                 // Get size of a space character for cursor width
                 XGlyphInfo space_info;
-                XftTextExtents8(tv->display, tv->font, (FcChar8*)" ", 1, &space_info);
+                XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)" ", 1, &space_info);
                 int cursor_width = space_info.xOff > 0 ? space_info.xOff : 8;
                 
                 // Use XRender to draw blue rectangle
@@ -809,9 +809,20 @@ void textview_draw(TextView *tv) {
                 
                 // If cursor is on a character, redraw that character in white
                 if (tv->cursor_col < strlen(line)) {
-                    char ch[2] = {line[tv->cursor_col], '\0'};
-                    XftDrawString8(tv->xft_draw, &sel_color, tv->font,
-                                 cursor_x, y - 2, (FcChar8*)ch, 1);
+                    // Handle UTF-8 multi-byte characters
+                    unsigned char c = (unsigned char)line[tv->cursor_col];
+                    int char_len = 1;
+                    if (c >= 0xC0 && c <= 0xDF) char_len = 2;
+                    else if (c >= 0xE0 && c <= 0xEF) char_len = 3;
+                    else if (c >= 0xF0 && c <= 0xF7) char_len = 4;
+                    
+                    // Make sure we don't read past the end of the line
+                    if (tv->cursor_col + char_len > strlen(line)) {
+                        char_len = strlen(line) - tv->cursor_col;
+                    }
+                    
+                    XftDrawStringUtf8(tv->xft_draw, &sel_color, tv->font,
+                                 cursor_x, y - 2, (FcChar8*)&line[tv->cursor_col], char_len);
                 }
             }
         }
@@ -1259,7 +1270,7 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
         // Find which character was clicked
         for (int i = 0; i < line_len; i++) {
             XGlyphInfo extents;
-            XftTextExtents8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
+            XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
             int char_width = extents.xOff;
             
             // Check if click is within this character
@@ -1409,7 +1420,7 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
         
         for (int i = 0; i < line_len; i++) {
             XGlyphInfo extents;
-            XftTextExtents8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
+            XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
             int char_width = extents.xOff;
             
             if (event->x < x_pos + char_width / 2) {
@@ -1776,7 +1787,7 @@ void textview_update_scrollbar(TextView *tv) {
     for (int i = 0; i < tv->line_count; i++) {
         if (tv->lines[i] && *tv->lines[i]) {
             XGlyphInfo extents;
-            XftTextExtents8(tv->display, tv->font, (FcChar8*)tv->lines[i],
+            XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)tv->lines[i],
                           strlen(tv->lines[i]), &extents);
             int line_width = x_start + extents.xOff + 10;
             if (line_width > tv->max_line_width) {
