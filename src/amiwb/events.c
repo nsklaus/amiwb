@@ -43,41 +43,35 @@ static Window g_press_target = 0;
 
 // Grab global shortcuts at X11 level so applications can't intercept them
 void grab_global_shortcuts(Display *display, Window root) {
-    // Super key combinations for window management
-    XGrabKey(display, XKeysymToKeycode(display, XK_q),
-             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+Q
-    XGrabKey(display, XKeysymToKeycode(display, XK_r),
-             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+R
-    XGrabKey(display, XKeysymToKeycode(display, XK_s),
-             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+S
+    // Only grab shortcuts that MUST work even when other apps have focus:
     
-    // Super-only combinations
-    XGrabKey(display, XKeysymToKeycode(display, XK_e),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+E
-    XGrabKey(display, XKeysymToKeycode(display, XK_l),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+L
-    XGrabKey(display, XKeysymToKeycode(display, XK_r),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+R
-    XGrabKey(display, XKeysymToKeycode(display, XK_semicolon),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+;
+    // Super key combinations for window management - ALWAYS grabbed
     XGrabKey(display, XKeysymToKeycode(display, XK_q),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Q
-    XGrabKey(display, XKeysymToKeycode(display, XK_p),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+P
-    XGrabKey(display, XKeysymToKeycode(display, XK_o),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+O
-    XGrabKey(display, XKeysymToKeycode(display, XK_c),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+C
-    XGrabKey(display, XKeysymToKeycode(display, XK_d),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+D
-    XGrabKey(display, XKeysymToKeycode(display, XK_n),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+N
-    XGrabKey(display, XKeysymToKeycode(display, XK_a),
-             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+A
+             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+Q (Quit)
+    XGrabKey(display, XKeysymToKeycode(display, XK_r),
+             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+R (Restart)
+    XGrabKey(display, XKeysymToKeycode(display, XK_s),
+             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+S (Suspend)
+    
+    // Workbench operations - ALWAYS grabbed
+    XGrabKey(display, XKeysymToKeycode(display, XK_e),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+E (Execute)
+    XGrabKey(display, XKeysymToKeycode(display, XK_l),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+L (Requester)
+    
+    // Window management - ALWAYS grabbed  
+    XGrabKey(display, XKeysymToKeycode(display, XK_q),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Q (Close)
     XGrabKey(display, XKeysymToKeycode(display, XK_m),
              Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+M (cycle next)
     XGrabKey(display, XKeysymToKeycode(display, XK_m),
              Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+M (cycle prev)
+    
+    // Icon operations - DO NOT GRAB
+    // Super+R (Rename), Super+; (Cleanup), Super+P (Parent), Super+O (Open), 
+    // Super+C (Copy), Super+D (Delete), Super+N (New), Super+A (Select All)
+    // These will only work when AmiWB or its windows have focus,
+    // allowing client apps to use these shortcuts for their own purposes
     
     // Media keys - grab with AnyModifier so they work everywhere
     XGrabKey(display, XKeysymToKeycode(display, XF86XK_MonBrightnessUp),
@@ -741,55 +735,92 @@ void handle_key_press(XKeyEvent *event) {
                 trigger_requester_action();
                 return;
             }
-            // Super+R: Rename selected icon
+            // Super+R: Rename selected icon (only if no client window has focus)
             if (keysym == XK_r || keysym == XK_R) {
-                trigger_rename_action();
-                return;
+                Canvas *active = get_active_window();
+                if (!active || active->client_win == None) {
+                    trigger_rename_action();
+                    return;
+                }
+                // Let client window handle it
             }
-            // Super+I: Icon Information
+            // Super+I: Icon Information (only if no client window has focus)
             if (keysym == XK_i || keysym == XK_I) {
-                trigger_icon_info_action();
-                return;
+                Canvas *active = get_active_window();
+                if (!active || active->client_win == None) {
+                    trigger_icon_info_action();
+                    return;
+                }
+                // Let client window handle it
             }
-            // Super+;: Clean up icons
+            // Super+;: Clean up icons (only if no client window has focus)
             if (keysym == XK_semicolon) {
-                trigger_cleanup_action();
-                return;
+                Canvas *active = get_active_window();
+                if (!active || active->client_win == None) {
+                    trigger_cleanup_action();
+                    return;
+                }
+                // Let client window handle it
             }
             // Super+Q: Close active window
             if (keysym == XK_q || keysym == XK_Q) {
                 trigger_close_action();
                 return;
             }
-            // Super+P: Open parent directory
+            // Super+P: Open parent directory (only if no client window has focus)
             if (keysym == XK_p || keysym == XK_P) {
-                trigger_parent_action();
-                return;
+                Canvas *active = get_active_window();
+                if (!active || active->client_win == None) {
+                    trigger_parent_action();
+                    return;
+                }
+                // Let client window handle it
             }
-            // Super+O: Open selected icon
+            // Super+O: Open selected icon (only if no client window has focus)
             if (keysym == XK_o || keysym == XK_O) {
-                trigger_open_action();
-                return;
+                Canvas *active = get_active_window();
+                if (!active || active->client_win == None) {
+                    trigger_open_action();
+                    return;
+                }
+                // Let client window handle it
             }
-            // Super+C: Copy selected icon
+            // Super+C: Copy selected icon (only if no client window has focus)
             if (keysym == XK_c || keysym == XK_C) {
-                trigger_copy_action();
-                return;
+                Canvas *active = get_active_window();
+                if (!active || active->client_win == None) {
+                    // Only trigger icon copy if it's a Workbench window
+                    trigger_copy_action();
+                    return;
+                }
+                // Let client window handle it
             }
-            // Super+D: Delete selected icon
+            // Super+D: Delete selected icon (only if no client window has focus)
             if (keysym == XK_d || keysym == XK_D) {
-                trigger_delete_action();
-                return;
+                Canvas *active = get_active_window();
+                if (!active || active->client_win == None) {
+                    trigger_delete_action();
+                    return;
+                }
+                // Let client window handle it
             }
-            // Super+N: New Drawer
+            // Super+N: New Drawer (only if no client window has focus)
             if (keysym == XK_n || keysym == XK_N) {
-                trigger_new_drawer_action();
-                return;
+                Canvas *active = get_active_window();
+                if (!active || active->client_win == None) {
+                    trigger_new_drawer_action();
+                    return;
+                }
+                // Let client window handle it (New file in editors)
             }
-            // Super+A: Select Contents
+            // Super+A: Select Contents (only if no client window has focus)
             if (keysym == XK_a || keysym == XK_A) {
-                trigger_select_contents_action();
-                return;
+                Canvas *active = get_active_window();
+                if (!active || active->client_win == None) {
+                    trigger_select_contents_action();
+                    return;
+                }
+                // Let client window handle it (Select All in text editors)
             }
             // Super+M: Cycle to next window
             if (keysym == XK_m || keysym == XK_M) {

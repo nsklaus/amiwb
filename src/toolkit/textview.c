@@ -4,6 +4,7 @@
 #include <string.h>
 #include <X11/keysym.h>
 #include <X11/Xutil.h>
+#include <X11/Xatom.h>
 #include <X11/extensions/Xrender.h>
 
 #define INITIAL_LINE_CAPACITY 100
@@ -93,6 +94,13 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
         tv->visible_lines = tv->height / tv->line_height;
     }
     
+    // Initialize clipboard atoms
+    tv->clipboard_atom = XInternAtom(display, "CLIPBOARD", False);
+    tv->primary_atom = XA_PRIMARY;
+    tv->targets_atom = XInternAtom(display, "TARGETS", False);
+    tv->utf8_atom = XInternAtom(display, "UTF8_STRING", False);
+    tv->clipboard_buffer = NULL;
+    
     // Initialize scrollbar
     textview_update_scrollbar(tv);
     
@@ -126,6 +134,9 @@ void textview_destroy(TextView *tv) {
     free(tv->lines);
     free(tv->lines_dirty);
     if (tv->line_colors) free(tv->line_colors);
+    
+    // Free clipboard buffer
+    if (tv->clipboard_buffer) free(tv->clipboard_buffer);
     
     // Free X resources
     if (tv->xft_draw) XftDrawDestroy(tv->xft_draw);
@@ -221,6 +232,12 @@ char* textview_get_text(TextView *tv) {
 void textview_insert_char(TextView *tv, char c) {
     if (!tv || tv->read_only) return;
     
+    // If there's a selection, delete it first
+    if (tv->has_selection) {
+        textview_delete_selection(tv);
+        tv->has_selection = false;
+    }
+    
     char *line = tv->lines[tv->cursor_line];
     int len = strlen(line);
     
@@ -252,6 +269,12 @@ void textview_insert_char(TextView *tv, char c) {
 // Insert a new line at cursor
 void textview_new_line(TextView *tv) {
     if (!tv || tv->read_only) return;
+    
+    // If there's a selection, delete it first
+    if (tv->has_selection) {
+        textview_delete_selection(tv);
+        tv->has_selection = false;
+    }
     
     // Grow buffer if needed
     if (tv->line_count >= tv->line_capacity) {
@@ -300,6 +323,18 @@ void textview_new_line(TextView *tv) {
 void textview_backspace(TextView *tv) {
     if (!tv || tv->read_only) return;
     
+    // If there's a selection, delete it instead of doing backspace
+    if (tv->has_selection) {
+        textview_delete_selection(tv);
+        tv->has_selection = false;
+        tv->modified = true;
+        if (tv->on_change) tv->on_change(tv);
+        textview_ensure_cursor_visible(tv);
+        textview_update_scrollbar(tv);
+        textview_draw(tv);
+        return;
+    }
+    
     if (tv->cursor_col > 0) {
         // Delete character before cursor
         char *line = tv->lines[tv->cursor_line];
@@ -336,6 +371,59 @@ void textview_backspace(TextView *tv) {
         // Move cursor to join point
         tv->cursor_line--;
         tv->cursor_col = prev_len;
+        tv->lines_dirty[tv->cursor_line] = true;
+    }
+    
+    tv->modified = true;
+    if (tv->on_change) tv->on_change(tv);
+    textview_ensure_cursor_visible(tv);
+    textview_update_scrollbar(tv);
+    textview_draw(tv);
+}
+
+// Delete key at cursor
+void textview_delete_key(TextView *tv) {
+    if (!tv || tv->read_only) return;
+    
+    // If there's a selection, delete it
+    if (tv->has_selection) {
+        textview_delete_selection(tv);
+        tv->has_selection = false;
+        tv->modified = true;
+        if (tv->on_change) tv->on_change(tv);
+        textview_ensure_cursor_visible(tv);
+        textview_update_scrollbar(tv);
+        textview_draw(tv);
+        return;
+    }
+    
+    char *line = tv->lines[tv->cursor_line];
+    int len = strlen(line);
+    
+    if (tv->cursor_col < len) {
+        // Delete character at cursor
+        memmove(line + tv->cursor_col, line + tv->cursor_col + 1, 
+                len - tv->cursor_col);
+        tv->lines_dirty[tv->cursor_line] = true;
+    } else if (tv->cursor_line < tv->line_count - 1) {
+        // Join with next line
+        char *next_line = tv->lines[tv->cursor_line + 1];
+        
+        // Concatenate lines
+        char *new_line = malloc(len + strlen(next_line) + 1);
+        strcpy(new_line, line);
+        strcat(new_line, next_line);
+        
+        free(line);
+        free(next_line);
+        tv->lines[tv->cursor_line] = new_line;
+        
+        // Shift lines up
+        for (int i = tv->cursor_line + 1; i < tv->line_count - 1; i++) {
+            tv->lines[i] = tv->lines[i + 1];
+            tv->lines_dirty[i] = tv->lines_dirty[i + 1];
+        }
+        tv->line_count--;
         tv->lines_dirty[tv->cursor_line] = true;
     }
     
@@ -716,6 +804,35 @@ bool textview_handle_key_press(TextView *tv, XKeyEvent *event) {
     char buffer[32];
     int len = XLookupString(event, buffer, sizeof(buffer), &keysym, NULL);
     
+    // Check for clipboard shortcuts (Super or Ctrl key)
+    if ((event->state & Mod4Mask) || (event->state & ControlMask)) {
+        fprintf(stderr, "[TextView] Mod4/Ctrl detected, keysym=0x%lx\n", keysym);
+        switch (keysym) {
+            case XK_c:  // Copy
+            case XK_C:
+            case XK_y:  // Alternative copy for testing
+            case XK_Y:
+                fprintf(stderr, "[TextView] Copy triggered (key=%c)\n", (char)keysym);
+                textview_copy(tv);
+                return true;
+                
+            case XK_x:  // Cut
+            case XK_X:
+                textview_cut(tv);
+                return true;
+                
+            case XK_v:  // Paste
+            case XK_V:
+                textview_paste(tv);
+                return true;
+                
+            case XK_a:  // Select All
+            case XK_A:
+                textview_select_all(tv);
+                return true;
+        }
+    }
+    
     // Handle Page Up/Down
     if (keysym == XK_Page_Up) {
         textview_move_cursor_page_up(tv);
@@ -761,7 +878,7 @@ bool textview_handle_key_press(TextView *tv, XKeyEvent *event) {
             return true;
             
         case XK_Delete:
-            // TODO: Implement delete
+            textview_delete_key(tv);
             return true;
             
         case XK_Tab:
@@ -1136,12 +1253,177 @@ void textview_clear_selection(TextView *tv) {
 }
 
 char* textview_get_selection(TextView *tv) {
-    // TODO: Implement getting selected text
-    return NULL;
+    if (!tv || !tv->has_selection) return NULL;
+    
+    // Normalize selection (start should be before end)
+    int start_line = tv->sel_start_line;
+    int start_col = tv->sel_start_col;
+    int end_line = tv->sel_end_line;
+    int end_col = tv->sel_end_col;
+    
+    
+    // Swap if selection is backwards
+    if (start_line > end_line || (start_line == end_line && start_col > end_col)) {
+        int tmp = start_line;
+        start_line = end_line;
+        end_line = tmp;
+        tmp = start_col;
+        start_col = end_col;
+        end_col = tmp;
+    }
+    
+    // Validate bounds
+    if (start_line < 0 || start_line >= tv->line_count ||
+        end_line < 0 || end_line >= tv->line_count) {
+        return NULL;
+    }
+    
+    // Calculate total size needed
+    int total_size = 0;
+    if (start_line == end_line) {
+        // Single line selection
+        int len = strlen(tv->lines[start_line]);
+        if (start_col > len) start_col = len;
+        if (end_col > len) end_col = len;
+        total_size = end_col - start_col + 1;
+    } else {
+        // Multi-line selection
+        // First line
+        int first_len = strlen(tv->lines[start_line]);
+        if (start_col > first_len) start_col = first_len;
+        total_size += first_len - start_col + 1; // +1 for newline
+        
+        // Middle lines
+        for (int i = start_line + 1; i < end_line; i++) {
+            total_size += strlen(tv->lines[i]) + 1; // +1 for newline
+        }
+        
+        // Last line
+        int last_len = strlen(tv->lines[end_line]);
+        if (end_col > last_len) end_col = last_len;
+        total_size += end_col + 1; // +1 for null terminator
+    }
+    
+    // Allocate buffer
+    char *selection = malloc(total_size);
+    if (!selection) return NULL;
+    
+    char *p = selection;
+    
+    if (start_line == end_line) {
+        // Single line selection
+        int len = end_col - start_col;
+        if (len > 0) {
+            memcpy(p, tv->lines[start_line] + start_col, len);
+            p += len;
+        }
+    } else {
+        // Multi-line selection
+        // First line
+        strcpy(p, tv->lines[start_line] + start_col);
+        p += strlen(tv->lines[start_line] + start_col);
+        *p++ = '\n';
+        
+        // Middle lines
+        for (int i = start_line + 1; i < end_line; i++) {
+            strcpy(p, tv->lines[i]);
+            p += strlen(tv->lines[i]);
+            *p++ = '\n';
+        }
+        
+        // Last line
+        memcpy(p, tv->lines[end_line], end_col);
+        p += end_col;
+    }
+    
+    *p = '\0';
+    return selection;
 }
 
 void textview_delete_selection(TextView *tv) {
-    // TODO: Implement deleting selected text
+    if (!tv || !tv->has_selection || tv->read_only) return;
+    
+    // Normalize selection (start should be before end)
+    int start_line = tv->sel_start_line;
+    int start_col = tv->sel_start_col;
+    int end_line = tv->sel_end_line;
+    int end_col = tv->sel_end_col;
+    
+    // Swap if selection is backwards
+    if (start_line > end_line || (start_line == end_line && start_col > end_col)) {
+        int tmp = start_line;
+        start_line = end_line;
+        end_line = tmp;
+        tmp = start_col;
+        start_col = end_col;
+        end_col = tmp;
+    }
+    
+    // Validate bounds
+    if (start_line < 0 || start_line >= tv->line_count ||
+        end_line < 0 || end_line >= tv->line_count) {
+        return;
+    }
+    
+    if (start_line == end_line) {
+        // Single line deletion
+        char *line = tv->lines[start_line];
+        int len = strlen(line);
+        if (start_col > len) start_col = len;
+        if (end_col > len) end_col = len;
+        
+        // Create new line with deleted portion removed
+        int new_len = len - (end_col - start_col);
+        char *new_line = malloc(new_len + 1);
+        if (new_line) {
+            strncpy(new_line, line, start_col);
+            strcpy(new_line + start_col, line + end_col);
+            free(tv->lines[start_line]);
+            tv->lines[start_line] = new_line;
+        }
+    } else {
+        // Multi-line deletion
+        // Combine first and last line
+        char *first_line = tv->lines[start_line];
+        char *last_line = tv->lines[end_line];
+        int first_len = strlen(first_line);
+        int last_len = strlen(last_line);
+        
+        if (start_col > first_len) start_col = first_len;
+        if (end_col > last_len) end_col = last_len;
+        
+        int new_len = start_col + (last_len - end_col);
+        char *new_line = malloc(new_len + 1);
+        if (new_line) {
+            strncpy(new_line, first_line, start_col);
+            strcpy(new_line + start_col, last_line + end_col);
+            free(tv->lines[start_line]);
+            tv->lines[start_line] = new_line;
+            
+            // Delete lines in between
+            for (int i = start_line + 1; i <= end_line; i++) {
+                free(tv->lines[i]);
+            }
+            
+            // Shift remaining lines up
+            int lines_to_delete = end_line - start_line;
+            for (int i = end_line + 1; i < tv->line_count; i++) {
+                tv->lines[i - lines_to_delete] = tv->lines[i];
+            }
+            tv->line_count -= lines_to_delete;
+        }
+    }
+    
+    // Move cursor to start of deletion
+    tv->cursor_line = start_line;
+    tv->cursor_col = start_col;
+    
+    // Clear selection
+    tv->has_selection = false;
+    tv->modified = true;
+    
+    // Redraw
+    textview_draw(tv);
 }
 
 void textview_set_syntax(TextView *tv, void *syntax_def) {
@@ -1227,5 +1509,140 @@ void textview_update_scrollbar(TextView *tv) {
         tv->scrollbar_knob_y = 1 + (tv->scroll_y * available_space) / scrollable_lines;
     } else {
         tv->scrollbar_knob_y = 1;
+    }
+}
+
+// Select all text in the TextView
+void textview_select_all(TextView *tv) {
+    if (!tv || tv->line_count == 0) return;
+    
+    // Find the length of the last line
+    int last_line_index = tv->line_count - 1;
+    int last_line_len = strlen(tv->lines[last_line_index]);
+    
+    // Select from beginning to end
+    textview_set_selection(tv, 0, 0, last_line_index, last_line_len);
+}
+
+// Copy selected text to clipboard
+void textview_copy(TextView *tv) {
+    if (!tv || !tv->has_selection) return;
+    
+    // Get selected text
+    char *selection = textview_get_selection(tv);
+    if (!selection) return;
+    
+    // Store in clipboard buffer
+    if (tv->clipboard_buffer) {
+        free(tv->clipboard_buffer);
+    }
+    tv->clipboard_buffer = selection;
+    
+    fprintf(stderr, "[TextView] Copied to clipboard: '%s' (%zu bytes)\n", 
+            tv->clipboard_buffer, strlen(tv->clipboard_buffer));
+    
+    // Claim ownership of both PRIMARY and CLIPBOARD selections
+    XSetSelectionOwner(tv->display, tv->primary_atom, tv->window, CurrentTime);
+    XSetSelectionOwner(tv->display, tv->clipboard_atom, tv->window, CurrentTime);
+}
+
+// Cut selected text to clipboard
+void textview_cut(TextView *tv) {
+    if (!tv || !tv->has_selection || tv->read_only) return;
+    
+    // Copy to clipboard first
+    textview_copy(tv);
+    
+    // Then delete the selection
+    textview_delete_selection(tv);
+    tv->modified = true;
+}
+
+// Request paste from clipboard
+void textview_paste(TextView *tv) {
+    if (!tv || tv->read_only) return;
+    
+    // Request the CLIPBOARD selection (prefer over PRIMARY)
+    Window owner = XGetSelectionOwner(tv->display, tv->clipboard_atom);
+    
+    if (owner == None) {
+        // Try PRIMARY selection as fallback
+        owner = XGetSelectionOwner(tv->display, tv->primary_atom);
+        if (owner == None) {
+            return;  // No clipboard data available
+        }
+        // Request PRIMARY selection
+        XConvertSelection(tv->display, tv->primary_atom, tv->utf8_atom,
+                         tv->clipboard_atom, tv->window, CurrentTime);
+    } else {
+        // Request CLIPBOARD selection
+        XConvertSelection(tv->display, tv->clipboard_atom, tv->utf8_atom,
+                         tv->clipboard_atom, tv->window, CurrentTime);
+    }
+}
+
+// Handle selection request from another application
+void textview_handle_selection_request(TextView *tv, XSelectionRequestEvent *req) {
+    if (!tv) return;
+    
+    XSelectionEvent reply;
+    reply.type = SelectionNotify;
+    reply.display = req->display;
+    reply.requestor = req->requestor;
+    reply.selection = req->selection;
+    reply.target = req->target;
+    reply.time = req->time;
+    reply.property = None;
+    
+    if (tv->clipboard_buffer) {
+        if (req->target == tv->utf8_atom) {
+            // Provide UTF8 text
+            XChangeProperty(tv->display, req->requestor, req->property,
+                          tv->utf8_atom, 8, PropModeReplace,
+                          (unsigned char*)tv->clipboard_buffer, 
+                          strlen(tv->clipboard_buffer));
+            reply.property = req->property;
+        } else if (req->target == XA_STRING) {
+            // Provide plain text
+            XChangeProperty(tv->display, req->requestor, req->property,
+                          XA_STRING, 8, PropModeReplace,
+                          (unsigned char*)tv->clipboard_buffer, 
+                          strlen(tv->clipboard_buffer));
+            reply.property = req->property;
+        } else if (req->target == tv->targets_atom) {
+            // List supported targets
+            Atom targets[] = { tv->utf8_atom, XA_STRING };
+            XChangeProperty(tv->display, req->requestor, req->property,
+                          XA_ATOM, 32, PropModeReplace,
+                          (unsigned char*)targets, 2);
+            reply.property = req->property;
+        }
+    }
+    
+    XSendEvent(tv->display, req->requestor, False, NoEventMask, (XEvent*)&reply);
+}
+
+// Handle selection notify when we receive clipboard data
+void textview_handle_selection_notify(TextView *tv, XSelectionEvent *sel) {
+    if (!tv || tv->read_only) return;
+    
+    if (sel->property != None) {
+        Atom actual_type;
+        int actual_format;
+        unsigned long nitems, bytes_after;
+        unsigned char *data = NULL;
+        
+        // Get the clipboard data
+        if (XGetWindowProperty(tv->display, tv->window, sel->property,
+                             0, (~0L), True, AnyPropertyType,
+                             &actual_type, &actual_format,
+                             &nitems, &bytes_after, &data) == Success && data) {
+            
+            // Insert the text at cursor position
+            textview_insert_string(tv, (char*)data);
+            tv->modified = true;
+            
+            XFree(data);
+        }
     }
 }

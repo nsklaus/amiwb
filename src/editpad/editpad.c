@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
@@ -108,10 +109,6 @@ void editpad_destroy(EditPad *ep) {
         textview_destroy(ep->text_view);
     }
     
-    if (ep->clipboard) {
-        free(ep->clipboard);
-    }
-    
     if (ep->main_window) {
         XDestroyWindow(ep->display, ep->main_window);
     }
@@ -212,10 +209,70 @@ void editpad_save_file(EditPad *ep) {
     free(content);
 }
 
-// Save file as (placeholder - needs ReqASL)
+// Save file as - launch ReqASL in save mode
 void editpad_save_file_as(EditPad *ep) {
-    // TODO: Use ReqASL to get filename
-    fprintf(stderr, "Save As: ReqASL integration needed\n");
+    if (!ep) return;
+    
+    // Launch ReqASL in save mode to get filename
+    fprintf(stderr, "[EditPad] Launching ReqASL for save as\n");
+    
+    // Build command with initial path if we have a current file
+    char command[PATH_SIZE * 2];
+    if (!ep->untitled && strlen(ep->current_file) > 0) {
+        // Get directory from current file
+        char dir[PATH_SIZE];
+        strncpy(dir, ep->current_file, PATH_SIZE - 1);
+        dir[PATH_SIZE - 1] = '\0';
+        char *last_slash = strrchr(dir, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            snprintf(command, sizeof(command), "reqasl --mode save --path \"%s\"", dir);
+        } else {
+            snprintf(command, sizeof(command), "reqasl --mode save");
+        }
+    } else {
+        snprintf(command, sizeof(command), "reqasl --mode save");
+    }
+    
+    FILE *fp = popen(command, "r");
+    if (fp) {
+        char filepath[PATH_SIZE];
+        if (fgets(filepath, sizeof(filepath), fp)) {
+            // Remove newline
+            filepath[strcspn(filepath, "\n")] = 0;
+            if (strlen(filepath) > 0) {
+                fprintf(stderr, "[EditPad] Saving file as: %s\n", filepath);
+                
+                // Get text from TextView
+                char *content = textview_get_text(ep->text_view);
+                if (content) {
+                    // Save to the new file
+                    FILE *f = fopen(filepath, "w");
+                    if (f) {
+                        fputs(content, f);
+                        fclose(f);
+                        
+                        // Update EditPad state
+                        strncpy(ep->current_file, filepath, PATH_SIZE - 1);
+                        ep->current_file[PATH_SIZE - 1] = '\0';
+                        ep->untitled = false;
+                        ep->modified = false;
+                        editpad_update_title(ep);
+                        
+                        fprintf(stderr, "[EditPad] File saved successfully: %s\n", filepath);
+                    } else {
+                        fprintf(stderr, "[EditPad] Failed to save file: %s\n", filepath);
+                    }
+                    free(content);
+                }
+            } else {
+                fprintf(stderr, "[EditPad] Save As cancelled\n");
+            }
+        }
+        pclose(fp);
+    } else {
+        fprintf(stderr, "[EditPad] Failed to launch ReqASL\n");
+    }
 }
 
 // Toggle line numbers
@@ -350,6 +407,9 @@ void editpad_handle_focus_change(EditPad *ep, bool focused) {
     
     if (ep->text_view) {
         if (focused) {
+            // Always give keyboard focus to TextView when EditPad becomes active
+            XSetInputFocus(ep->display, ep->text_view->window, 
+                          RevertToParent, CurrentTime);
             textview_handle_focus_in(ep->text_view);
         } else {
             textview_handle_focus_out(ep->text_view);
@@ -369,19 +429,36 @@ void editpad_redo(EditPad *ep) {
 }
 
 void editpad_cut(EditPad *ep) {
-    // TODO: Implement cut
+    if (!ep || !ep->text_view) return;
+    
+    // TextView handles the clipboard operation
+    textview_cut(ep->text_view);
+    if (ep->text_view->modified) {
+        ep->modified = true;
+        editpad_update_title(ep);
+    }
 }
 
 void editpad_copy(EditPad *ep) {
-    // TODO: Implement copy
+    if (!ep || !ep->text_view) return;
+    
+    // TextView handles the clipboard operation
+    textview_copy(ep->text_view);
 }
 
 void editpad_paste(EditPad *ep) {
-    // TODO: Implement paste
+    if (!ep || !ep->text_view) return;
+    
+    // TextView handles the clipboard operation
+    textview_paste(ep->text_view);
+    // Modified flag will be set by TextView event handler
 }
 
 void editpad_select_all(EditPad *ep) {
-    // TODO: Implement select all
+    if (!ep || !ep->text_view) return;
+    
+    // TextView handles the selection
+    textview_select_all(ep->text_view);
 }
 
 void editpad_find(EditPad *ep) {
@@ -394,4 +471,5 @@ void editpad_replace(EditPad *ep) {
 
 void editpad_goto_line(EditPad *ep) {
     // TODO: Implement goto line dialog
+    fprintf(stderr, "[EditPad] Goto Line dialog not implemented yet\n");
 }

@@ -17,9 +17,6 @@ typedef struct {
     bool modified;
     bool untitled;
     
-    // Clipboard
-    char *clipboard;
-    
     // Settings (from editpadrc)
     bool line_numbers;
     bool word_wrap;

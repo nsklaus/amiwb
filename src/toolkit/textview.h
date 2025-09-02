@@ -76,6 +76,13 @@ typedef struct TextView {
     bool modified;
     bool read_only;
     
+    // Clipboard support
+    char *clipboard_buffer;  // Internal clipboard buffer
+    Atom clipboard_atom;     // CLIPBOARD atom
+    Atom primary_atom;       // PRIMARY atom  
+    Atom targets_atom;       // TARGETS atom
+    Atom utf8_atom;          // UTF8_STRING atom
+    
     // Callbacks
     void (*on_change)(struct TextView *tv);
     void (*on_cursor_move)(struct TextView *tv);
@@ -113,6 +120,14 @@ void textview_set_selection(TextView *tv, int start_line, int start_col,
 void textview_clear_selection(TextView *tv);
 char* textview_get_selection(TextView *tv);  // Caller must free
 void textview_delete_selection(TextView *tv);
+void textview_select_all(TextView *tv);
+
+// Clipboard operations
+void textview_copy(TextView *tv);
+void textview_cut(TextView *tv);
+void textview_paste(TextView *tv);
+void textview_handle_selection_request(TextView *tv, XSelectionRequestEvent *req);
+void textview_handle_selection_notify(TextView *tv, XSelectionEvent *sel);
 
 // Display
 void textview_draw(TextView *tv);

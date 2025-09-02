@@ -5,6 +5,7 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/Xutil.h>
+#include <X11/Xatom.h>
 
 // Main event loop for EditPad
 void editpad_run(EditPad *ep) {
@@ -107,6 +108,7 @@ void editpad_run(EditPad *ep) {
                     break;
                 }
                     
+                
                 case ClientMessage:
                     // Check for window close
                     if ((Atom)event.xclient.data.l[0] == XInternAtom(ep->display, "WM_DELETE_WINDOW", False)) {
@@ -210,7 +212,103 @@ void editpad_run(EditPad *ep) {
                     }
                     break;
                     
-                case KeyPress:
+                case SelectionRequest: {
+                    // Pass to TextView for clipboard handling
+                    XSelectionRequestEvent req = event.xselectionrequest;
+                    textview_handle_selection_request(ep->text_view, &req);
+                    break;
+                }
+                
+                case SelectionNotify: {
+                    // Pass to TextView for clipboard handling
+                    XSelectionEvent sel = event.xselection;
+                    textview_handle_selection_notify(ep->text_view, &sel);
+                    if (ep->text_view->modified) {
+                        ep->modified = true;
+                        editpad_update_title(ep);
+                    }
+                    break;
+                }
+                
+                case KeyPress: {
+                    // Check for Super key shortcuts first (editor-specific only)
+                    if (event.xkey.state & Mod4Mask) {  // Super key pressed
+                        KeySym keysym;
+                        char buffer[32];
+                        XLookupString(&event.xkey, buffer, sizeof(buffer), &keysym, NULL);
+                        
+                        fprintf(stderr, "[EditPad] Super key pressed, keysym=0x%lx (%c)\n", keysym, (char)keysym);
+                        
+                        // Skip clipboard shortcuts - let TextView handle them
+                        if (!(keysym == XK_c || keysym == XK_C ||  // Copy
+                              keysym == XK_x || keysym == XK_X ||  // Cut
+                              keysym == XK_v || keysym == XK_V ||  // Paste
+                              keysym == XK_a || keysym == XK_A)) { // Select All
+                            
+                            bool handled = true;
+                            switch (keysym) {
+                            // Note: Cut/Copy/Paste/SelectAll are now handled by TextView
+                            case XK_s:  // Super+S - Save
+                                if (event.xkey.state & ShiftMask) {
+                                    editpad_save_file_as(ep);  // Super+Shift+S
+                                } else {
+                                    editpad_save_file(ep);
+                                }
+                                break;
+                            case XK_o:  // Super+O - Open
+                                fprintf(stderr, "[EditPad] Launching ReqASL for file open\n");
+                                FILE *fp = popen("reqasl --mode open", "r");
+                                if (fp) {
+                                    char filepath[PATH_SIZE];
+                                    if (fgets(filepath, sizeof(filepath), fp)) {
+                                        filepath[strcspn(filepath, "\n")] = 0;
+                                        if (strlen(filepath) > 0) {
+                                            editpad_open_file(ep, filepath);
+                                        }
+                                    }
+                                    pclose(fp);
+                                }
+                                break;
+                            case XK_n:  // Super+N - New
+                                editpad_new_file(ep);
+                                break;
+                            case XK_z:  // Super+Z - Undo
+                                if (event.xkey.state & ShiftMask) {
+                                    editpad_redo(ep);  // Super+Shift+Z
+                                } else {
+                                    editpad_undo(ep);
+                                }
+                                break;
+                            case XK_f:  // Super+F - Find
+                                editpad_find(ep);
+                                break;
+                            case XK_h:  // Super+H - Replace
+                                editpad_replace(ep);
+                                break;
+                            case XK_g:  // Super+G - Goto Line
+                                editpad_goto_line(ep);
+                                break;
+                            case XK_l:  // Super+L - Toggle Line Numbers
+                                editpad_toggle_line_numbers(ep);
+                                break;
+                            case XK_w:  // Super+W - Toggle Word Wrap
+                                editpad_toggle_word_wrap(ep);
+                                break;
+                            case XK_q:  // Super+Q - Quit
+                                running = false;
+                                break;
+                            default:
+                                handled = false;
+                                break;
+                            }
+                            
+                            if (handled) {
+                                break;  // Don't pass to TextView
+                            }
+                        }
+                    }
+                    
+                    // Pass non-shortcut keys to TextView
                     if (textview_handle_key_press(ep->text_view, &event.xkey)) {
                         // Mark as modified if text changed
                         if (!ep->modified && ep->text_view->modified) {
@@ -219,6 +317,7 @@ void editpad_run(EditPad *ep) {
                         }
                     }
                     break;
+                }
                     
                 case ButtonPress:
                     textview_handle_button_press(ep->text_view, &event.xbutton);
