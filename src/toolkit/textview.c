@@ -54,11 +54,18 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     // No selection initially
     tv->has_selection = false;
     
-    // Initialize scrollbar state
+    // Initialize vertical scrollbar state
     tv->scrollbar_visible = false;
     tv->scrollbar_dragging = false;
     tv->scrollbar_knob_y = 0;
     tv->scrollbar_knob_height = 0;
+    
+    // Initialize horizontal scrollbar state
+    tv->h_scrollbar_visible = false;
+    tv->h_scrollbar_dragging = false;
+    tv->h_scrollbar_knob_x = 0;
+    tv->h_scrollbar_knob_width = 0;
+    tv->max_line_width = 0;
     
     // Colors (defaults, can be overridden)
     tv->bg_color = 0xa2a2a0;  // Gray
@@ -521,8 +528,38 @@ void textview_ensure_cursor_visible(TextView *tv) {
         tv->scroll_y = tv->cursor_line - tv->visible_lines + 1;
     }
     
-    // Horizontal scrolling (if needed later)
-    // TODO: Implement horizontal scrolling
+    // Horizontal scrolling
+    int x_start = tv->line_numbers ? tv->line_number_width : 5;
+    int cursor_x = x_start;
+    
+    // Calculate cursor x position
+    if (tv->cursor_line < tv->line_count && tv->lines[tv->cursor_line]) {
+        const char *line = tv->lines[tv->cursor_line];
+        if (tv->cursor_col > 0) {
+            int chars_to_measure = (tv->cursor_col > strlen(line)) ? strlen(line) : tv->cursor_col;
+            if (chars_to_measure > 0) {
+                XGlyphInfo extents;
+                XftTextExtents8(tv->display, tv->font, (FcChar8*)line,
+                               chars_to_measure, &extents);
+                cursor_x += extents.xOff;
+            }
+        }
+    }
+    
+    // Calculate viewport width
+    int viewport_width = tv->width;
+    if (tv->scrollbar_visible) viewport_width -= VERT_SCROLLBAR_WIDTH;
+    
+    // Adjust horizontal scroll to keep cursor visible
+    if (cursor_x - tv->scroll_x < 20) {  // Too far left
+        tv->scroll_x = cursor_x - 20;
+        if (tv->scroll_x < 0) tv->scroll_x = 0;
+    } else if (cursor_x - tv->scroll_x > viewport_width - 20) {  // Too far right
+        tv->scroll_x = cursor_x - viewport_width + 20;
+        int max_scroll = tv->max_line_width - viewport_width;
+        if (max_scroll < 0) max_scroll = 0;
+        if (tv->scroll_x > max_scroll) tv->scroll_x = max_scroll;
+    }
 }
 
 // Draw the TextView
@@ -574,6 +611,50 @@ void textview_draw(TextView *tv) {
         x_start = tv->line_number_width;
     }
     
+    // Calculate maximum content height for scrollbar visibility
+    int content_height = tv->line_count * tv->line_height;
+    int viewable_height = tv->height;
+    if (tv->h_scrollbar_visible) viewable_height -= HORI_SCROLLBAR_HEIGHT;
+    
+    // Calculate maximum line width for horizontal scrollbar
+    tv->max_line_width = 0;
+    for (int i = 0; i < tv->line_count; i++) {
+        if (tv->lines[i] && *tv->lines[i]) {
+            XGlyphInfo extents;
+            XftTextExtents8(tv->display, tv->font, (FcChar8*)tv->lines[i],
+                          strlen(tv->lines[i]), &extents);
+            int line_width = x_start + extents.xOff + 10;  // Include margins
+            if (line_width > tv->max_line_width) {
+                tv->max_line_width = line_width;
+            }
+        }
+    }
+    
+    // Determine if we need scrollbars
+    int viewable_width = tv->width;
+    if (tv->scrollbar_visible) viewable_width -= VERT_SCROLLBAR_WIDTH;
+    
+    // Update scrollbar visibility based on content
+    bool need_v_scrollbar = (content_height > viewable_height);
+    bool need_h_scrollbar = (tv->max_line_width > viewable_width);
+    
+    // If adding one scrollbar reduces space enough to need the other, show both
+    if (need_v_scrollbar && !need_h_scrollbar) {
+        // Check if vertical scrollbar causes horizontal overflow
+        if (tv->max_line_width > (tv->width - VERT_SCROLLBAR_WIDTH)) {
+            need_h_scrollbar = true;
+        }
+    }
+    if (need_h_scrollbar && !need_v_scrollbar) {
+        // Check if horizontal scrollbar causes vertical overflow
+        if (content_height > (tv->height - HORI_SCROLLBAR_HEIGHT)) {
+            need_v_scrollbar = true;
+        }
+    }
+    
+    tv->scrollbar_visible = need_v_scrollbar;
+    tv->h_scrollbar_visible = need_h_scrollbar;
+    
     // Draw visible lines
     int y = tv->line_height;
     for (int i = tv->scroll_y; 
@@ -624,8 +705,8 @@ void textview_draw(TextView *tv) {
                         XRenderFindVisualFormat(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display))),
                         0, NULL);
                     
-                    // Calculate selection rectangle position
-                    int sel_x = x_start;
+                    // Calculate selection rectangle position with horizontal scroll
+                    int sel_x = x_start - tv->scroll_x;
                     if (draw_start > 0) {
                         XGlyphInfo extents;
                         XftTextExtents8(tv->display, tv->font, (FcChar8*)line, draw_start, &extents);
@@ -656,15 +737,35 @@ void textview_draw(TextView *tv) {
             }
         }
         
-        // Draw the text line
+        // Draw the text line with horizontal scrolling
         if (line && *line) {
+            // Apply horizontal scroll offset
+            int text_x = x_start - tv->scroll_x;
+            
+            // Set clipping to prevent text from appearing in scrollbar area
+            XRectangle clip_rect;
+            clip_rect.x = 0;
+            clip_rect.y = 0;
+            clip_rect.width = tv->width;
+            clip_rect.height = tv->height;
+            if (tv->scrollbar_visible) clip_rect.width -= VERT_SCROLLBAR_WIDTH;
+            if (tv->h_scrollbar_visible) clip_rect.height -= HORI_SCROLLBAR_HEIGHT;
+            
+            Region clip_region = XCreateRegion();
+            XUnionRectWithRegion(&clip_rect, clip_region, clip_region);
+            XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
+            
             XftDrawString8(tv->xft_draw, &fg_color, tv->font,
-                          x_start, y - 2, (FcChar8*)line, strlen(line));
+                          text_x, y - 2, (FcChar8*)line, strlen(line));
+            
+            // Reset clipping
+            XftDrawSetClip(tv->xft_draw, NULL);
+            XDestroyRegion(clip_region);
         }
         
         // Draw cursor if on this line and focused
         if (tv->has_focus && i == tv->cursor_line) {
-            int cursor_x = x_start;
+            int cursor_x = x_start - tv->scroll_x;  // Apply horizontal scroll
             
             // Calculate cursor position
             if (tv->cursor_col > 0) {
@@ -677,112 +778,193 @@ void textview_draw(TextView *tv) {
                 }
             }
             
-            // Draw blue rectangle cursor like InputField
-            // Get size of a space character for cursor width
-            XGlyphInfo space_info;
-            XftTextExtents8(tv->display, tv->font, (FcChar8*)" ", 1, &space_info);
-            int cursor_width = space_info.xOff > 0 ? space_info.xOff : 8;
+            // Only draw cursor if it's visible in the viewport
+            int viewport_width = tv->width;
+            if (tv->scrollbar_visible) viewport_width -= VERT_SCROLLBAR_WIDTH;
             
-            // Use XRender to draw blue rectangle
-            Picture dest = XRenderCreatePicture(tv->display, tv->window,
-                XRenderFindVisualFormat(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display))),
-                0, NULL);
-            
-            // Convert stored cursor color to XRenderColor
-            XRenderColor cursor_color = {
-                ((tv->cursor_color >> 16) & 0xFF) * 0x101,  // Red
-                ((tv->cursor_color >> 8) & 0xFF) * 0x101,   // Green
-                (tv->cursor_color & 0xFF) * 0x101,          // Blue
-                0xFFFF                                       // Alpha
-            };
-            XRenderFillRectangle(tv->display, PictOpSrc, dest, &cursor_color,
-                               cursor_x, y - tv->line_height + 2, 
-                               cursor_width, tv->line_height);
-            
-            XRenderFreePicture(tv->display, dest);
-            
-            // If cursor is on a character, redraw that character in white
-            if (tv->cursor_col < strlen(line)) {
-                char ch[2] = {line[tv->cursor_col], '\0'};
-                XftDrawString8(tv->xft_draw, &sel_color, tv->font,
-                             cursor_x, y - 2, (FcChar8*)ch, 1);
+            if (cursor_x >= 0 && cursor_x < viewport_width) {
+                // Draw blue rectangle cursor like InputField
+                // Get size of a space character for cursor width
+                XGlyphInfo space_info;
+                XftTextExtents8(tv->display, tv->font, (FcChar8*)" ", 1, &space_info);
+                int cursor_width = space_info.xOff > 0 ? space_info.xOff : 8;
+                
+                // Use XRender to draw blue rectangle
+                Picture dest = XRenderCreatePicture(tv->display, tv->window,
+                    XRenderFindVisualFormat(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display))),
+                    0, NULL);
+                
+                // Convert stored cursor color to XRenderColor
+                XRenderColor cursor_color = {
+                    ((tv->cursor_color >> 16) & 0xFF) * 0x101,  // Red
+                    ((tv->cursor_color >> 8) & 0xFF) * 0x101,   // Green
+                    (tv->cursor_color & 0xFF) * 0x101,          // Blue
+                    0xFFFF                                       // Alpha
+                };
+                XRenderFillRectangle(tv->display, PictOpSrc, dest, &cursor_color,
+                                   cursor_x, y - tv->line_height + 2, 
+                                   cursor_width, tv->line_height);
+                
+                XRenderFreePicture(tv->display, dest);
+                
+                // If cursor is on a character, redraw that character in white
+                if (tv->cursor_col < strlen(line)) {
+                    char ch[2] = {line[tv->cursor_col], '\0'};
+                    XftDrawString8(tv->xft_draw, &sel_color, tv->font,
+                                 cursor_x, y - 2, (FcChar8*)ch, 1);
+                }
             }
         }
         
         y += tv->line_height;
     }
     
-    // Draw scrollbar if needed
-    if (tv->scrollbar_visible) {
+    // Draw scrollbars if needed
+    if (tv->scrollbar_visible || tv->h_scrollbar_visible) {
         // Get XRender Picture for drawing
         Picture dest = XRenderCreatePicture(tv->display, tv->window,
             XRenderFindVisualFormat(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display))),
             0, NULL);
         
-        // Colors for scrollbar
+        // Colors for scrollbar - using config.h values
         XRenderColor white = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
         XRenderColor black = {0x0000, 0x0000, 0x0000, 0xFFFF};
         XRenderColor gray = {0xa2a2, 0xa2a2, 0xa0a0, 0xFFFF};
         
-        int sb_x = tv->width - TEXTVIEW_SCROLLBAR_WIDTH;
-        int sb_w = TEXTVIEW_SCROLLBAR_WIDTH;
-        
-        // Draw black separator line on the left of scrollbar (full height)
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, 
-                           sb_x - 1, 0, 1, tv->height);
-        
-        // Calculate positions for the three elements
-        int track_y = 0;
-        int track_h = tv->height - (TEXTVIEW_ARROW_HEIGHT * 2);
-        int arrow_up_y = tv->height - (TEXTVIEW_ARROW_HEIGHT * 2);
-        int arrow_down_y = tv->height - TEXTVIEW_ARROW_HEIGHT;
-        
-        // 1. Draw scrollbar track (full height)
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray, sb_x, track_y, sb_w, tv->height);
-        
-        // Track borders
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, track_y, 1, track_h);
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, track_y, sb_w, 1);
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x + sb_w - 1, track_y, 1, track_h);
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x, track_y + track_h - 1, sb_w, 1);
-        
-        // Scrollbar knob (black, 14px wide centered)
-        int knob_width = 14;
-        int knob_x_offset = (sb_w - knob_width) / 2;
-        if (tv->scrollbar_knob_height > 0) {
-            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black,
-                               sb_x + knob_x_offset, tv->scrollbar_knob_y + track_y,
-                               knob_width, tv->scrollbar_knob_height);
+        // Draw vertical scrollbar if visible
+        if (tv->scrollbar_visible) {
+            int sb_x = tv->width - VERT_SCROLLBAR_WIDTH;
+            int sb_w = VERT_SCROLLBAR_WIDTH;
+            int sb_h = tv->height;  // Always full height - no adjustment
+            
+            // Draw black separator line on the left of scrollbar (full height)
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, 
+                               sb_x - 1, 0, 1, sb_h);
+            
+            // Calculate positions for the three elements
+            int track_y = 0;
+            int track_h = sb_h - (VERT_ARROW_HEIGHT * 2);
+            int arrow_up_y = sb_h - (VERT_ARROW_HEIGHT * 2);
+            int arrow_down_y = sb_h - VERT_ARROW_HEIGHT;
+            
+            // 1. Draw scrollbar track
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray, sb_x, track_y, sb_w, sb_h);
+            
+            // Track borders
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, track_y, 1, track_h);
+            //XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, track_y, sb_w, 1);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x + sb_w - 1, track_y, 1, track_h);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x, track_y + track_h - 1, sb_w, 1);
+            
+            // Vertical scrollbar knob (11px wide with 2px padding on each side)
+            if (tv->scrollbar_knob_height > 0) {
+                // Calculate knob position with padding
+                int knob_x = sb_x + SCROLLBAR_KNOB_PADDING + ((sb_w - 2*SCROLLBAR_KNOB_PADDING - VERT_KNOB_WIDTH) / 2);
+                int knob_y = tv->scrollbar_knob_y + track_y + SCROLLBAR_KNOB_PADDING;
+                
+                XRenderFillRectangle(tv->display, PictOpSrc, dest, &black,
+                                   knob_x, knob_y,
+                                   VERT_KNOB_WIDTH, tv->scrollbar_knob_height - 2*SCROLLBAR_KNOB_PADDING);
+            }
+            
+            // 2. Draw up arrow button
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray,
+                               sb_x, arrow_up_y, sb_w, VERT_ARROW_HEIGHT);
+            // Borders
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, arrow_up_y, 1, VERT_ARROW_HEIGHT);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, arrow_up_y, sb_w, 1);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x + sb_w - 1, arrow_up_y, 1, VERT_ARROW_HEIGHT);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x, arrow_up_y + VERT_ARROW_HEIGHT - 1, sb_w, 1);
+            // Up arrow
+            int arrow_offset = (VERT_ARROW_HEIGHT - 5) / 2;
+            for (int i = 0; i < 5; i++) {
+                XRenderFillRectangle(tv->display, PictOpSrc, dest, &black,
+                                   sb_x + sb_w/2 - i, arrow_up_y + arrow_offset + i, i*2+1, 1);
+            }
+            
+            // 3. Draw down arrow button
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray,
+                               sb_x, arrow_down_y, sb_w, VERT_ARROW_HEIGHT);
+            // Borders
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, arrow_down_y, 1, VERT_ARROW_HEIGHT);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, arrow_down_y, sb_w, 1);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x + sb_w - 1, arrow_down_y, 1, VERT_ARROW_HEIGHT);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x, arrow_down_y + VERT_ARROW_HEIGHT - 1, sb_w, 1);
+            // Down arrow
+            for (int i = 0; i < 5; i++) {
+                XRenderFillRectangle(tv->display, PictOpSrc, dest, &black,
+                                   sb_x + sb_w/2 - i, arrow_down_y + arrow_offset + (4-i), i*2+1, 1);
+            }
         }
         
-        // 2. Draw up arrow button
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray,
-                           sb_x, arrow_up_y, sb_w, TEXTVIEW_ARROW_HEIGHT);
-        // Borders
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, arrow_up_y, 1, TEXTVIEW_ARROW_HEIGHT);
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, arrow_up_y, sb_w, 1);
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x + sb_w - 1, arrow_up_y, 1, TEXTVIEW_ARROW_HEIGHT);
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x, arrow_up_y + TEXTVIEW_ARROW_HEIGHT - 1, sb_w, 1);
-        // Up arrow
-        int arrow_offset = (TEXTVIEW_ARROW_HEIGHT - 5) / 2;
-        for (int i = 0; i < 5; i++) {
-            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black,
-                               sb_x + sb_w/2 - i, arrow_up_y + arrow_offset + i, i*2+1, 1);
+        // Draw horizontal scrollbar if visible
+        if (tv->h_scrollbar_visible) {
+            int sb_y = tv->height - HORI_SCROLLBAR_HEIGHT;
+            int sb_h = HORI_SCROLLBAR_HEIGHT;
+            int sb_w = tv->width;
+            if (tv->scrollbar_visible) sb_w -= VERT_SCROLLBAR_WIDTH;  // Stop where vertical scrollbar begins
+            
+            // Draw black separator line on top of horizontal scrollbar
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, 
+                               0, sb_y - 1, sb_w, 1);
+            
+            // Calculate positions for the three elements
+            int track_x = 0;
+            int track_w = sb_w - (HORI_ARROW_WIDTH * 2);
+            int arrow_left_x = sb_w - (HORI_ARROW_WIDTH * 2);
+            int arrow_right_x = sb_w - HORI_ARROW_WIDTH;
+            
+            // 1. Draw scrollbar track
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray, track_x, sb_y, sb_w, sb_h);
+            
+            // Track borders
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, track_x, sb_y, track_w, 1);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, track_x, sb_y, 1, sb_h);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, track_x + track_w - 1, sb_y, 1, sb_h);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, track_x, sb_y + sb_h - 1, track_w, 1);
+            
+            // Horizontal scrollbar knob (11px high with 2px padding on each side)
+            if (tv->h_scrollbar_knob_width > 0) {
+                // Calculate knob position with padding
+                int knob_x = tv->h_scrollbar_knob_x + track_x + SCROLLBAR_KNOB_PADDING;
+                int knob_y = sb_y + SCROLLBAR_KNOB_PADDING + ((sb_h - 2*SCROLLBAR_KNOB_PADDING - HORI_KNOB_HEIGHT) / 2);
+                
+                XRenderFillRectangle(tv->display, PictOpSrc, dest, &black,
+                                   knob_x, knob_y,
+                                   tv->h_scrollbar_knob_width - 2*SCROLLBAR_KNOB_PADDING, HORI_KNOB_HEIGHT);
+            }
+            
+            // 2. Draw left arrow button
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray,
+                               arrow_left_x, sb_y, HORI_ARROW_WIDTH, sb_h);
+            // Borders
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, arrow_left_x, sb_y, HORI_ARROW_WIDTH, 1);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, arrow_left_x, sb_y, 1, sb_h);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, arrow_left_x + HORI_ARROW_WIDTH - 1, sb_y, 1, sb_h);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, arrow_left_x, sb_y + sb_h - 1, HORI_ARROW_WIDTH, 1);
+            // Left arrow
+            int arrow_offset = (HORI_ARROW_WIDTH - 5) / 2;
+            for (int i = 0; i < 5; i++) {
+                XRenderFillRectangle(tv->display, PictOpSrc, dest, &black,
+                                   arrow_left_x + arrow_offset + i, sb_y + sb_h/2 - i, 1, i*2+1);
+            }
+            
+            // 3. Draw right arrow button
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray,
+                               arrow_right_x, sb_y, HORI_ARROW_WIDTH, sb_h);
+            // Borders
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, arrow_right_x, sb_y, HORI_ARROW_WIDTH, 1);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, arrow_right_x, sb_y, 1, sb_h);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, arrow_right_x + HORI_ARROW_WIDTH - 1, sb_y, 1, sb_h);
+            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, arrow_right_x, sb_y + sb_h - 1, HORI_ARROW_WIDTH, 1);
+            // Right arrow
+            for (int i = 0; i < 5; i++) {
+                XRenderFillRectangle(tv->display, PictOpSrc, dest, &black,
+                                   arrow_right_x + arrow_offset + (4-i), sb_y + sb_h/2 - i, 1, i*2+1);
+            }
         }
         
-        // 3. Draw down arrow button
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray,
-                           sb_x, arrow_down_y, sb_w, TEXTVIEW_ARROW_HEIGHT);
-        // Borders
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, arrow_down_y, 1, TEXTVIEW_ARROW_HEIGHT);
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &white, sb_x, arrow_down_y, sb_w, 1);
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x + sb_w - 1, arrow_down_y, 1, TEXTVIEW_ARROW_HEIGHT);
-        XRenderFillRectangle(tv->display, PictOpSrc, dest, &black, sb_x, arrow_down_y + TEXTVIEW_ARROW_HEIGHT - 1, sb_w, 1);
-        // Down arrow
-        for (int i = 0; i < 5; i++) {
-            XRenderFillRectangle(tv->display, PictOpSrc, dest, &black,
-                               sb_x + sb_w/2 - i, arrow_down_y + arrow_offset + (4-i), i*2+1, 1);
-        }
+        // No corner square - scrollbars meet edge-to-edge
         
         XRenderFreePicture(tv->display, dest);
     }
@@ -935,56 +1117,126 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
         return false;  // Not our event
     }
     
-    // Check if click is in scrollbar area - ANY click here must be consumed
-    if (tv->scrollbar_visible && event->x >= tv->width - TEXTVIEW_SCROLLBAR_WIDTH) {
-        // Fix arrow positions to match draw function
-        int arrow_up_y = tv->height - (TEXTVIEW_ARROW_HEIGHT * 2);
-        int arrow_down_y = tv->height - TEXTVIEW_ARROW_HEIGHT;
+    // Check if click is in vertical scrollbar area
+    if (tv->scrollbar_visible && event->x >= tv->width - VERT_SCROLLBAR_WIDTH) {
+        // Vertical scrollbar uses full height
+        int sb_h = tv->height;
         
-        // Check for arrow clicks
-        if (event->y >= arrow_up_y && event->y < arrow_down_y) {
-            // Up arrow clicked
-            if (tv->scroll_y > 0) {
-                tv->scroll_y--;
-                textview_update_scrollbar(tv);
-                textview_draw(tv);
-            }
-        } else if (event->y >= arrow_down_y) {
-            // Down arrow clicked
-            int max_scroll = tv->line_count - tv->visible_lines;
-            if (max_scroll < 0) max_scroll = 0;
-            if (tv->scroll_y < max_scroll) {
-                tv->scroll_y++;
-                textview_update_scrollbar(tv);
-                textview_draw(tv);
-            }
-        } else if (event->y < arrow_up_y) {  // Changed from track_h to arrow_up_y
-            // Track or knob clicked - start dragging
-            int knob_top = tv->scrollbar_knob_y;
-            int knob_bottom = knob_top + tv->scrollbar_knob_height;
+        // Fix arrow positions to match draw function
+        int arrow_up_y = sb_h - (VERT_ARROW_HEIGHT * 2);
+        int arrow_down_y = sb_h - VERT_ARROW_HEIGHT;
             
-            if (event->y >= knob_top && event->y < knob_bottom) {
-                // Clicked on knob - start dragging
-                tv->scrollbar_dragging = true;
-                tv->scrollbar_drag_offset = event->y - knob_top;
-            } else {
-                // Clicked on track - page up/down
-                if (event->y < knob_top) {
-                    // Page up
-                    tv->scroll_y -= tv->visible_lines;
-                    if (tv->scroll_y < 0) tv->scroll_y = 0;
-                } else {
-                    // Page down
-                    tv->scroll_y += tv->visible_lines;
-                    int max_scroll = tv->line_count - tv->visible_lines;
-                    if (max_scroll < 0) max_scroll = 0;
-                    if (tv->scroll_y > max_scroll) tv->scroll_y = max_scroll;
+            // Check for arrow clicks
+            if (event->y >= arrow_up_y && event->y < arrow_down_y) {
+                // Up arrow clicked
+                if (tv->scroll_y > 0) {
+                    tv->scroll_y--;
+                    textview_update_scrollbar(tv);
+                    textview_draw(tv);
                 }
-                textview_update_scrollbar(tv);
-                textview_draw(tv);
+            } else if (event->y >= arrow_down_y) {
+                // Down arrow clicked
+                int max_scroll = tv->line_count - tv->visible_lines;
+                if (max_scroll < 0) max_scroll = 0;
+                if (tv->scroll_y < max_scroll) {
+                    tv->scroll_y++;
+                    textview_update_scrollbar(tv);
+                    textview_draw(tv);
+                }
+            } else if (event->y < arrow_up_y) {
+                // Track or knob clicked - start dragging
+                int knob_top = tv->scrollbar_knob_y;
+                int knob_bottom = knob_top + tv->scrollbar_knob_height;
+                
+                if (event->y >= knob_top && event->y < knob_bottom) {
+                    // Clicked on knob - start dragging
+                    tv->scrollbar_dragging = true;
+                    tv->scrollbar_drag_offset = event->y - knob_top;
+                } else {
+                    // Clicked on track - page up/down
+                    if (event->y < knob_top) {
+                        // Page up
+                        tv->scroll_y -= tv->visible_lines;
+                        if (tv->scroll_y < 0) tv->scroll_y = 0;
+                    } else {
+                        // Page down
+                        tv->scroll_y += tv->visible_lines;
+                        int max_scroll = tv->line_count - tv->visible_lines;
+                        if (max_scroll < 0) max_scroll = 0;
+                        if (tv->scroll_y > max_scroll) tv->scroll_y = max_scroll;
+                    }
+                    textview_update_scrollbar(tv);
+                    textview_draw(tv);
+                }
+            }
+        // ALWAYS return true for ANY click in scrollbar area to prevent text selection
+        return true;
+    }
+    
+    // Check if click is in horizontal scrollbar area
+    if (tv->h_scrollbar_visible && event->y >= tv->height - HORI_SCROLLBAR_HEIGHT) {
+        // Adjust width if vertical scrollbar is visible
+        int sb_w = tv->width;
+        if (tv->scrollbar_visible) sb_w -= VERT_SCROLLBAR_WIDTH;
+        
+        // Only handle if click is within horizontal scrollbar bounds
+        if (event->x < sb_w) {
+            // Calculate arrow positions
+            int arrow_left_x = sb_w - (HORI_ARROW_WIDTH * 2);
+            int arrow_right_x = sb_w - HORI_ARROW_WIDTH;
+            
+            // Check for arrow clicks
+            if (event->x >= arrow_left_x && event->x < arrow_right_x) {
+                // Left arrow clicked
+                if (tv->scroll_x > 0) {
+                    tv->scroll_x -= tv->char_width * 3;  // Scroll by 3 characters
+                    if (tv->scroll_x < 0) tv->scroll_x = 0;
+                    textview_update_scrollbar(tv);
+                    textview_draw(tv);
+                }
+            } else if (event->x >= arrow_right_x) {
+                // Right arrow clicked
+                int viewable_width = tv->width;
+                if (tv->scrollbar_visible) viewable_width -= VERT_SCROLLBAR_WIDTH;
+                int max_scroll = tv->max_line_width - viewable_width;
+                if (max_scroll < 0) max_scroll = 0;
+                if (tv->scroll_x < max_scroll) {
+                    tv->scroll_x += tv->char_width * 3;  // Scroll by 3 characters
+                    if (tv->scroll_x > max_scroll) tv->scroll_x = max_scroll;
+                    textview_update_scrollbar(tv);
+                    textview_draw(tv);
+                }
+            } else if (event->x < arrow_left_x) {
+                // Track or knob clicked - start dragging
+                int knob_left = tv->h_scrollbar_knob_x;
+                int knob_right = knob_left + tv->h_scrollbar_knob_width;
+                
+                if (event->x >= knob_left && event->x < knob_right) {
+                    // Clicked on knob - start dragging
+                    tv->h_scrollbar_dragging = true;
+                    tv->h_scrollbar_drag_offset = event->x - knob_left;
+                } else {
+                    // Clicked on track - page left/right
+                    int viewable_width = tv->width;
+                    if (tv->scrollbar_visible) viewable_width -= VERT_SCROLLBAR_WIDTH;
+                    
+                    if (event->x < knob_left) {
+                        // Page left
+                        tv->scroll_x -= viewable_width / 2;
+                        if (tv->scroll_x < 0) tv->scroll_x = 0;
+                    } else {
+                        // Page right
+                        tv->scroll_x += viewable_width / 2;
+                        int max_scroll = tv->max_line_width - viewable_width;
+                        if (max_scroll < 0) max_scroll = 0;
+                        if (tv->scroll_x > max_scroll) tv->scroll_x = max_scroll;
+                    }
+                    textview_update_scrollbar(tv);
+                    textview_draw(tv);
+                }
             }
         }
-        // ALWAYS return true for ANY click in scrollbar area to prevent text selection
+        // ALWAYS return true for ANY click in horizontal scrollbar area
         return true;
     }
     // Calculate which line was clicked
@@ -1072,8 +1324,9 @@ void textview_set_word_wrap(TextView *tv, bool wrap) {
 // Handle button release
 bool textview_handle_button_release(TextView *tv, XButtonEvent *event) {
     if (!tv) return false;
-    bool was_dragging = tv->scrollbar_dragging;
+    bool was_dragging = tv->scrollbar_dragging || tv->h_scrollbar_dragging;
     tv->scrollbar_dragging = false;
+    tv->h_scrollbar_dragging = false;
     return was_dragging;
 }
 
@@ -1081,16 +1334,18 @@ bool textview_handle_button_release(TextView *tv, XButtonEvent *event) {
 bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
     if (!tv) return false;
     
-    // Handle scrollbar dragging
+    // Handle vertical scrollbar dragging
     if (tv->scrollbar_dragging) {
-        int track_h = tv->height - (TEXTVIEW_ARROW_HEIGHT * 2);
+        int sb_h = tv->height;  // Always full height
+        int track_h = sb_h - (VERT_ARROW_HEIGHT * 2);
+        int usable_track = track_h - 2*SCROLLBAR_KNOB_PADDING;
         int rel_y = event->y - tv->scrollbar_drag_offset;
-        int available_space = track_h - tv->scrollbar_knob_height - 2;
+        int available_space = usable_track - tv->scrollbar_knob_height;
         
         if (available_space > 0) {
             // Calculate new scroll position
             int scrollable_lines = tv->line_count - tv->visible_lines;
-            tv->scroll_y = (rel_y - 1) * scrollable_lines / available_space;
+            tv->scroll_y = rel_y * scrollable_lines / available_space;
             
             if (tv->scroll_y < 0) tv->scroll_y = 0;
             if (tv->scroll_y > scrollable_lines) tv->scroll_y = scrollable_lines;
@@ -1101,12 +1356,42 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
         return true;
     }
     
+    // Handle horizontal scrollbar dragging
+    if (tv->h_scrollbar_dragging) {
+        int sb_w = tv->width;
+        if (tv->scrollbar_visible) sb_w -= VERT_SCROLLBAR_WIDTH;
+        int track_w = sb_w - (HORI_ARROW_WIDTH * 2);
+        int usable_track = track_w - 2*SCROLLBAR_KNOB_PADDING;
+        int rel_x = event->x - tv->h_scrollbar_drag_offset;
+        int available_space = usable_track - tv->h_scrollbar_knob_width;
+        
+        if (available_space > 0) {
+            // Calculate new scroll position
+            int viewable_width = tv->width;
+            if (tv->scrollbar_visible) viewable_width -= VERT_SCROLLBAR_WIDTH;
+            int max_scroll = tv->max_line_width - viewable_width;
+            if (max_scroll > 0) {
+                tv->scroll_x = rel_x * max_scroll / available_space;
+                
+                if (tv->scroll_x < 0) tv->scroll_x = 0;
+                if (tv->scroll_x > max_scroll) tv->scroll_x = max_scroll;
+                
+                textview_update_scrollbar(tv);
+                textview_draw(tv);
+            }
+        }
+        return true;
+    }
+    
     // Only handle text selection if button is pressed (dragging)
     if (!(event->state & Button1Mask)) return false;
     
-    // CRITICAL: Never allow text selection in scrollbar area!
-    if (tv->scrollbar_visible && event->x >= tv->width - TEXTVIEW_SCROLLBAR_WIDTH) {
-        return true;  // Consume event - no text selection in scrollbar!
+    // CRITICAL: Never allow text selection in scrollbar areas!
+    if (tv->scrollbar_visible && event->x >= tv->width - VERT_SCROLLBAR_WIDTH) {
+        return true;  // Consume event - no text selection in vertical scrollbar!
+    }
+    if (tv->h_scrollbar_visible && event->y >= tv->height - HORI_SCROLLBAR_HEIGHT) {
+        return true;  // Consume event - no text selection in horizontal scrollbar!
     }
     
     // Calculate which line/col we're over
@@ -1479,36 +1764,104 @@ void textview_update_scrollbar(TextView *tv) {
     if (!tv) return;
     
     // Recalculate visible lines based on current height
+    int viewable_height = tv->height;
+    if (tv->h_scrollbar_visible) viewable_height -= HORI_SCROLLBAR_HEIGHT;
     if (tv->line_height > 0) {
-        tv->visible_lines = tv->height / tv->line_height;
+        tv->visible_lines = viewable_height / tv->line_height;
     }
     
-    // Scrollbar is ALWAYS visible (like ReqASL)
-    tv->scrollbar_visible = true;
-    
-    // If content doesn't exceed view, knob fills the track
-    if (tv->line_count <= tv->visible_lines) {
-        // Full knob when nothing to scroll
-        int track_height = tv->height - (TEXTVIEW_ARROW_HEIGHT * 2) - 2;
-        tv->scrollbar_knob_height = track_height;
-        tv->scrollbar_knob_y = 1;
-        return;
+    // Calculate maximum line width for horizontal scrollbar
+    int x_start = tv->line_numbers ? tv->line_number_width : 5;
+    tv->max_line_width = 0;
+    for (int i = 0; i < tv->line_count; i++) {
+        if (tv->lines[i] && *tv->lines[i]) {
+            XGlyphInfo extents;
+            XftTextExtents8(tv->display, tv->font, (FcChar8*)tv->lines[i],
+                          strlen(tv->lines[i]), &extents);
+            int line_width = x_start + extents.xOff + 10;
+            if (line_width > tv->max_line_width) {
+                tv->max_line_width = line_width;
+            }
+        }
     }
     
-    // Calculate scrollbar track height (minus arrow buttons)
-    int track_height = tv->height - (TEXTVIEW_ARROW_HEIGHT * 2) - 2;
+    // Determine scrollbar visibility
+    int content_height = tv->line_count * tv->line_height;
+    int viewable_width = tv->width;
     
-    // Calculate knob size proportional to visible vs total
-    tv->scrollbar_knob_height = (tv->visible_lines * track_height) / tv->line_count;
-    if (tv->scrollbar_knob_height < 20) tv->scrollbar_knob_height = 20; // Minimum knob size
+    // Check if we need scrollbars
+    bool need_v_scrollbar = (content_height > tv->height);
+    bool need_h_scrollbar = (tv->max_line_width > tv->width);
     
-    // Calculate knob position
-    int scrollable_lines = tv->line_count - tv->visible_lines;
-    if (scrollable_lines > 0) {
-        int available_space = track_height - tv->scrollbar_knob_height - 2;
-        tv->scrollbar_knob_y = 1 + (tv->scroll_y * available_space) / scrollable_lines;
-    } else {
-        tv->scrollbar_knob_y = 1;
+    // If adding one scrollbar reduces space enough to need the other, show both
+    if (need_v_scrollbar && !need_h_scrollbar) {
+        if (tv->max_line_width > (tv->width - VERT_SCROLLBAR_WIDTH)) {
+            need_h_scrollbar = true;
+        }
+    }
+    if (need_h_scrollbar && !need_v_scrollbar) {
+        if (content_height > (tv->height - HORI_SCROLLBAR_HEIGHT)) {
+            need_v_scrollbar = true;
+        }
+    }
+    
+    tv->scrollbar_visible = need_v_scrollbar;
+    tv->h_scrollbar_visible = need_h_scrollbar;
+    
+    // Update vertical scrollbar knob
+    if (tv->scrollbar_visible) {
+        int sb_h = tv->height;  // Always full height
+        int track_height = sb_h - (VERT_ARROW_HEIGHT * 2);
+        
+        if (tv->line_count <= tv->visible_lines) {
+            // Full knob when nothing to scroll (fills track minus padding)
+            tv->scrollbar_knob_height = track_height - 2*SCROLLBAR_KNOB_PADDING;
+            tv->scrollbar_knob_y = 0;
+        } else {
+            // Calculate knob size proportional to visible vs total (with padding)
+            int usable_track = track_height - 2*SCROLLBAR_KNOB_PADDING;
+            tv->scrollbar_knob_height = (tv->visible_lines * usable_track) / tv->line_count;
+            if (tv->scrollbar_knob_height < 20) tv->scrollbar_knob_height = 20;
+            
+            // Calculate knob position (already accounts for padding in drawing)
+            int scrollable_lines = tv->line_count - tv->visible_lines;
+            if (scrollable_lines > 0) {
+                int available_space = usable_track - tv->scrollbar_knob_height;
+                tv->scrollbar_knob_y = (tv->scroll_y * available_space) / scrollable_lines;
+            } else {
+                tv->scrollbar_knob_y = 0;
+            }
+        }
+    }
+    
+    // Update horizontal scrollbar knob
+    if (tv->h_scrollbar_visible) {
+        int sb_w = tv->width;
+        if (tv->scrollbar_visible) sb_w -= VERT_SCROLLBAR_WIDTH;
+        int track_width = sb_w - (HORI_ARROW_WIDTH * 2);
+        
+        viewable_width = tv->width;
+        if (tv->scrollbar_visible) viewable_width -= VERT_SCROLLBAR_WIDTH;
+        
+        if (tv->max_line_width <= viewable_width) {
+            // Full knob when nothing to scroll (fills track minus padding)
+            tv->h_scrollbar_knob_width = track_width - 2*SCROLLBAR_KNOB_PADDING;
+            tv->h_scrollbar_knob_x = 0;
+        } else {
+            // Calculate knob size proportional to visible vs total (with padding)
+            int usable_track = track_width - 2*SCROLLBAR_KNOB_PADDING;
+            tv->h_scrollbar_knob_width = (viewable_width * usable_track) / tv->max_line_width;
+            if (tv->h_scrollbar_knob_width < 20) tv->h_scrollbar_knob_width = 20;
+            
+            // Calculate knob position (already accounts for padding in drawing)
+            int max_scroll = tv->max_line_width - viewable_width;
+            if (max_scroll > 0) {
+                int available_space = usable_track - tv->h_scrollbar_knob_width;
+                tv->h_scrollbar_knob_x = (tv->scroll_x * available_space) / max_scroll;
+            } else {
+                tv->h_scrollbar_knob_x = 0;
+            }
+        }
     }
 }
 

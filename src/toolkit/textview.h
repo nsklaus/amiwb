@@ -7,8 +7,13 @@
 #include <stdint.h>
 
 // Scrollbar constants
-#define TEXTVIEW_SCROLLBAR_WIDTH 20
-#define TEXTVIEW_ARROW_HEIGHT 17
+#define VERT_SCROLLBAR_WIDTH 18
+#define HORI_SCROLLBAR_HEIGHT 17
+#define VERT_ARROW_HEIGHT 17
+#define HORI_ARROW_WIDTH 16
+#define VERT_KNOB_WIDTH 11
+#define HORI_KNOB_HEIGHT 11
+#define SCROLLBAR_KNOB_PADDING 2  // Same padding for both scrollbars
 
 // TextView widget for multi-line text editing
 typedef struct TextView {
@@ -42,12 +47,20 @@ typedef struct TextView {
     int scroll_y;           // Vertical scroll offset (in lines)
     int visible_lines;      // Number of lines that fit in view
     
-    // Scrollbar state
+    // Vertical scrollbar state
     int scrollbar_knob_y;
     int scrollbar_knob_height;
     bool scrollbar_dragging;
     int scrollbar_drag_offset;
-    bool scrollbar_visible;  // Whether scrollbar is needed
+    bool scrollbar_visible;  // Whether vertical scrollbar is needed
+    
+    // Horizontal scrollbar state
+    int h_scrollbar_knob_x;
+    int h_scrollbar_knob_width;
+    bool h_scrollbar_dragging;
+    int h_scrollbar_drag_offset;
+    bool h_scrollbar_visible;  // Whether horizontal scrollbar is needed
+    int max_line_width;  // Longest line width in pixels
     
     // Display settings
     XftFont *font;
