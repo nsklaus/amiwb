@@ -25,6 +25,15 @@ EditPad* editpad_create(Display *display) {
     // Load configuration
     editpad_load_config(ep);
     
+    // Initialize syntax highlighting
+    ep->syntax = syntax_create();
+    if (ep->syntax) {
+        // Load colors from config (same path as editpadrc)
+        char config_path[PATH_SIZE];
+        snprintf(config_path, PATH_SIZE, "%s/.config/amiwb/editpad/editpadrc", getenv("HOME"));
+        syntax_load_colors(ep->syntax, config_path);
+    }
+    
     // Create main window
     XSetWindowAttributes attrs;
     // Convert GRAY to pixel value (simple gray)
@@ -106,6 +115,10 @@ EditPad* editpad_create(Display *display) {
 void editpad_destroy(EditPad *ep) {
     if (!ep) return;
     
+    if (ep->syntax) {
+        syntax_destroy(ep->syntax);
+    }
+    
     if (ep->text_view) {
         textview_destroy(ep->text_view);
     }
@@ -149,6 +162,14 @@ void editpad_new_file(EditPad *ep) {
     ep->untitled = true;
     ep->modified = false;
     strcpy(ep->current_file, "");
+    
+    // Clear syntax highlighting
+    if (ep->syntax) {
+        syntax_set_language(ep->syntax, LANG_NONE);
+        // TODO: Re-enable when textview_set_syntax_context is implemented
+        // textview_set_syntax_context(ep->text_view, NULL, NULL, 0);
+    }
+    
     editpad_update_title(ep);
 }
 
@@ -249,6 +270,29 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     ep->current_file[PATH_SIZE - 1] = '\0';
     ep->untitled = false;
     ep->modified = false;
+    
+    // Detect language and set syntax highlighting
+    if (ep->syntax) {
+        Language lang = syntax_detect_language(filename);
+        syntax_set_language(ep->syntax, lang);
+        fprintf(stderr, "[INFO] EditPad: Syntax highlighting set for language %d\n", lang);
+        
+        // TODO: Re-enable when textview syntax support is implemented
+        // Pass syntax context to TextView - palette must be heap allocated
+        // uint32_t *palette = malloc(SYNTAX_MAX * sizeof(uint32_t));
+        // if (palette) {
+        //     for (int i = 0; i < SYNTAX_MAX; i++) {
+        //         palette[i] = syntax_get_color(ep->syntax, i);
+        //     }
+        //     textview_set_syntax_context(ep->text_view, ep->syntax, palette, SYNTAX_MAX);
+        //     
+        //     // Highlight all lines
+        //     textview_highlight_all_lines(ep->text_view);
+        //     
+        //     // Note: TextView now owns the palette and will free it
+        // }
+    }
+    
     editpad_update_title(ep);
     
     fclose(f);

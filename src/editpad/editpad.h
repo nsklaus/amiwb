@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include "../toolkit/textview.h"
 #include "../amiwb/config.h"
+#include "syntax_highlight.h"
 
 typedef struct {
     Display *display;
@@ -27,6 +28,9 @@ typedef struct {
     unsigned int selection_bg;  // Selection background color
     unsigned int selection_fg;  // Selection foreground color
     unsigned int cursor_color;  // Cursor color
+    
+    // Syntax highlighting
+    SyntaxHighlight *syntax;
     
     // Menu state
     bool has_focus;

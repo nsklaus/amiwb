@@ -25,9 +25,9 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     tv->width = width;
     tv->height = height;
     
-    // Create the window with gray background
+    // Create the window WITHOUT automatic background clearing
     XSetWindowAttributes attrs;
-    attrs.background_pixel = 0xa2a2a0;  // Gray color
+    attrs.background_pixmap = None;  // Don't automatically clear on expose
     attrs.border_pixel = BlackPixel(display, DefaultScreen(display));
     attrs.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | 
                        ButtonReleaseMask | PointerMotionMask | 
@@ -35,11 +35,15 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     
     tv->window = XCreateWindow(display, parent, x, y, width, height, 0,
                               CopyFromParent, InputOutput, CopyFromParent,
-                              CWBackPixel | CWBorderPixel | CWEventMask, &attrs);
+                              CWBackPixmap | CWBorderPixel | CWEventMask, &attrs);
     
     // Initialize text buffer
     tv->line_capacity = INITIAL_LINE_CAPACITY;
     tv->lines = calloc(tv->line_capacity, sizeof(char*));
+    
+    // Initialize line width cache
+    tv->line_widths = calloc(tv->line_capacity, sizeof(int));
+    tv->need_width_recalc = true;
     
     // Start with one empty line
     tv->lines[0] = strdup("");
@@ -185,6 +189,9 @@ void textview_destroy(TextView *tv) {
     }
     free(tv->lines);
     
+    // Free line width cache
+    if (tv->line_widths) free(tv->line_widths);
+    
     // Free clipboard buffer
     if (tv->clipboard_buffer) free(tv->clipboard_buffer);
     
@@ -227,6 +234,7 @@ void textview_set_text(TextView *tv, const char *text) {
         if (tv->line_count >= tv->line_capacity) {
             tv->line_capacity += LINE_CHUNK_SIZE;
             tv->lines = realloc(tv->lines, tv->line_capacity * sizeof(char*));
+            tv->line_widths = realloc(tv->line_widths, tv->line_capacity * sizeof(int));
         }
         
         // Copy line (strip \r if present)
@@ -278,6 +286,7 @@ void textview_set_text(TextView *tv, const char *text) {
     tv->scroll_y = 0;
     tv->has_selection = false;
     tv->modified = false;
+    tv->need_width_recalc = true;  // Need to recalculate line widths
     
     // Update scrollbar and redraw
     textview_update_scrollbar(tv);
@@ -342,6 +351,7 @@ void textview_insert_char(TextView *tv, char c) {
     
     tv->cursor_col++;
     tv->modified = true;
+    tv->need_width_recalc = true;  // Line content changed
     
     if (tv->on_change) tv->on_change(tv);
     textview_ensure_cursor_visible(tv);
@@ -632,8 +642,12 @@ void textview_ensure_cursor_visible(TextView *tv) {
 void textview_draw(TextView *tv) {
     if (!tv || !tv->xft_draw || !tv->font) return;
     
-    // Clear window
-    XClearWindow(tv->display, tv->window);
+    // Fill background manually since we disabled auto-clear
+    // Using XFillRectangle is faster than XClearWindow
+    XSetForeground(tv->display, DefaultGC(tv->display, DefaultScreen(tv->display)), 0xa2a2a0);
+    XFillRectangle(tv->display, tv->window, 
+                   DefaultGC(tv->display, DefaultScreen(tv->display)),
+                   0, 0, tv->width, tv->height);
     
     // Check if colors are allocated
     if (!tv->colors_allocated) {
@@ -661,17 +675,24 @@ void textview_draw(TextView *tv) {
     if (tv->h_scrollbar_visible) viewable_height -= HORI_SCROLLBAR_HEIGHT;
     
     // Calculate maximum line width for horizontal scrollbar
-    tv->max_line_width = 0;
-    for (int i = 0; i < tv->line_count; i++) {
-        if (tv->lines[i] && *tv->lines[i]) {
-            XGlyphInfo extents;
-            XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)tv->lines[i],
-                          strlen(tv->lines[i]), &extents);
-            int line_width = x_start + extents.xOff + 10;  // Include margins
-            if (line_width > tv->max_line_width) {
-                tv->max_line_width = line_width;
+    // Only recalculate if needed (text changed)
+    if (tv->need_width_recalc) {
+        tv->max_line_width = 0;
+        for (int i = 0; i < tv->line_count; i++) {
+            if (tv->lines[i] && *tv->lines[i]) {
+                XGlyphInfo extents;
+                XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)tv->lines[i],
+                              strlen(tv->lines[i]), &extents);
+                int line_width = x_start + extents.xOff + 10;  // Include margins
+                tv->line_widths[i] = line_width;  // Cache the width
+                if (line_width > tv->max_line_width) {
+                    tv->max_line_width = line_width;
+                }
+            } else {
+                tv->line_widths[i] = x_start + 10;  // Empty line width
             }
         }
+        tv->need_width_recalc = false;  // Clear the flag
     }
     
     // Determine if we need scrollbars
@@ -710,17 +731,36 @@ void textview_draw(TextView *tv) {
         if (lines_to_draw <= 0) lines_to_draw = 1;
     }
     
-    for (int i = tv->scroll_y; 
-         i < tv->line_count && i < tv->scroll_y + lines_to_draw; 
-         i++) {
-        
-        // Draw line number if enabled
-        if (tv->line_numbers) {
+    // First pass: Draw all line numbers without clipping
+    if (tv->line_numbers) {
+        int line_y = tv->line_height - 2;
+        for (int i = tv->scroll_y; 
+             i < tv->line_count && i < tv->scroll_y + lines_to_draw; 
+             i++) {
             char line_num[32];
             snprintf(line_num, sizeof(line_num), "%4d", i + 1);
             XftDrawStringUtf8(tv->xft_draw, &tv->xft_line_num_color, tv->font,
-                          5, y - 2, (FcChar8*)line_num, strlen(line_num));
+                          5, line_y - 2, (FcChar8*)line_num, strlen(line_num));
+            line_y += tv->line_height;
         }
+    }
+    
+    // Set up clipping for main text area (after drawing all line numbers)
+    XRectangle clip_rect;
+    clip_rect.x = tv->line_numbers ? tv->line_number_width : 0;
+    clip_rect.y = 0;
+    clip_rect.width = tv->width - clip_rect.x;
+    clip_rect.height = tv->height;
+    if (tv->scrollbar_visible) clip_rect.width -= VERT_SCROLLBAR_WIDTH;
+    if (tv->h_scrollbar_visible) clip_rect.height -= HORI_SCROLLBAR_HEIGHT;
+    
+    // Apply clipping to prevent text from drawing into scrollbars
+    XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
+    
+    // Second pass: Draw text content with clipping
+    for (int i = tv->scroll_y; 
+         i < tv->line_count && i < tv->scroll_y + lines_to_draw; 
+         i++) {
         
         // Check if this line has selection
         const char *line = tv->lines[i];
@@ -774,16 +814,33 @@ void textview_draw(TextView *tv) {
                         sel_width = extents.xOff;
                     }
                     
-                    // Convert stored color to XRenderColor
-                    XRenderColor sel_bg = {
-                        ((tv->sel_bg_color >> 16) & 0xFF) * 0x101,  // Red
-                        ((tv->sel_bg_color >> 8) & 0xFF) * 0x101,   // Green
-                        (tv->sel_bg_color & 0xFF) * 0x101,          // Blue
-                        0xFFFF                                       // Alpha
-                    };
-                    XRenderFillRectangle(tv->display, PictOpOver, dest, &sel_bg,
-                                       sel_x, y - tv->line_height + 2,
-                                       sel_width, tv->line_height);
+                    // Clip selection to text area (don't draw into line numbers or scrollbar)
+                    int clip_left = tv->line_numbers ? tv->line_number_width : 0;
+                    int clip_right = tv->width;
+                    if (tv->scrollbar_visible) clip_right -= VERT_SCROLLBAR_WIDTH;
+                    
+                    // Adjust selection drawing to stay within bounds
+                    if (sel_x < clip_left) {
+                        sel_width -= (clip_left - sel_x);
+                        sel_x = clip_left;
+                    }
+                    if (sel_x + sel_width > clip_right) {
+                        sel_width = clip_right - sel_x;
+                    }
+                    
+                    // Only draw if there's something visible after clipping
+                    if (sel_width > 0 && sel_x < clip_right) {
+                        // Convert stored color to XRenderColor
+                        XRenderColor sel_bg = {
+                            ((tv->sel_bg_color >> 16) & 0xFF) * 0x101,  // Red
+                            ((tv->sel_bg_color >> 8) & 0xFF) * 0x101,   // Green
+                            (tv->sel_bg_color & 0xFF) * 0x101,          // Blue
+                            0xFFFF                                       // Alpha
+                        };
+                        XRenderFillRectangle(tv->display, PictOpOver, dest, &sel_bg,
+                                           sel_x, y - tv->line_height + 2,
+                                           sel_width, tv->line_height);
+                    }
                     
                     XRenderFreePicture(tv->display, dest);
                 }
@@ -795,26 +852,8 @@ void textview_draw(TextView *tv) {
             // Apply horizontal scroll offset
             int text_x = x_start - tv->scroll_x;
             
-            // Set clipping to prevent text from appearing in scrollbar area AND line numbers
-            XRectangle clip_rect;
-            // Protect line number area when enabled
-            clip_rect.x = tv->line_numbers ? tv->line_number_width : 0;
-            clip_rect.y = 0;
-            clip_rect.width = tv->width - clip_rect.x;  // Adjust width based on x start
-            clip_rect.height = tv->height;
-            if (tv->scrollbar_visible) clip_rect.width -= VERT_SCROLLBAR_WIDTH;
-            if (tv->h_scrollbar_visible) clip_rect.height -= HORI_SCROLLBAR_HEIGHT;
-            
-            Region clip_region = XCreateRegion();
-            XUnionRectWithRegion(&clip_rect, clip_region, clip_region);
-            XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
-            
             XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
                           text_x, y - 2, (FcChar8*)line, strlen(line));
-            
-            // Reset clipping
-            XftDrawSetClip(tv->xft_draw, NULL);
-            XDestroyRegion(clip_region);
         }
         
         // Draw cursor if on this line and focused
@@ -836,30 +875,43 @@ void textview_draw(TextView *tv) {
             int viewport_width = tv->width;
             if (tv->scrollbar_visible) viewport_width -= VERT_SCROLLBAR_WIDTH;
             
-            if (cursor_x >= 0 && cursor_x < viewport_width) {
+            // Clip cursor to text area bounds
+            int clip_left = tv->line_numbers ? tv->line_number_width : 0;
+            int clip_right = tv->width;
+            if (tv->scrollbar_visible) clip_right -= VERT_SCROLLBAR_WIDTH;
+            
+            if (cursor_x >= clip_left && cursor_x < clip_right) {
                 // Draw blue rectangle cursor like InputField
                 // Get size of a space character for cursor width
                 XGlyphInfo space_info;
                 XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)" ", 1, &space_info);
                 int cursor_width = space_info.xOff > 0 ? space_info.xOff : 8;
                 
-                // Use XRender to draw blue rectangle
-                Picture dest = XRenderCreatePicture(tv->display, tv->window,
-                    XRenderFindVisualFormat(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display))),
-                    0, NULL);
+                // Clip cursor width if it extends beyond bounds
+                if (cursor_x + cursor_width > clip_right) {
+                    cursor_width = clip_right - cursor_x;
+                }
                 
-                // Convert stored cursor color to XRenderColor
-                XRenderColor cursor_color = {
-                    ((tv->cursor_color >> 16) & 0xFF) * 0x101,  // Red
-                    ((tv->cursor_color >> 8) & 0xFF) * 0x101,   // Green
-                    (tv->cursor_color & 0xFF) * 0x101,          // Blue
-                    0xFFFF                                       // Alpha
-                };
-                XRenderFillRectangle(tv->display, PictOpSrc, dest, &cursor_color,
-                                   cursor_x, y - tv->line_height + 2, 
-                                   cursor_width, tv->line_height);
-                
-                XRenderFreePicture(tv->display, dest);
+                // Only draw if cursor is at least partially visible
+                if (cursor_width > 0) {
+                    // Use XRender to draw blue rectangle
+                    Picture dest = XRenderCreatePicture(tv->display, tv->window,
+                        XRenderFindVisualFormat(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display))),
+                        0, NULL);
+                    
+                    // Convert stored cursor color to XRenderColor
+                    XRenderColor cursor_color = {
+                        ((tv->cursor_color >> 16) & 0xFF) * 0x101,  // Red
+                        ((tv->cursor_color >> 8) & 0xFF) * 0x101,   // Green
+                        (tv->cursor_color & 0xFF) * 0x101,          // Blue
+                        0xFFFF                                       // Alpha
+                    };
+                    XRenderFillRectangle(tv->display, PictOpSrc, dest, &cursor_color,
+                                       cursor_x, y - tv->line_height + 2, 
+                                       cursor_width, tv->line_height);
+                    
+                    XRenderFreePicture(tv->display, dest);
+                }
                 
                 // If cursor is on a character, redraw that character in white
                 if (tv->cursor_col < strlen(line)) {
@@ -883,6 +935,9 @@ void textview_draw(TextView *tv) {
         
         y += tv->line_height;
     }
+    
+    // Reset clipping before drawing scrollbars
+    XftDrawSetClip(tv->xft_draw, NULL);
     
     // Draw scrollbars if needed
     if (tv->scrollbar_visible || tv->h_scrollbar_visible) {
@@ -1034,7 +1089,6 @@ void textview_draw(TextView *tv) {
         XRenderFreePicture(tv->display, dest);
     }
     
-    // Colors are now persistent - no cleanup needed here
 }
 
 // Update only the cursor position (optimized drawing)
@@ -1060,21 +1114,23 @@ void textview_update_cursor(TextView *tv) {
         int y = (line_idx - tv->scroll_y + 1) * line_height - 2;  // Match the -2 offset from textview_draw
         const char *line = tv->lines[line_idx];
         
-        // Clear just this line's area (with extra pixels for complete cursor cleanup)
-        // Cursor draws from (y - line_height + 2) to (y + 2), so we need to clear that fully
-        // But stop before the black separator line
+        // Clear just this line's area (cursor is drawn from y - line_height + 2 to y + 2)
         // Don't clear the line number area - start after it
         int clear_x = tv->line_numbers ? tv->line_number_width : 0;
-        XClearArea(tv->display, tv->window, clear_x, y - line_height,  // Start after line numbers
-                   viewport_width - clear_x,  // Adjust width
-                   line_height + 3, False);  // +3 to ensure we clear through y+2
+        // Fill with gray background (can't use XClearArea since we disabled auto-background)
+        XSetForeground(tv->display, DefaultGC(tv->display, DefaultScreen(tv->display)), 0xa2a2a0);
+        XFillRectangle(tv->display, tv->window,
+                      DefaultGC(tv->display, DefaultScreen(tv->display)),
+                      clear_x, y - line_height + 2,  // Start where cursor starts
+                      viewport_width - clear_x,
+                      line_height);  // Clear exactly line_height pixels (cursor height)
         
         // Set clipping to prevent drawing into scrollbar area and line numbers
         XRectangle clip_rect;
         clip_rect.x = tv->line_numbers ? tv->line_number_width : 0;  // Protect line number area
-        clip_rect.y = y - line_height;  // Match the clear area
+        clip_rect.y = y - line_height + 2;  // Match the clear area
         clip_rect.width = viewport_width - clip_rect.x;  // Adjust width based on x start
-        clip_rect.height = line_height + 3;  // Match the clear area
+        clip_rect.height = line_height;  // Match the clear area
         Region clip_region = XCreateRegion();
         XUnionRectWithRegion(&clip_rect, clip_region, clip_region);
         XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
@@ -1459,19 +1515,30 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
         int x_pos = x_start;
         
         // Find which character was clicked
+        bool found = false;
         for (int i = 0; i < line_len; i++) {
             XGlyphInfo extents;
             XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
             int char_width = extents.xOff;
             
-            // Check if click is within this character
-            if (adjusted_x < x_pos + char_width / 2) {
+            // If click is anywhere within this character, place cursor before it
+            // This allows clicking on a character to position cursor for deletion
+            if (adjusted_x < x_pos + char_width) {
+                // Click is on this character - place cursor before it
                 clicked_col = i;
+                found = true;
                 break;
             }
             x_pos += char_width;
-            clicked_col = i + 1;
         }
+        
+        // If we didn't find a character (click is past end of line)
+        if (!found) {
+            clicked_col = line_len;
+        }
+    } else if (adjusted_x <= x_start) {
+        // Click before text starts - cursor at beginning
+        clicked_col = 0;
     }
     
     // Clear any existing selection on click

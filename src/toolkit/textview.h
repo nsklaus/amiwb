@@ -30,6 +30,10 @@ typedef struct TextView {
     int line_count;         // Number of lines
     int line_capacity;      // Allocated capacity
     
+    // Line width cache (to avoid recalculating on every draw)
+    int *line_widths;       // Cached width of each line in pixels
+    bool need_width_recalc; // Flag to trigger recalculation
+    
     // Cursor position
     int cursor_line;        // Current line (0-based)
     int cursor_col;         // Current column (0-based)
