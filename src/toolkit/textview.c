@@ -614,7 +614,7 @@ void textview_ensure_cursor_visible(TextView *tv) {
     }
     
     // Horizontal scrolling
-    int x_start = tv->line_numbers ? tv->line_number_width : 5;
+    int x_start = tv->line_numbers ? tv->line_number_width : 8;
     int cursor_x = x_start;
     
     // Calculate cursor x position
@@ -659,17 +659,19 @@ void textview_draw(TextView *tv) {
         return;  // Can't draw without colors
     }
     
-    // Calculate starting position
-    int x_start = 5;  // Small margin
+    // Calculate starting position with consistent padding
+    int text_padding = 8;  // Consistent padding between border and text
+    int x_start = text_padding;  // Default padding from left edge
+    
     if (tv->line_numbers) {
         // Calculate width needed for line numbers
         char line_num_str[32];
-        snprintf(line_num_str, sizeof(line_num_str), "%d ", tv->line_count);
+        snprintf(line_num_str, sizeof(line_num_str), "%d", tv->line_count);
         XGlyphInfo extents;
         XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line_num_str, 
                        strlen(line_num_str), &extents);
         tv->line_number_width = extents.xOff + 10;
-        x_start = tv->line_number_width;
+        x_start = tv->line_number_width + text_padding;
     }
     
     // Calculate maximum content height for scrollbar visibility
@@ -812,11 +814,12 @@ void textview_draw(TextView *tv) {
             // Apply horizontal scroll offset
             int text_x = x_start - tv->scroll_x;
             
-            // Set clipping to prevent text from appearing in scrollbar area
+            // Set clipping to prevent text from appearing in scrollbar area AND line numbers
             XRectangle clip_rect;
-            clip_rect.x = 0;
+            // Protect line number area when enabled
+            clip_rect.x = tv->line_numbers ? tv->line_number_width : 0;
             clip_rect.y = 0;
-            clip_rect.width = tv->width;
+            clip_rect.width = tv->width - clip_rect.x;  // Adjust width based on x start
             clip_rect.height = tv->height;
             if (tv->scrollbar_visible) clip_rect.width -= VERT_SCROLLBAR_WIDTH;
             if (tv->h_scrollbar_visible) clip_rect.height -= HORI_SCROLLBAR_HEIGHT;
@@ -1059,7 +1062,7 @@ void textview_update_cursor(TextView *tv) {
     
     // Calculate line height for drawing
     int line_height = tv->line_height;
-    int x_start = tv->line_numbers ? tv->line_number_width : 5;
+    int x_start = tv->line_numbers ? (tv->line_number_width + 8) : 8;
     
     // Calculate viewport width (excluding scrollbar AND separator line)
     int viewport_width = tv->width;
@@ -1079,15 +1082,17 @@ void textview_update_cursor(TextView *tv) {
         // Clear just this line's area (with extra pixels for complete cursor cleanup)
         // Cursor draws from (y - line_height + 2) to (y + 2), so we need to clear that fully
         // But stop before the black separator line
-        XClearArea(tv->display, tv->window, 0, y - line_height,  // Start at line top
-                   viewport_width,  // Don't clear separator or scrollbar
+        // Don't clear the line number area - start after it
+        int clear_x = tv->line_numbers ? tv->line_number_width : 0;
+        XClearArea(tv->display, tv->window, clear_x, y - line_height,  // Start after line numbers
+                   viewport_width - clear_x,  // Adjust width
                    line_height + 3, False);  // +3 to ensure we clear through y+2
         
-        // Set clipping to prevent drawing into scrollbar area
+        // Set clipping to prevent drawing into scrollbar area and line numbers
         XRectangle clip_rect;
-        clip_rect.x = 0;
+        clip_rect.x = tv->line_numbers ? tv->line_number_width : 0;  // Protect line number area
         clip_rect.y = y - line_height;  // Match the clear area
-        clip_rect.width = viewport_width;
+        clip_rect.width = viewport_width - clip_rect.x;  // Adjust width based on x start
         clip_rect.height = line_height + 3;  // Match the clear area
         Region clip_region = XCreateRegion();
         XUnionRectWithRegion(&clip_rect, clip_region, clip_region);
@@ -1460,7 +1465,7 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
     if (clicked_line < 0) clicked_line = 0;
     
     // Calculate column more accurately using font metrics
-    int x_start = tv->line_numbers ? tv->line_number_width : 5;
+    int x_start = tv->line_numbers ? (tv->line_number_width + 8) : 8;
     int clicked_col = 0;
     
     // Adjust click X position for horizontal scroll
@@ -1680,7 +1685,7 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
         if (motion_line >= tv->line_count) motion_line = tv->line_count - 1;
         if (motion_line < 0) motion_line = 0;
         
-        int x_start = tv->line_numbers ? tv->line_number_width : 5;
+        int x_start = tv->line_numbers ? tv->line_number_width : 8;
         int motion_col = 0;
         
         // Adjust mouse X position for horizontal scroll
@@ -2041,7 +2046,7 @@ void textview_update_scrollbar(TextView *tv) {
     }
     
     // Calculate maximum line width for horizontal scrollbar
-    int x_start = tv->line_numbers ? tv->line_number_width : 5;
+    int x_start = tv->line_numbers ? tv->line_number_width : 8;
     tv->max_line_width = 0;
     for (int i = 0; i < tv->line_count; i++) {
         if (tv->lines[i] && *tv->lines[i]) {
