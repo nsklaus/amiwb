@@ -65,7 +65,6 @@ void editpad_run(EditPad *ep) {
                         int menu_index = event.xclient.data.l[0];
                         int item_index = event.xclient.data.l[1];
                         
-                        fprintf(stderr, "[EditPad] Menu selection: menu=%d, item=%d\n", menu_index, item_index);
                         
                         // Handle File menu (index 0)
                         if (menu_index == 0) {
@@ -75,7 +74,6 @@ void editpad_run(EditPad *ep) {
                                     break;
                                 case 1:  // Open
                                     // Launch ReqASL to select file
-                                    fprintf(stderr, "[EditPad] Launching ReqASL for file open\n");
                                     FILE *fp = popen("reqasl --mode open", "r");
                                     if (fp) {
                                         char filepath[PATH_SIZE];
@@ -83,7 +81,6 @@ void editpad_run(EditPad *ep) {
                                             // Remove newline
                                             filepath[strcspn(filepath, "\n")] = 0;
                                             if (strlen(filepath) > 0) {
-                                                fprintf(stderr, "[EditPad] Opening file: %s\n", filepath);
                                                 editpad_open_file(ep, filepath);
                                             }
                                         }
@@ -183,7 +180,6 @@ void editpad_run(EditPad *ep) {
                         char buffer[32];
                         XLookupString(&event.xkey, buffer, sizeof(buffer), &keysym, NULL);
                         
-                        fprintf(stderr, "[EditPad] Super key pressed, keysym=0x%lx (%c)\n", keysym, (char)keysym);
                         
                         // Skip clipboard and undo/redo shortcuts - let TextView handle them
                         if (!(keysym == XK_c || keysym == XK_C ||  // Copy

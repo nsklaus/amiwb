@@ -188,8 +188,6 @@ void editpad_new_file(EditPad *ep) {
 void editpad_open_file(EditPad *ep, const char *filename) {
     if (!ep || !filename) return;
     
-    fprintf(stderr, "[INFO] EditPad: Opening file '%s'\n", filename);
-    
     FILE *f = fopen(filename, "rb");  // Open in binary mode for proper size
     if (!f) {
         fprintf(stderr, "[ERROR] EditPad: Cannot open file: %s (errno=%d: %s)\n", 
@@ -202,7 +200,6 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
     
-    fprintf(stderr, "[INFO] EditPad: File size = %ld bytes\n", size);
     
     if (size < 0) {
         fprintf(stderr, "[ERROR] EditPad: Invalid file size %ld\n", size);
@@ -232,7 +229,6 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     size_t bytes_read = fread(content, 1, size, f);
     content[size] = '\0';
     
-    fprintf(stderr, "[INFO] EditPad: Read %zu bytes from file\n", bytes_read);
     
     if (bytes_read != size) {
         fprintf(stderr, "[WARNING] EditPad: Read size mismatch (expected %ld, got %zu)\n", 
@@ -252,12 +248,10 @@ void editpad_open_file(EditPad *ep, const char *filename) {
         }
     }
     
-    fprintf(stderr, "[INFO] EditPad: File contains %d lines\n", line_count);
     if (null_bytes > 0) {
         fprintf(stderr, "[WARNING] EditPad: File contains %d NULL bytes (might be binary)\n", null_bytes);
     }
     if (utf8_sequences > 0) {
-        fprintf(stderr, "[INFO] EditPad: File appears to contain UTF-8 sequences (%d found)\n", utf8_sequences);
     }
     
     textview_set_text(ep->text_view, content);
@@ -269,7 +263,6 @@ void editpad_open_file(EditPad *ep, const char *filename) {
         for (char *p = loaded_text; *p; p++) {
             if (*p == '\n') tv_lines++;
         }
-        fprintf(stderr, "[INFO] EditPad: TextView now has %d lines\n", tv_lines);
         free(loaded_text);
     } else {
         fprintf(stderr, "[WARNING] EditPad: TextView returned NULL text after loading\n");
@@ -286,7 +279,6 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     if (ep->syntax) {
         Language lang = syntax_detect_language(filename);
         syntax_set_language(ep->syntax, lang);
-        fprintf(stderr, "[INFO] EditPad: Syntax highlighting set for language %d\n", lang);
         
         // Pass syntax context to TextView using the new callback API
         uint32_t palette[SYNTAX_MAX];
@@ -305,7 +297,6 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     editpad_update_title(ep);
     
     fclose(f);
-    fprintf(stderr, "[INFO] EditPad: File loading complete\n");
 }
 
 // Save file

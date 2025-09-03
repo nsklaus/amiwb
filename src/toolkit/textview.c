@@ -959,7 +959,6 @@ void textview_draw(TextView *tv) {
     // Defensive check for visible_lines
     int lines_to_draw = tv->visible_lines;
     if (lines_to_draw <= 0) {
-        fprintf(stderr, "[DEBUG] TextView: visible_lines is %d, forcing to viewport calculation\n", lines_to_draw);
         lines_to_draw = tv->height / 16;  // Use default line height
         if (lines_to_draw <= 0) lines_to_draw = 1;
     }
@@ -2336,7 +2335,6 @@ bool textview_handle_configure(TextView *tv, XConfigureEvent *event) {
     if (tv->line_height > 0) {
         tv->visible_lines = tv->height / tv->line_height;
         if (tv->visible_lines <= 0) {
-            fprintf(stderr, "[DEBUG] TextView: Calculated visible_lines as %d, forcing to 1\n", tv->visible_lines);
             tv->visible_lines = 1;
         }
     } else {
@@ -2362,7 +2360,6 @@ void textview_update_scrollbar(TextView *tv) {
     if (tv->line_height > 0) {
         tv->visible_lines = viewable_height / tv->line_height;
         if (tv->visible_lines <= 0) {
-            fprintf(stderr, "[DEBUG] TextView: In scrollbar update, visible_lines = %d, forcing to 1\n", tv->visible_lines);
             tv->visible_lines = 1;
         }
     } else {
@@ -2492,8 +2489,6 @@ void textview_copy(TextView *tv) {
     }
     tv->clipboard_buffer = selection;
     
-    fprintf(stderr, "[TextView] Copied to clipboard: '%s' (%zu bytes)\n", 
-            tv->clipboard_buffer, strlen(tv->clipboard_buffer));
     
     // Claim ownership of both PRIMARY and CLIPBOARD selections
     XSetSelectionOwner(tv->display, tv->primary_atom, tv->window, CurrentTime);

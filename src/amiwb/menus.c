@@ -1003,7 +1003,8 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
     active_menu = menu->submenus[index];
     
     // Update enabled states for Icons menu based on current selection
-    if (menu == menubar && index == 2) {  // Icons menu
+    // Only do this for system menus, not app menus
+    if (!app_menu_active && menu == menubar && index == 2) {  // Icons menu
         bool has_selected_icon = false;
         bool can_delete = false;
         FileIcon *selected = NULL;
@@ -1054,7 +1055,8 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
     }
     
     // Update enabled states for Window menu based on active window
-    if (menu == menubar && index == 1) {  // Window menu
+    // Only do this for system menus, not app menus
+    if (!app_menu_active && menu == menubar && index == 1) {  // Window menu
         Canvas *aw = get_active_window();
         bool has_active_window = (aw && aw->type == WINDOW);
         bool is_workbench_window = (aw && aw->type == WINDOW && aw->client_win == None);
