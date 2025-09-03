@@ -243,11 +243,30 @@ void textview_set_text(TextView *tv, const char *text) {
             len--;  // Remove the \r
         }
         
-        tv->lines[tv->line_count] = malloc(len + 1);
-        if (len > 0) {
-            strncpy(tv->lines[tv->line_count], start, len);
+        // Count tabs to calculate expanded length
+        int tab_count = 0;
+        for (int i = 0; i < len; i++) {
+            if (start[i] == '\t') tab_count++;
         }
-        tv->lines[tv->line_count][len] = '\0';
+        
+        // Allocate space for expanded line (each tab becomes up to TAB_WIDTH spaces)
+        int expanded_len = len + (tab_count * (TAB_WIDTH - 1));
+        tv->lines[tv->line_count] = malloc(expanded_len + 1);
+        
+        // Copy line, expanding tabs to spaces
+        int dest_pos = 0;
+        for (int src_pos = 0; src_pos < len; src_pos++) {
+            if (start[src_pos] == '\t') {
+                // Expand tab to spaces up to next tab stop
+                int spaces_to_add = TAB_WIDTH - (dest_pos % TAB_WIDTH);
+                for (int j = 0; j < spaces_to_add; j++) {
+                    tv->lines[tv->line_count][dest_pos++] = ' ';
+                }
+            } else {
+                tv->lines[tv->line_count][dest_pos++] = start[src_pos];
+            }
+        }
+        tv->lines[tv->line_count][dest_pos] = '\0';
         tv->lines_dirty[tv->line_count] = true;
         tv->line_count++;
         
@@ -697,8 +716,8 @@ void textview_draw(TextView *tv) {
     tv->scrollbar_visible = need_v_scrollbar;
     tv->h_scrollbar_visible = need_h_scrollbar;
     
-    // Draw visible lines
-    int y = tv->line_height;
+    // Draw visible lines (start 2 pixels higher to create bottom padding)
+    int y = tv->line_height - 2;
     
     // Defensive check for visible_lines
     int lines_to_draw = tv->visible_lines;
@@ -1054,7 +1073,7 @@ void textview_update_cursor(TextView *tv) {
         if (line_idx < 0 || line_idx >= tv->line_count) return;
         if (line_idx < tv->scroll_y || line_idx >= tv->scroll_y + tv->visible_lines) return;
         
-        int y = (line_idx - tv->scroll_y + 1) * line_height;
+        int y = (line_idx - tv->scroll_y + 1) * line_height - 2;  // Match the -2 offset from textview_draw
         const char *line = tv->lines[line_idx];
         
         // Clear just this line's area (with extra pixels for complete cursor cleanup)
@@ -1470,6 +1489,7 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
     }
     
     // Clear any existing selection on click
+    bool had_selection = tv->has_selection;
     tv->has_selection = false;
     
     // Set cursor position
@@ -1483,7 +1503,13 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
     tv->sel_end_col = clicked_col;
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
-    textview_update_cursor(tv);
+    
+    // If we had a selection, need to redraw to clear it visually
+    if (had_selection) {
+        textview_draw(tv);
+    } else {
+        textview_update_cursor(tv);
+    }
     
     return true;
 }
