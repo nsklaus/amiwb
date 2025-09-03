@@ -109,6 +109,9 @@ typedef struct TextView {
     void (*on_change)(struct TextView *tv);
     void (*on_cursor_move)(struct TextView *tv);
     void *user_data;
+    
+    // Syntax highlighting (opaque pointer to avoid circular dependency)
+    void *syntax_data;  // Actually TextViewSyntax* but kept opaque
 } TextView;
 
 // Creation and destruction
@@ -162,6 +165,16 @@ void textview_update_scrollbar(TextView *tv);
 // Color settings
 void textview_set_selection_colors(TextView *tv, unsigned int bg, unsigned int fg);
 void textview_set_cursor_color(TextView *tv, unsigned int color);
+
+// Syntax highlighting support
+// The callback should return an array of color indices (0-15) for each character
+// The returned array should be allocated with malloc and will be freed by TextView
+typedef void* (*TextViewSyntaxCallback)(void *context, const char *line, int line_num);
+
+void textview_set_syntax_highlight(TextView *tv, void *context,
+                                   TextViewSyntaxCallback highlight_func,
+                                   uint32_t *palette, int palette_size);
+void textview_highlight_all_lines(TextView *tv);
 
 // Event handling
 bool textview_handle_key_press(TextView *tv, XKeyEvent *event);

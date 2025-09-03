@@ -7,10 +7,45 @@
 #include <X11/Xatom.h>
 #include <X11/extensions/Xrender.h>
 
+// Define minimal types for syntax highlighting support
+// The actual syntax engine is provided by the application (e.g., EditPad)
+typedef enum { SYNTAX_NORMAL = 0, SYNTAX_MAX = 16 } SyntaxColor;
+typedef struct SyntaxHighlight SyntaxHighlight;  // Opaque pointer
+
 #define INITIAL_LINE_CAPACITY 100
 #define LINE_CHUNK_SIZE 100
 #define TAB_WIDTH 4
 #define PATH_SIZE 512
+#define HIGHLIGHT_BUFFER 10  // Lines above/below viewport to pre-highlight
+
+// Line highlighting cache
+typedef struct {
+    SyntaxColor *colors;     // Array of colors per character
+    bool dirty;              // Needs re-highlighting
+    int last_version;        // Text version when highlighted
+} LineHighlight;
+
+// Callback function type for syntax highlighting
+typedef SyntaxColor* (*SyntaxHighlightFunc)(void *context, const char *line, int line_num);
+
+// Forward declarations for static functions
+static void draw_line_with_colors(TextView *tv, int line_num, int x, int y);
+static void update_visible_highlighting(TextView *tv);
+static void invalidate_lines(TextView *tv, int start_line, int end_line);
+static void highlight_line_cached(TextView *tv, int line_num);
+
+// Extended TextView structure fields for syntax highlighting
+typedef struct {
+    // Syntax highlighting
+    void *syntax_context;               // Opaque context (e.g., SyntaxHighlight from EditPad)
+    SyntaxHighlightFunc highlight_func; // Function to call for highlighting
+    uint32_t color_palette[SYNTAX_MAX]; // RGB colors
+    LineHighlight *line_cache;         // Cache per line
+    int cache_size;                    // Number of cached lines
+    int text_version;                  // Increments on edit
+    XftColor xft_colors[SYNTAX_MAX];  // Pre-allocated Xft colors
+    bool xft_colors_allocated[SYNTAX_MAX]; // Track which are allocated
+} TextViewSyntax;
 
 // Create a new TextView widget
 TextView* textview_create(Display *display, Window parent, int x, int y, 
@@ -175,6 +210,9 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     tv->read_only = false;
     tv->modified = false;
     
+    // Initialize syntax highlighting data
+    tv->syntax_data = NULL;  // Will be allocated when syntax is set
+    
     XMapWindow(display, tv->window);
     return tv;
 }
@@ -194,6 +232,32 @@ void textview_destroy(TextView *tv) {
     
     // Free clipboard buffer
     if (tv->clipboard_buffer) free(tv->clipboard_buffer);
+    
+    // Free syntax highlighting resources
+    if (tv->syntax_data) {
+        TextViewSyntax *syn = (TextViewSyntax*)tv->syntax_data;
+        
+        // Free line cache
+        if (syn->line_cache) {
+            for (int i = 0; i < syn->cache_size; i++) {
+                if (syn->line_cache[i].colors) {
+                    free(syn->line_cache[i].colors);
+                }
+            }
+            free(syn->line_cache);
+        }
+        
+        // Free allocated XftColors
+        for (int i = 0; i < SYNTAX_MAX; i++) {
+            if (syn->xft_colors_allocated[i]) {
+                XftColorFree(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
+                           DefaultColormap(tv->display, DefaultScreen(tv->display)), &syn->xft_colors[i]);
+            }
+        }
+        
+        free(syn);
+        tv->syntax_data = NULL;
+    }
     
     // Free X resources
     if (tv->colors_allocated) {
@@ -288,6 +352,11 @@ void textview_set_text(TextView *tv, const char *text) {
     tv->modified = false;
     tv->need_width_recalc = true;  // Need to recalculate line widths
     
+    // Invalidate all syntax highlighting
+    if (tv->syntax_data) {
+        invalidate_lines(tv, 0, tv->line_count - 1);
+    }
+    
     // Update scrollbar and redraw
     textview_update_scrollbar(tv);
     textview_draw(tv);
@@ -353,10 +422,25 @@ void textview_insert_char(TextView *tv, char c) {
     tv->modified = true;
     tv->need_width_recalc = true;  // Line content changed
     
+    // Invalidate syntax highlighting for this line
+    if (tv->syntax_data) {
+        invalidate_lines(tv, tv->cursor_line, tv->cursor_line);
+    }
+    
     if (tv->on_change) tv->on_change(tv);
+    
+    // Check if scrolling is needed
+    int old_scroll_x = tv->scroll_x;
     textview_ensure_cursor_visible(tv);
     textview_update_scrollbar(tv);
-    textview_draw(tv);
+    
+    // If horizontal scrolling occurred, need full redraw
+    if (tv->scroll_x != old_scroll_x) {
+        textview_draw(tv);
+    } else {
+        // Just update the current line (optimized redraw)
+        textview_update_cursor(tv);
+    }
 }
 
 // Insert a new line at cursor
@@ -401,6 +485,11 @@ void textview_new_line(TextView *tv) {
     tv->cursor_line++;
     tv->cursor_col = 0;
     tv->modified = true;
+    
+    // Invalidate syntax highlighting for affected lines
+    if (tv->syntax_data) {
+        invalidate_lines(tv, tv->cursor_line - 1, tv->line_count - 1);
+    }
     
     if (tv->on_change) tv->on_change(tv);
     textview_ensure_cursor_visible(tv);
@@ -461,6 +550,12 @@ void textview_backspace(TextView *tv) {
     }
     
     tv->modified = true;
+    
+    // Invalidate syntax highlighting for affected lines
+    if (tv->syntax_data) {
+        invalidate_lines(tv, tv->cursor_line, tv->line_count - 1);
+    }
+    
     if (tv->on_change) tv->on_change(tv);
     textview_ensure_cursor_visible(tv);
     textview_update_scrollbar(tv);
@@ -511,6 +606,12 @@ void textview_delete_key(TextView *tv) {
     }
     
     tv->modified = true;
+    
+    // Invalidate syntax highlighting for affected lines
+    if (tv->syntax_data) {
+        invalidate_lines(tv, tv->cursor_line, tv->line_count - 1);
+    }
+    
     if (tv->on_change) tv->on_change(tv);
     textview_ensure_cursor_visible(tv);
     textview_update_scrollbar(tv);
@@ -521,6 +622,9 @@ void textview_delete_key(TextView *tv) {
 void textview_move_cursor_left(TextView *tv) {
     if (!tv) return;
     
+    int old_scroll_x = tv->scroll_x;
+    int old_scroll_y = tv->scroll_y;
+    
     if (tv->cursor_col > 0) {
         tv->cursor_col--;
     } else if (tv->cursor_line > 0) {
@@ -530,11 +634,20 @@ void textview_move_cursor_left(TextView *tv) {
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_update_cursor(tv);
+    
+    // If scrolling occurred, need full redraw
+    if (tv->scroll_x != old_scroll_x || tv->scroll_y != old_scroll_y) {
+        textview_draw(tv);
+    } else {
+        textview_update_cursor(tv);
+    }
 }
 
 void textview_move_cursor_right(TextView *tv) {
     if (!tv) return;
+    
+    int old_scroll_x = tv->scroll_x;
+    int old_scroll_y = tv->scroll_y;
     
     int line_len = strlen(tv->lines[tv->cursor_line]);
     if (tv->cursor_col < line_len) {
@@ -546,12 +659,19 @@ void textview_move_cursor_right(TextView *tv) {
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_update_cursor(tv);
+    
+    // If scrolling occurred, need full redraw
+    if (tv->scroll_x != old_scroll_x || tv->scroll_y != old_scroll_y) {
+        textview_draw(tv);
+    } else {
+        textview_update_cursor(tv);
+    }
 }
 
 void textview_move_cursor_up(TextView *tv) {
     if (!tv || tv->cursor_line == 0) return;
     
+    int old_scroll_y = tv->scroll_y;
     tv->cursor_line--;
     int line_len = strlen(tv->lines[tv->cursor_line]);
     if (tv->cursor_col > line_len) {
@@ -560,12 +680,19 @@ void textview_move_cursor_up(TextView *tv) {
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_update_cursor(tv);
+    
+    // If scrolling occurred, need full redraw
+    if (tv->scroll_y != old_scroll_y) {
+        textview_draw(tv);
+    } else {
+        textview_update_cursor(tv);
+    }
 }
 
 void textview_move_cursor_down(TextView *tv) {
     if (!tv || tv->cursor_line >= tv->line_count - 1) return;
     
+    int old_scroll_y = tv->scroll_y;
     tv->cursor_line++;
     int line_len = strlen(tv->lines[tv->cursor_line]);
     if (tv->cursor_col > line_len) {
@@ -574,7 +701,13 @@ void textview_move_cursor_down(TextView *tv) {
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_update_cursor(tv);
+    
+    // If scrolling occurred, need full redraw
+    if (tv->scroll_y != old_scroll_y) {
+        textview_draw(tv);
+    } else {
+        textview_update_cursor(tv);
+    }
 }
 
 void textview_move_cursor_home(TextView *tv) {
@@ -784,6 +917,11 @@ void textview_draw(TextView *tv) {
     // Apply clipping to prevent text from drawing into scrollbars
     XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
     
+    // Update syntax highlighting for visible lines before drawing
+    if (tv->syntax_data) {
+        update_visible_highlighting(tv);
+    }
+    
     // Second pass: Draw text content with clipping
     for (int i = tv->scroll_y; 
          i < tv->line_count && i < tv->scroll_y + lines_to_draw; 
@@ -879,8 +1017,13 @@ void textview_draw(TextView *tv) {
             // Apply horizontal scroll offset
             int text_x = x_start - tv->scroll_x;
             
-            XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
-                          text_x, y - 2, (FcChar8*)line, strlen(line));
+            // Use syntax-aware drawing if available
+            if (tv->syntax_data) {
+                draw_line_with_colors(tv, i, text_x, y - 2);
+            } else {
+                XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
+                              text_x, y - 2, (FcChar8*)line, strlen(line));
+            }
         }
         
         // Draw cursor if on this line and focused
@@ -1185,8 +1328,19 @@ void textview_update_cursor(TextView *tv) {
         // Draw the text with horizontal scroll offset
         if (line && *line) {
             int text_x = x_start - tv->scroll_x;
-            XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
-                            text_x, y - 2, (FcChar8*)line, strlen(line));
+            
+            // Use syntax-aware drawing if available
+            if (tv->syntax_data) {
+                // Ensure this line is highlighted before drawing
+                TextViewSyntax *syn = (TextViewSyntax*)tv->syntax_data;
+                if (syn->highlight_func && syn->syntax_context) {
+                    highlight_line_cached(tv, line_idx);
+                }
+                draw_line_with_colors(tv, line_idx, text_x, y - 2);
+            } else {
+                XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
+                                text_x, y - 2, (FcChar8*)line, strlen(line));
+            }
         }
         
         // Draw cursor if this is the cursor line and requested
@@ -2054,6 +2208,11 @@ void textview_delete_selection(TextView *tv) {
     tv->has_selection = false;
     tv->modified = true;
     
+    // Invalidate syntax highlighting for affected lines
+    if (tv->syntax_data) {
+        invalidate_lines(tv, start_line, tv->line_count - 1);
+    }
+    
     // Redraw
     textview_draw(tv);
 }
@@ -2349,4 +2508,278 @@ void textview_handle_selection_notify(TextView *tv, XSelectionEvent *sel) {
             XFree(data);
         }
     }
+}
+
+// =============================================================================
+// SYNTAX HIGHLIGHTING IMPLEMENTATION
+// =============================================================================
+
+// Helper: Draw a line with per-character syntax colors
+static void draw_line_with_colors(TextView *tv, int line_num, int x, int y) {
+    if (!tv || !tv->syntax_data || line_num >= tv->line_count) {
+        // No syntax highlighting - fall back to normal drawing
+        if (tv->lines[line_num] && *tv->lines[line_num]) {
+            XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
+                            x, y, (FcChar8*)tv->lines[line_num], 
+                            strlen(tv->lines[line_num]));
+        }
+        return;
+    }
+    
+    TextViewSyntax *syn = (TextViewSyntax*)tv->syntax_data;
+    if (!syn->highlight_func || !syn->line_cache || line_num >= syn->cache_size) {
+        // No highlighting available - use normal drawing
+        if (tv->lines[line_num] && *tv->lines[line_num]) {
+            XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
+                            x, y, (FcChar8*)tv->lines[line_num], 
+                            strlen(tv->lines[line_num]));
+        }
+        return;
+    }
+    
+    LineHighlight *lh = &syn->line_cache[line_num];
+    if (!lh->colors) {
+        // Colors not available - use normal drawing
+        if (tv->lines[line_num] && *tv->lines[line_num]) {
+            XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
+                            x, y, (FcChar8*)tv->lines[line_num], 
+                            strlen(tv->lines[line_num]));
+        }
+        return;
+    }
+    
+    // Draw text character by character with appropriate colors
+    char *line = tv->lines[line_num];
+    if (!line || !*line) return;
+    
+    int current_x = x;
+    int len = strlen(line);
+    
+    // Group consecutive characters with same color for efficiency
+    int start = 0;
+    while (start < len) {
+        SyntaxColor color = lh->colors[start];
+        int end = start + 1;
+        
+        // Find run of same color
+        while (end < len && lh->colors[end] == color) {
+            end++;
+        }
+        
+        // Get the appropriate XftColor
+        XftColor *xft_color = &tv->xft_fg_color;  // Default
+        if (color < SYNTAX_MAX && syn->xft_colors_allocated[color]) {
+            xft_color = &syn->xft_colors[color];
+        }
+        
+        // Draw this run of characters
+        XftDrawStringUtf8(tv->xft_draw, xft_color, tv->font,
+                        current_x, y, (FcChar8*)&line[start], end - start);
+        
+        // Calculate width of what we just drew
+        if (end > start) {
+            XGlyphInfo extents;
+            XftTextExtentsUtf8(tv->display, tv->font, 
+                             (FcChar8*)&line[start], end - start, &extents);
+            current_x += extents.xOff;
+        }
+        
+        start = end;
+    }
+}
+
+// Helper: Ensure cache size is sufficient
+static void ensure_cache_size(TextView *tv, int lines_needed) {
+    if (!tv->syntax_data) return;
+    
+    TextViewSyntax *syn = (TextViewSyntax*)tv->syntax_data;
+    
+    if (syn->cache_size < lines_needed) {
+        int old_size = syn->cache_size;
+        syn->line_cache = realloc(syn->line_cache, 
+                                 lines_needed * sizeof(LineHighlight));
+        if (!syn->line_cache) return;  // Out of memory
+        
+        // Initialize new entries
+        for (int i = old_size; i < lines_needed; i++) {
+            syn->line_cache[i].colors = NULL;
+            syn->line_cache[i].dirty = true;
+            syn->line_cache[i].last_version = -1;
+        }
+        syn->cache_size = lines_needed;
+    }
+}
+
+// Helper: Highlight a single line with caching
+static void highlight_line_cached(TextView *tv, int line_num) {
+    if (!tv->syntax_data || line_num >= tv->line_count) return;
+    
+    TextViewSyntax *syn = (TextViewSyntax*)tv->syntax_data;
+    
+    // Ensure cache is big enough
+    ensure_cache_size(tv, line_num + 1);
+    if (!syn->line_cache) return;
+    
+    LineHighlight *lh = &syn->line_cache[line_num];
+    
+    // Check if needs update
+    if (!lh->dirty && lh->last_version == syn->text_version) {
+        return; // Use cached data
+    }
+    
+    // Get line text
+    char *line = tv->lines[line_num];
+    if (!line) return;
+    
+    // Free old colors
+    if (lh->colors) {
+        free(lh->colors);
+        lh->colors = NULL;
+    }
+    
+    // Call the highlight function if provided
+    if (syn->highlight_func && syn->syntax_context) {
+        lh->colors = syn->highlight_func(syn->syntax_context, line, line_num);
+    } else {
+        // No syntax highlighting - use default colors
+        int len = strlen(line);
+        lh->colors = calloc(len + 1, sizeof(SyntaxColor));
+        // All SYNTAX_NORMAL (0) by default
+    }
+    
+    lh->dirty = false;
+    lh->last_version = syn->text_version;
+}
+
+// Helper: Update highlighting for visible lines
+static void update_visible_highlighting(TextView *tv) {
+    if (!tv->syntax_data) return;
+    
+    TextViewSyntax *syn = (TextViewSyntax*)tv->syntax_data;
+    if (!syn->highlight_func || !syn->syntax_context) return;
+    
+    // Calculate visible range with buffer
+    int first = tv->scroll_y - HIGHLIGHT_BUFFER;
+    int last = tv->scroll_y + tv->visible_lines + HIGHLIGHT_BUFFER;
+    
+    first = (first < 0) ? 0 : first;
+    last = (last >= tv->line_count) ? tv->line_count - 1 : last;
+    
+    // Ensure cache covers visible range
+    ensure_cache_size(tv, last + 1);
+    
+    // Highlight dirty lines in visible range
+    for (int i = first; i <= last; i++) {
+        if (syn->line_cache && i < syn->cache_size) {
+            if (syn->line_cache[i].dirty) {
+                highlight_line_cached(tv, i);
+            }
+        }
+    }
+}
+
+// Helper: Invalidate lines in cache
+static void invalidate_lines(TextView *tv, int start_line, int end_line) {
+    if (!tv->syntax_data) return;
+    
+    TextViewSyntax *syn = (TextViewSyntax*)tv->syntax_data;
+    
+    // Increment version to detect stale cache
+    syn->text_version++;
+    
+    // Mark lines as dirty
+    for (int i = start_line; i <= end_line && i < syn->cache_size; i++) {
+        if (syn->line_cache && i >= 0) {
+            syn->line_cache[i].dirty = true;
+        }
+    }
+    
+    // Multi-line constructs might affect following lines
+    if (syn->highlight_func && end_line < tv->line_count - 1) {
+        // Be conservative: mark rest of visible area dirty
+        int last_visible = tv->scroll_y + tv->visible_lines + HIGHLIGHT_BUFFER;
+        for (int i = end_line + 1; i <= last_visible && i < syn->cache_size; i++) {
+            if (syn->line_cache && i >= 0) {
+                syn->line_cache[i].dirty = true;
+            }
+        }
+    }
+}
+
+// Set syntax highlighting context with callback
+void textview_set_syntax_highlight(TextView *tv, void *context,
+                                   TextViewSyntaxCallback highlight_func,
+                                   uint32_t *palette, int palette_size) {
+    if (!tv) return;
+    
+    // Allocate syntax data if needed
+    if (!tv->syntax_data) {
+        tv->syntax_data = calloc(1, sizeof(TextViewSyntax));
+        if (!tv->syntax_data) return;  // Out of memory
+    }
+    
+    TextViewSyntax *syn = (TextViewSyntax*)tv->syntax_data;
+    
+    // Store context and callback
+    syn->syntax_context = context;
+    syn->highlight_func = (SyntaxHighlightFunc)highlight_func;
+    
+    // Copy color palette
+    if (palette && palette_size > 0) {
+        int count = (palette_size < SYNTAX_MAX) ? palette_size : SYNTAX_MAX;
+        memcpy(syn->color_palette, palette, count * sizeof(uint32_t));
+        
+        // Allocate XftColors for the palette
+        for (int i = 0; i < count; i++) {
+            // Free old color if allocated
+            if (syn->xft_colors_allocated[i]) {
+                XftColorFree(tv->display, 
+                           DefaultVisual(tv->display, DefaultScreen(tv->display)),
+                           DefaultColormap(tv->display, DefaultScreen(tv->display)), 
+                           &syn->xft_colors[i]);
+            }
+            
+            // Allocate new color
+            XRenderColor render_color = {
+                .red = ((syn->color_palette[i] >> 16) & 0xFF) * 257,
+                .green = ((syn->color_palette[i] >> 8) & 0xFF) * 257,
+                .blue = (syn->color_palette[i] & 0xFF) * 257,
+                .alpha = 0xFFFF
+            };
+            
+            syn->xft_colors_allocated[i] = XftColorAllocValue(tv->display,
+                DefaultVisual(tv->display, DefaultScreen(tv->display)),
+                DefaultColormap(tv->display, DefaultScreen(tv->display)),
+                &render_color, &syn->xft_colors[i]);
+        }
+    }
+    
+    // Invalidate all lines
+    if (tv->line_count > 0) {
+        invalidate_lines(tv, 0, tv->line_count - 1);
+    }
+    
+    // Trigger redraw
+    textview_draw(tv);
+}
+
+// Force re-highlighting of all visible lines
+void textview_highlight_all_lines(TextView *tv) {
+    if (!tv || !tv->syntax_data) return;
+    
+    TextViewSyntax *syn = (TextViewSyntax*)tv->syntax_data;
+    if (!syn->highlight_func || !syn->syntax_context) return;
+    
+    // Mark all lines as dirty
+    if (syn->line_cache) {
+        for (int i = 0; i < syn->cache_size; i++) {
+            syn->line_cache[i].dirty = true;
+        }
+    }
+    
+    // Update highlighting for visible area
+    update_visible_highlighting(tv);
+    
+    // Trigger redraw
+    textview_draw(tv);
 }

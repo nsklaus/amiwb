@@ -75,7 +75,7 @@ $(REQASL_DIR)/%.o: $(REQASL_DIR)/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
 
 $(EDITPAD_DIR)/%.o: $(EDITPAD_DIR)/%.c
-	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -DEDITPAD_BUILD -c $< -o $@
 
 # Clean targets
 clean:

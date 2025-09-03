@@ -14,6 +14,17 @@
 #define MIN_WIDTH 400
 #define MIN_HEIGHT 300
 
+// Wrapper function for TextView syntax highlighting callback
+// This adapts the SyntaxHighlight interface to TextView's callback needs
+static void* editpad_syntax_callback(void *context, const char *line, int line_num) {
+    SyntaxHighlight *syntax = (SyntaxHighlight*)context;
+    if (!syntax || !line) return NULL;
+    
+    // Call the syntax highlighting engine
+    // Note: syntax_highlight_line returns SyntaxColor* which is what TextView expects
+    return syntax_highlight_line(syntax, line, line_num);
+}
+
 // Create the EditPad application
 EditPad* editpad_create(Display *display) {
     EditPad *ep = calloc(1, sizeof(EditPad));
@@ -166,8 +177,8 @@ void editpad_new_file(EditPad *ep) {
     // Clear syntax highlighting
     if (ep->syntax) {
         syntax_set_language(ep->syntax, LANG_NONE);
-        // TODO: Re-enable when textview_set_syntax_context is implemented
-        // textview_set_syntax_context(ep->text_view, NULL, NULL, 0);
+        // Clear syntax highlighting in TextView
+        textview_set_syntax_highlight(ep->text_view, NULL, NULL, NULL, 0);
     }
     
     editpad_update_title(ep);
@@ -277,20 +288,18 @@ void editpad_open_file(EditPad *ep, const char *filename) {
         syntax_set_language(ep->syntax, lang);
         fprintf(stderr, "[INFO] EditPad: Syntax highlighting set for language %d\n", lang);
         
-        // TODO: Re-enable when textview syntax support is implemented
-        // Pass syntax context to TextView - palette must be heap allocated
-        // uint32_t *palette = malloc(SYNTAX_MAX * sizeof(uint32_t));
-        // if (palette) {
-        //     for (int i = 0; i < SYNTAX_MAX; i++) {
-        //         palette[i] = syntax_get_color(ep->syntax, i);
-        //     }
-        //     textview_set_syntax_context(ep->text_view, ep->syntax, palette, SYNTAX_MAX);
-        //     
-        //     // Highlight all lines
-        //     textview_highlight_all_lines(ep->text_view);
-        //     
-        //     // Note: TextView now owns the palette and will free it
-        // }
+        // Pass syntax context to TextView using the new callback API
+        uint32_t palette[SYNTAX_MAX];
+        for (int i = 0; i < SYNTAX_MAX; i++) {
+            palette[i] = syntax_get_color(ep->syntax, i);
+        }
+        
+        textview_set_syntax_highlight(ep->text_view, ep->syntax, 
+                                     (TextViewSyntaxCallback)editpad_syntax_callback,
+                                     palette, SYNTAX_MAX);
+        
+        // Highlight all lines
+        textview_highlight_all_lines(ep->text_view);
     }
     
     editpad_update_title(ep);
