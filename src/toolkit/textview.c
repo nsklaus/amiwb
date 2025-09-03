@@ -1583,59 +1583,13 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
     // Only handle text selection if button is pressed (dragging)
     if (!(event->state & Button1Mask)) return false;
     
-    // CRITICAL: Never allow text selection in scrollbar areas!
-    if (tv->scrollbar_visible && event->x >= tv->width - VERT_SCROLLBAR_WIDTH) {
-        return true;  // Consume event - no text selection in vertical scrollbar!
-    }
-    if (tv->h_scrollbar_visible && event->y >= tv->height - HORI_SCROLLBAR_HEIGHT) {
-        return true;  // Consume event - no text selection in horizontal scrollbar!
-    }
+    // Check if mouse is over scrollbar areas
+    bool over_v_scrollbar = tv->scrollbar_visible && event->x >= tv->width - VERT_SCROLLBAR_WIDTH;
+    bool over_h_scrollbar = tv->h_scrollbar_visible && event->y >= tv->height - HORI_SCROLLBAR_HEIGHT;
+    bool over_scrollbar = over_v_scrollbar || over_h_scrollbar;
     
-    // Calculate which line/col we're over
-    int motion_line = tv->scroll_y + (event->y / tv->line_height);
-    if (motion_line >= tv->line_count) motion_line = tv->line_count - 1;
-    if (motion_line < 0) motion_line = 0;
-    
-    int x_start = tv->line_numbers ? tv->line_number_width : 5;
-    int motion_col = 0;
-    
-    // Adjust mouse X position for horizontal scroll
-    int adjusted_x = event->x + tv->scroll_x;
-    
-    if (adjusted_x > x_start && motion_line < tv->line_count) {
-        const char *line = tv->lines[motion_line];
-        int line_len = strlen(line);
-        int x_pos = x_start;
-        
-        for (int i = 0; i < line_len; i++) {
-            XGlyphInfo extents;
-            XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
-            int char_width = extents.xOff;
-            
-            if (adjusted_x < x_pos + char_width / 2) {
-                motion_col = i;
-                break;
-            }
-            x_pos += char_width;
-            motion_col = i + 1;
-        }
-    }
-    
-    // Update selection end point
-    tv->sel_end_line = motion_line;
-    tv->sel_end_col = motion_col;
-    
-    // Mark as having selection if we've actually moved
-    if (tv->sel_start_line != tv->sel_end_line || 
-        tv->sel_start_col != tv->sel_end_col) {
-        tv->has_selection = true;
-    }
-    
-    // Move cursor to end of selection
-    tv->cursor_line = motion_line;
-    tv->cursor_col = motion_col;
-    
-    // Auto-scroll if mouse is near edges or outside window
+    // FIRST: Handle auto-scroll for selection (runs even when over scrollbars!)
+    // This ensures smooth selection scrolling continues when mouse enters scrollbar area
     int scroll_zone = 30;  // Pixels from edge to trigger scrolling
     bool need_scroll = false;
     
@@ -1649,19 +1603,19 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
     if (event->y < 0 || event->y < scroll_zone) {
         // Above window or near top - scroll up
         if (tv->scroll_y > 0) {
-            // Faster scroll when further from edge
-            int speed = (event->y < 0) ? 3 : 1;
+            // Faster scroll when further from edge or over scrollbar
+            int speed = (event->y < 0 || over_scrollbar) ? 3 : 1;
             tv->scroll_y -= speed;
             if (tv->scroll_y < 0) tv->scroll_y = 0;
             need_scroll = true;
         }
-    } else if (event->y >= viewport_height || event->y > viewport_height - scroll_zone) {
-        // Near bottom of viewport (not including horizontal scrollbar area)
+    } else if (event->y >= viewport_height || event->y > viewport_height - scroll_zone || over_h_scrollbar) {
+        // Near bottom of viewport or over horizontal scrollbar - turbo scroll!
         int max_scroll = tv->line_count - tv->visible_lines;
         if (max_scroll < 0) max_scroll = 0;
         if (tv->scroll_y < max_scroll) {
-            // Faster scroll when further from edge
-            int speed = (event->y >= viewport_height) ? 3 : 1;
+            // Faster scroll when further from edge or over scrollbar (turbo zone!)
+            int speed = (event->y >= viewport_height || over_h_scrollbar) ? 3 : 1;
             tv->scroll_y += speed;
             if (tv->scroll_y > max_scroll) tv->scroll_y = max_scroll;
             need_scroll = true;
@@ -1672,16 +1626,16 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
     if (event->x < 0 || event->x < scroll_zone) {
         // Near left edge - scroll left
         if (tv->scroll_x > 0) {
-            int speed = (event->x < 0) ? 20 : 5;  // Faster for horizontal
+            int speed = (event->x < 0 || over_scrollbar) ? 20 : 5;  // Faster for horizontal
             tv->scroll_x -= speed;
             if (tv->scroll_x < 0) tv->scroll_x = 0;
             need_scroll = true;
         }
-    } else if (event->x >= viewport_width || event->x > viewport_width - scroll_zone) {
-        // Near right edge of viewport (not including vertical scrollbar)
+    } else if (event->x >= viewport_width || event->x > viewport_width - scroll_zone || over_v_scrollbar) {
+        // Near right edge of viewport or over vertical scrollbar - turbo scroll!
         int max_scroll = tv->max_line_width - viewport_width;
         if (max_scroll > 0 && tv->scroll_x < max_scroll) {
-            int speed = (event->x >= viewport_width) ? 20 : 5;  // Faster for horizontal
+            int speed = (event->x >= viewport_width || over_v_scrollbar) ? 20 : 5;  // Turbo when over scrollbar
             tv->scroll_x += speed;
             if (tv->scroll_x > max_scroll) tv->scroll_x = max_scroll;
             need_scroll = true;
@@ -1690,6 +1644,54 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
     
     if (need_scroll) {
         textview_update_scrollbar(tv);
+    }
+    
+    // SECOND: Update selection only if NOT over scrollbar areas
+    // This prevents accidental selection changes when mouse is over scrollbars
+    if (!over_scrollbar) {
+        // Calculate which line/col we're over
+        int motion_line = tv->scroll_y + (event->y / tv->line_height);
+        if (motion_line >= tv->line_count) motion_line = tv->line_count - 1;
+        if (motion_line < 0) motion_line = 0;
+        
+        int x_start = tv->line_numbers ? tv->line_number_width : 5;
+        int motion_col = 0;
+        
+        // Adjust mouse X position for horizontal scroll
+        int adjusted_x = event->x + tv->scroll_x;
+        
+        if (adjusted_x > x_start && motion_line < tv->line_count) {
+            const char *line = tv->lines[motion_line];
+            int line_len = strlen(line);
+            int x_pos = x_start;
+            
+            for (int i = 0; i < line_len; i++) {
+                XGlyphInfo extents;
+                XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
+                int char_width = extents.xOff;
+                
+                if (adjusted_x < x_pos + char_width / 2) {
+                    motion_col = i;
+                    break;
+                }
+                x_pos += char_width;
+                motion_col = i + 1;
+            }
+        }
+        
+        // Update selection end point
+        tv->sel_end_line = motion_line;
+        tv->sel_end_col = motion_col;
+        
+        // Mark as having selection if we've actually moved
+        if (tv->sel_start_line != tv->sel_end_line || 
+            tv->sel_start_col != tv->sel_end_col) {
+            tv->has_selection = true;
+        }
+        
+        // Move cursor to end of selection
+        tv->cursor_line = motion_line;
+        tv->cursor_col = motion_col;
     }
     
     textview_draw(tv);
