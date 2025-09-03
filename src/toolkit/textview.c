@@ -50,6 +50,8 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     tv->cursor_line = 0;
     tv->cursor_col = 0;
     tv->cursor_visible = true;
+    tv->prev_cursor_line = 0;
+    tv->prev_cursor_col = 0;
     
     // No selection initially
     tv->has_selection = false;
@@ -135,6 +137,34 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     Colormap colormap = DefaultColormap(display, DefaultScreen(display));
     tv->xft_draw = XftDrawCreate(display, tv->window, visual, colormap);
     
+    // Allocate XftColors once (reused for all drawing)
+    if (tv->xft_draw) {
+        XRenderColor render_color;
+        
+        // Foreground color (black)
+        render_color.red = 0;
+        render_color.green = 0;
+        render_color.blue = 0;
+        render_color.alpha = 0xFFFF;
+        XftColorAllocValue(display, visual, colormap, &render_color, &tv->xft_fg_color);
+        
+        // Selection foreground color (white)
+        render_color.red = 0xFFFF;
+        render_color.green = 0xFFFF;
+        render_color.blue = 0xFFFF;
+        XftColorAllocValue(display, visual, colormap, &render_color, &tv->xft_sel_color);
+        
+        // Line number color (dark gray)
+        render_color.red = 0x6666;
+        render_color.green = 0x6666;
+        render_color.blue = 0x6666;
+        XftColorAllocValue(display, visual, colormap, &render_color, &tv->xft_line_num_color);
+        
+        tv->colors_allocated = true;
+    } else {
+        tv->colors_allocated = false;
+    }
+    
     // Default settings
     tv->line_numbers = false;
     tv->word_wrap = false;
@@ -165,6 +195,14 @@ void textview_destroy(TextView *tv) {
     if (tv->clipboard_buffer) free(tv->clipboard_buffer);
     
     // Free X resources
+    if (tv->colors_allocated) {
+        XftColorFree(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
+                     DefaultColormap(tv->display, DefaultScreen(tv->display)), &tv->xft_fg_color);
+        XftColorFree(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
+                     DefaultColormap(tv->display, DefaultScreen(tv->display)), &tv->xft_sel_color);
+        XftColorFree(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
+                     DefaultColormap(tv->display, DefaultScreen(tv->display)), &tv->xft_line_num_color);
+    }
     if (tv->xft_draw) XftDrawDestroy(tv->xft_draw);
     if (tv->font) XftFontClose(tv->display, tv->font);
     if (tv->window) XDestroyWindow(tv->display, tv->window);
@@ -482,7 +520,7 @@ void textview_move_cursor_left(TextView *tv) {
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_draw(tv);
+    textview_update_cursor(tv);
 }
 
 void textview_move_cursor_right(TextView *tv) {
@@ -498,7 +536,7 @@ void textview_move_cursor_right(TextView *tv) {
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_draw(tv);
+    textview_update_cursor(tv);
 }
 
 void textview_move_cursor_up(TextView *tv) {
@@ -512,7 +550,7 @@ void textview_move_cursor_up(TextView *tv) {
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_draw(tv);
+    textview_update_cursor(tv);
 }
 
 void textview_move_cursor_down(TextView *tv) {
@@ -526,7 +564,7 @@ void textview_move_cursor_down(TextView *tv) {
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_draw(tv);
+    textview_update_cursor(tv);
 }
 
 void textview_move_cursor_home(TextView *tv) {
@@ -534,7 +572,7 @@ void textview_move_cursor_home(TextView *tv) {
     tv->cursor_col = 0;
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_draw(tv);
+    textview_update_cursor(tv);
 }
 
 void textview_move_cursor_end(TextView *tv) {
@@ -542,7 +580,7 @@ void textview_move_cursor_end(TextView *tv) {
     tv->cursor_col = strlen(tv->lines[tv->cursor_line]);
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_draw(tv);
+    textview_update_cursor(tv);
 }
 
 // Ensure cursor is visible in viewport
@@ -597,34 +635,10 @@ void textview_draw(TextView *tv) {
     // Clear window
     XClearWindow(tv->display, tv->window);
     
-    // Setup colors
-    XftColor fg_color, sel_color, line_num_color;
-    XRenderColor render_color;
-    
-    // Normal text color (black)
-    render_color.red = 0;
-    render_color.green = 0;
-    render_color.blue = 0;
-    render_color.alpha = 0xFFFF;
-    XftColorAllocValue(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
-                       DefaultColormap(tv->display, DefaultScreen(tv->display)),
-                       &render_color, &fg_color);
-    
-    // Selection color (white on blue)
-    render_color.red = 0xFFFF;
-    render_color.green = 0xFFFF;
-    render_color.blue = 0xFFFF;
-    XftColorAllocValue(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
-                       DefaultColormap(tv->display, DefaultScreen(tv->display)),
-                       &render_color, &sel_color);
-    
-    // Line number color (dark gray)
-    render_color.red = 0x6666;
-    render_color.green = 0x6666;
-    render_color.blue = 0x6666;
-    XftColorAllocValue(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
-                       DefaultColormap(tv->display, DefaultScreen(tv->display)),
-                       &render_color, &line_num_color);
+    // Check if colors are allocated
+    if (!tv->colors_allocated) {
+        return;  // Can't draw without colors
+    }
     
     // Calculate starting position
     int x_start = 5;  // Small margin
@@ -702,7 +716,7 @@ void textview_draw(TextView *tv) {
         if (tv->line_numbers) {
             char line_num[32];
             snprintf(line_num, sizeof(line_num), "%4d", i + 1);
-            XftDrawStringUtf8(tv->xft_draw, &line_num_color, tv->font,
+            XftDrawStringUtf8(tv->xft_draw, &tv->xft_line_num_color, tv->font,
                           5, y - 2, (FcChar8*)line_num, strlen(line_num));
         }
         
@@ -792,7 +806,7 @@ void textview_draw(TextView *tv) {
             XUnionRectWithRegion(&clip_rect, clip_region, clip_region);
             XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
             
-            XftDrawStringUtf8(tv->xft_draw, &fg_color, tv->font,
+            XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
                           text_x, y - 2, (FcChar8*)line, strlen(line));
             
             // Reset clipping
@@ -858,7 +872,7 @@ void textview_draw(TextView *tv) {
                         char_len = strlen(line) - tv->cursor_col;
                     }
                     
-                    XftDrawStringUtf8(tv->xft_draw, &sel_color, tv->font,
+                    XftDrawStringUtf8(tv->xft_draw, &tv->xft_sel_color, tv->font,
                                  cursor_x, y - 2, (FcChar8*)&line[tv->cursor_col], char_len);
                 }
             }
@@ -1017,13 +1031,141 @@ void textview_draw(TextView *tv) {
         XRenderFreePicture(tv->display, dest);
     }
     
-    // Cleanup colors
-    XftColorFree(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
-                DefaultColormap(tv->display, DefaultScreen(tv->display)), &fg_color);
-    XftColorFree(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
-                DefaultColormap(tv->display, DefaultScreen(tv->display)), &sel_color);
-    XftColorFree(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display)),
-                DefaultColormap(tv->display, DefaultScreen(tv->display)), &line_num_color);
+    // Colors are now persistent - no cleanup needed here
+}
+
+// Update only the cursor position (optimized drawing)
+void textview_update_cursor(TextView *tv) {
+    if (!tv || !tv->xft_draw || !tv->font || !tv->colors_allocated) return;
+    
+    // Calculate line height for drawing
+    int line_height = tv->line_height;
+    int x_start = tv->line_numbers ? tv->line_number_width : 5;
+    
+    // Calculate viewport width (excluding scrollbar)
+    int viewport_width = tv->width;
+    if (tv->scrollbar_visible) viewport_width -= VERT_SCROLLBAR_WIDTH;
+    
+    // Helper function to draw a single line
+    auto void draw_line_at(int line_idx, bool with_cursor);
+    void draw_line_at(int line_idx, bool with_cursor) {
+        if (line_idx < 0 || line_idx >= tv->line_count) return;
+        if (line_idx < tv->scroll_y || line_idx >= tv->scroll_y + tv->visible_lines) return;
+        
+        int y = (line_idx - tv->scroll_y + 1) * line_height;
+        const char *line = tv->lines[line_idx];
+        
+        // Clear just this line's area (with 1 extra pixel to fix bottom line artifact)
+        XClearArea(tv->display, tv->window, 0, y - line_height, 
+                   viewport_width,  // Don't clear into scrollbar area
+                   line_height + 1, False);  // +1 to clear bottom artifact
+        
+        // Set clipping to prevent drawing into scrollbar area
+        XRectangle clip_rect;
+        clip_rect.x = 0;
+        clip_rect.y = y - line_height;
+        clip_rect.width = viewport_width;
+        clip_rect.height = line_height + 1;
+        Region clip_region = XCreateRegion();
+        XUnionRectWithRegion(&clip_rect, clip_region, clip_region);
+        XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
+        
+        // Redraw line number if enabled
+        if (tv->line_numbers) {
+            char line_num[32];
+            snprintf(line_num, sizeof(line_num), "%4d", line_idx + 1);
+            XftDrawStringUtf8(tv->xft_draw, &tv->xft_line_num_color, tv->font,
+                            5, y - 2, (FcChar8*)line_num, strlen(line_num));
+        }
+        
+        // Draw the text with horizontal scroll offset
+        if (line && *line) {
+            int text_x = x_start - tv->scroll_x;
+            XftDrawStringUtf8(tv->xft_draw, &tv->xft_fg_color, tv->font,
+                            text_x, y - 2, (FcChar8*)line, strlen(line));
+        }
+        
+        // Draw cursor if this is the cursor line and requested
+        if (with_cursor && tv->has_focus && line_idx == tv->cursor_line) {
+            // Calculate cursor X position WITHOUT scroll for actual position
+            int cursor_actual_x = x_start;
+            
+            // Calculate cursor position based on column
+            if (tv->cursor_col > 0 && line) {
+                int chars_to_measure = (tv->cursor_col > strlen(line)) ? strlen(line) : tv->cursor_col;
+                if (chars_to_measure > 0) {
+                    XGlyphInfo extents;
+                    XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line,
+                                     chars_to_measure, &extents);
+                    cursor_actual_x += extents.xOff;
+                }
+            }
+            
+            // Now apply scroll offset for drawing position
+            int cursor_draw_x = cursor_actual_x - tv->scroll_x;
+            
+            // Only draw if cursor is visible in viewport
+            if (cursor_draw_x >= 0 && cursor_draw_x < viewport_width) {
+                XGlyphInfo space_info;
+                XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)" ", 1, &space_info);
+                int cursor_width = space_info.xOff > 0 ? space_info.xOff : 8;
+                
+                // Ensure cursor doesn't extend into scrollbar
+                if (cursor_draw_x + cursor_width > viewport_width) {
+                    cursor_width = viewport_width - cursor_draw_x;
+                }
+                
+                Picture dest = XRenderCreatePicture(tv->display, tv->window,
+                    XRenderFindVisualFormat(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display))),
+                    0, NULL);
+                
+                XRenderColor cursor_color = {
+                    ((tv->cursor_color >> 16) & 0xFF) * 0x101,
+                    ((tv->cursor_color >> 8) & 0xFF) * 0x101,
+                    (tv->cursor_color & 0xFF) * 0x101,
+                    0xFFFF
+                };
+                XRenderFillRectangle(tv->display, PictOpSrc, dest, &cursor_color,
+                                   cursor_draw_x, y - line_height + 2,
+                                   cursor_width, line_height);
+                
+                XRenderFreePicture(tv->display, dest);
+                
+                // Redraw character under cursor in white
+                if (tv->cursor_col < strlen(line)) {
+                    unsigned char c = (unsigned char)line[tv->cursor_col];
+                    int char_len = 1;
+                    if (c >= 0xC0 && c <= 0xDF) char_len = 2;
+                    else if (c >= 0xE0 && c <= 0xEF) char_len = 3;
+                    else if (c >= 0xF0 && c <= 0xF7) char_len = 4;
+                    
+                    if (tv->cursor_col + char_len > strlen(line)) {
+                        char_len = strlen(line) - tv->cursor_col;
+                    }
+                    
+                    XftDrawStringUtf8(tv->xft_draw, &tv->xft_sel_color, tv->font,
+                                    cursor_draw_x, y - 2, (FcChar8*)&line[tv->cursor_col], char_len);
+                }
+            }
+        }
+        
+        // Reset clipping
+        XftDrawSetClip(tv->xft_draw, NULL);
+        XDestroyRegion(clip_region);
+    }
+    
+    // If cursor moved to a different line, redraw both old and new lines
+    if (tv->prev_cursor_line != tv->cursor_line) {
+        draw_line_at(tv->prev_cursor_line, false);  // Clear old cursor
+        draw_line_at(tv->cursor_line, true);        // Draw new cursor
+    } else if (tv->prev_cursor_col != tv->cursor_col) {
+        // Cursor moved within same line, just redraw that line
+        draw_line_at(tv->cursor_line, true);
+    }
+    
+    // Update previous position
+    tv->prev_cursor_line = tv->cursor_line;
+    tv->prev_cursor_col = tv->cursor_col;
 }
 
 // Handle key press events
@@ -1298,7 +1440,10 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
     int x_start = tv->line_numbers ? tv->line_number_width : 5;
     int clicked_col = 0;
     
-    if (event->x > x_start && clicked_line < tv->line_count) {
+    // Adjust click X position for horizontal scroll
+    int adjusted_x = event->x + tv->scroll_x;
+    
+    if (adjusted_x > x_start && clicked_line < tv->line_count) {
         // Get the line text
         const char *line = tv->lines[clicked_line];
         int line_len = strlen(line);
@@ -1311,7 +1456,7 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
             int char_width = extents.xOff;
             
             // Check if click is within this character
-            if (event->x < x_pos + char_width / 2) {
+            if (adjusted_x < x_pos + char_width / 2) {
                 clicked_col = i;
                 break;
             }
@@ -1334,7 +1479,7 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
     tv->sel_end_col = clicked_col;
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
-    textview_draw(tv);
+    textview_update_cursor(tv);
     
     return true;
 }
@@ -1343,14 +1488,14 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
 bool textview_handle_focus_in(TextView *tv) {
     if (!tv) return false;
     tv->has_focus = true;
-    textview_draw(tv);
+    textview_update_cursor(tv);  // Just show/hide cursor
     return true;
 }
 
 bool textview_handle_focus_out(TextView *tv) {
     if (!tv) return false;
     tv->has_focus = false;
-    textview_draw(tv);
+    textview_update_cursor(tv);  // Just hide cursor
     return true;
 }
 
@@ -1450,7 +1595,10 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
     int x_start = tv->line_numbers ? tv->line_number_width : 5;
     int motion_col = 0;
     
-    if (event->x > x_start && motion_line < tv->line_count) {
+    // Adjust mouse X position for horizontal scroll
+    int adjusted_x = event->x + tv->scroll_x;
+    
+    if (adjusted_x > x_start && motion_line < tv->line_count) {
         const char *line = tv->lines[motion_line];
         int line_len = strlen(line);
         int x_pos = x_start;
@@ -1460,7 +1608,7 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
             XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
             int char_width = extents.xOff;
             
-            if (event->x < x_pos + char_width / 2) {
+            if (adjusted_x < x_pos + char_width / 2) {
                 motion_col = i;
                 break;
             }
@@ -1487,7 +1635,13 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
     int scroll_zone = 30;  // Pixels from edge to trigger scrolling
     bool need_scroll = false;
     
-    // Check if mouse is outside window or near edges
+    // Calculate viewport bounds (excluding scrollbars)
+    int viewport_width = tv->width;
+    int viewport_height = tv->height;
+    if (tv->scrollbar_visible) viewport_width -= VERT_SCROLLBAR_WIDTH;
+    if (tv->h_scrollbar_visible) viewport_height -= HORI_SCROLLBAR_HEIGHT;
+    
+    // Vertical scrolling - check against viewport height, not total height
     if (event->y < 0 || event->y < scroll_zone) {
         // Above window or near top - scroll up
         if (tv->scroll_y > 0) {
@@ -1497,15 +1651,35 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
             if (tv->scroll_y < 0) tv->scroll_y = 0;
             need_scroll = true;
         }
-    } else if (event->y >= tv->height || event->y > tv->height - scroll_zone) {
-        // Below window or near bottom - scroll down
+    } else if (event->y >= viewport_height || event->y > viewport_height - scroll_zone) {
+        // Near bottom of viewport (not including horizontal scrollbar area)
         int max_scroll = tv->line_count - tv->visible_lines;
         if (max_scroll < 0) max_scroll = 0;
         if (tv->scroll_y < max_scroll) {
             // Faster scroll when further from edge
-            int speed = (event->y >= tv->height) ? 3 : 1;
+            int speed = (event->y >= viewport_height) ? 3 : 1;
             tv->scroll_y += speed;
             if (tv->scroll_y > max_scroll) tv->scroll_y = max_scroll;
+            need_scroll = true;
+        }
+    }
+    
+    // Horizontal scrolling - auto-scroll when selection extends beyond viewport
+    if (event->x < 0 || event->x < scroll_zone) {
+        // Near left edge - scroll left
+        if (tv->scroll_x > 0) {
+            int speed = (event->x < 0) ? 20 : 5;  // Faster for horizontal
+            tv->scroll_x -= speed;
+            if (tv->scroll_x < 0) tv->scroll_x = 0;
+            need_scroll = true;
+        }
+    } else if (event->x >= viewport_width || event->x > viewport_width - scroll_zone) {
+        // Near right edge of viewport (not including vertical scrollbar)
+        int max_scroll = tv->max_line_width - viewport_width;
+        if (max_scroll > 0 && tv->scroll_x < max_scroll) {
+            int speed = (event->x >= viewport_width) ? 20 : 5;  // Faster for horizontal
+            tv->scroll_x += speed;
+            if (tv->scroll_x > max_scroll) tv->scroll_x = max_scroll;
             need_scroll = true;
         }
     }
@@ -1554,7 +1728,7 @@ void textview_move_cursor_page_up(TextView *tv) {
     if (tv->cursor_col > line_len) tv->cursor_col = line_len;
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_draw(tv);
+    textview_update_cursor(tv);
 }
 
 void textview_move_cursor_page_down(TextView *tv) {
@@ -1565,7 +1739,7 @@ void textview_move_cursor_page_down(TextView *tv) {
     if (tv->cursor_col > line_len) tv->cursor_col = line_len;
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_draw(tv);
+    textview_update_cursor(tv);
 }
 
 void textview_set_selection(TextView *tv, int start_line, int start_col,

@@ -71,13 +71,23 @@ typedef struct TextView {
     bool word_wrap;         // Enable word wrap
     int line_number_width;  // Width of line number area
     
-    // Colors
+    // Colors (stored values for creating XftColors)
     uint32_t bg_color;      // Background (gray)
     uint32_t fg_color;      // Foreground (black)
     uint32_t cursor_color;  // Cursor color
     uint32_t sel_bg_color;  // Selection background
     uint32_t sel_fg_color;  // Selection foreground
     uint32_t line_num_color; // Line number color
+    
+    // Allocated XftColors (created once, reused for all draws)
+    XftColor xft_fg_color;      // Foreground color
+    XftColor xft_sel_color;     // Selection foreground color
+    XftColor xft_line_num_color; // Line number color
+    bool colors_allocated;      // Track if XftColors are allocated
+    
+    // Previous cursor position (for optimized cursor updates)
+    int prev_cursor_line;
+    int prev_cursor_col;
     
     // Syntax highlighting
     void *current_syntax;   // Points to SyntaxDef (forward declaration)
@@ -144,6 +154,7 @@ void textview_handle_selection_notify(TextView *tv, XSelectionEvent *sel);
 
 // Display
 void textview_draw(TextView *tv);
+void textview_update_cursor(TextView *tv);  // Optimized cursor-only update
 void textview_set_line_numbers(TextView *tv, bool show);
 void textview_set_word_wrap(TextView *tv, bool wrap);
 void textview_ensure_cursor_visible(TextView *tv);
