@@ -1042,9 +1042,11 @@ void textview_update_cursor(TextView *tv) {
     int line_height = tv->line_height;
     int x_start = tv->line_numbers ? tv->line_number_width : 5;
     
-    // Calculate viewport width (excluding scrollbar)
+    // Calculate viewport width (excluding scrollbar AND separator line)
     int viewport_width = tv->width;
-    if (tv->scrollbar_visible) viewport_width -= VERT_SCROLLBAR_WIDTH;
+    if (tv->scrollbar_visible) {
+        viewport_width -= (VERT_SCROLLBAR_WIDTH + 1);  // -1 for the black separator line
+    }
     
     // Helper function to draw a single line
     auto void draw_line_at(int line_idx, bool with_cursor);
@@ -1055,17 +1057,19 @@ void textview_update_cursor(TextView *tv) {
         int y = (line_idx - tv->scroll_y + 1) * line_height;
         const char *line = tv->lines[line_idx];
         
-        // Clear just this line's area (with 1 extra pixel to fix bottom line artifact)
-        XClearArea(tv->display, tv->window, 0, y - line_height, 
-                   viewport_width,  // Don't clear into scrollbar area
-                   line_height + 1, False);  // +1 to clear bottom artifact
+        // Clear just this line's area (with extra pixels for complete cursor cleanup)
+        // Cursor draws from (y - line_height + 2) to (y + 2), so we need to clear that fully
+        // But stop before the black separator line
+        XClearArea(tv->display, tv->window, 0, y - line_height,  // Start at line top
+                   viewport_width,  // Don't clear separator or scrollbar
+                   line_height + 3, False);  // +3 to ensure we clear through y+2
         
         // Set clipping to prevent drawing into scrollbar area
         XRectangle clip_rect;
         clip_rect.x = 0;
-        clip_rect.y = y - line_height;
+        clip_rect.y = y - line_height;  // Match the clear area
         clip_rect.width = viewport_width;
-        clip_rect.height = line_height + 1;
+        clip_rect.height = line_height + 3;  // Match the clear area
         Region clip_region = XCreateRegion();
         XUnionRectWithRegion(&clip_rect, clip_region, clip_region);
         XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
@@ -1127,7 +1131,7 @@ void textview_update_cursor(TextView *tv) {
                 };
                 XRenderFillRectangle(tv->display, PictOpSrc, dest, &cursor_color,
                                    cursor_draw_x, y - line_height + 2,
-                                   cursor_width, line_height);
+                                   cursor_width, line_height);  // Full line height
                 
                 XRenderFreePicture(tv->display, dest);
                 
