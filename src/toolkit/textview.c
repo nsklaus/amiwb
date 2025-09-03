@@ -47,6 +47,53 @@ typedef struct {
     bool xft_colors_allocated[SYNTAX_MAX]; // Track which are allocated
 } TextViewSyntax;
 
+// =============================================================================
+// UNDO/REDO STRUCTURES
+// =============================================================================
+
+#define MAX_UNDO_LEVELS 1000  // Maximum undo history
+
+typedef enum {
+    UNDO_INSERT_CHAR,    // Single character insertion
+    UNDO_DELETE_CHAR,    // Single character deletion (backspace)
+    UNDO_INSERT_TEXT,    // Text insertion (paste, etc.)
+    UNDO_DELETE_TEXT,    // Text deletion (selection delete, etc.)
+    UNDO_NEWLINE,        // Line break insertion
+    UNDO_JOIN_LINES,     // Lines joined (backspace at line start)
+} UndoType;
+
+typedef struct UndoEntry {
+    UndoType type;
+    int line;           // Line where operation occurred
+    int col;            // Column where operation occurred
+    char *text;         // Text that was added/removed
+    int text_len;       // Length of text
+    
+    // For multi-line operations
+    int end_line;       // End line for multi-line ops
+    int end_col;        // End column for multi-line ops
+    
+    struct UndoEntry *next;
+    struct UndoEntry *prev;
+} UndoEntry;
+
+typedef struct {
+    UndoEntry *current;     // Current position in history
+    UndoEntry *head;        // Oldest entry (start of list)
+    UndoEntry *tail;        // Newest entry (end of list)
+    int count;              // Number of entries
+    int max_count;          // Maximum entries allowed
+    bool in_undo_redo;      // Flag to prevent recording during undo/redo
+} UndoHistory;
+
+// Forward declarations for undo functions
+static void record_undo(TextView *tv, UndoType type, int line, int col, 
+                       const char *text, int text_len);
+static void clear_redo_history(TextView *tv);
+static UndoEntry* create_undo_entry(UndoType type, int line, int col, 
+                                   const char *text, int text_len);
+static void free_undo_entry(UndoEntry *entry);
+
 // Create a new TextView widget
 TextView* textview_create(Display *display, Window parent, int x, int y, 
                          int width, int height) {
@@ -167,6 +214,14 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     tv->utf8_atom = XInternAtom(display, "UTF8_STRING", False);
     tv->clipboard_buffer = NULL;
     
+    // Initialize undo history
+    tv->undo_history = calloc(1, sizeof(UndoHistory));
+    if (tv->undo_history) {
+        UndoHistory *history = (UndoHistory*)tv->undo_history;
+        history->max_count = MAX_UNDO_LEVELS;
+        history->in_undo_redo = false;
+    }
+    
     // Initialize scrollbar
     textview_update_scrollbar(tv);
     
@@ -232,6 +287,22 @@ void textview_destroy(TextView *tv) {
     
     // Free clipboard buffer
     if (tv->clipboard_buffer) free(tv->clipboard_buffer);
+    
+    // Free undo history
+    if (tv->undo_history) {
+        UndoHistory *history = (UndoHistory*)tv->undo_history;
+        
+        // Free all undo entries
+        UndoEntry *entry = history->head;
+        while (entry) {
+            UndoEntry *next = entry->next;
+            free_undo_entry(entry);
+            entry = next;
+        }
+        
+        free(history);
+        tv->undo_history = NULL;
+    }
     
     // Free syntax highlighting resources
     if (tv->syntax_data) {
@@ -418,6 +489,10 @@ void textview_insert_char(TextView *tv, char c) {
     free(tv->lines[tv->cursor_line]);
     tv->lines[tv->cursor_line] = new_line;
     
+    // Record undo for this character insertion
+    char char_str[2] = {c, '\0'};
+    record_undo(tv, UNDO_INSERT_CHAR, tv->cursor_line, tv->cursor_col, char_str, 1);
+    
     tv->cursor_col++;
     tv->modified = true;
     tv->need_width_recalc = true;  // Line content changed
@@ -481,6 +556,9 @@ void textview_new_line(TextView *tv) {
     tv->lines[tv->cursor_line + 1] = new_line;
     tv->line_count++;
     
+    // Record undo for newline
+    record_undo(tv, UNDO_NEWLINE, tv->cursor_line, tv->cursor_col, "\n", 1);
+    
     // Move cursor to start of new line
     tv->cursor_line++;
     tv->cursor_col = 0;
@@ -518,6 +596,10 @@ void textview_backspace(TextView *tv) {
         char *line = tv->lines[tv->cursor_line];
         int len = strlen(line);
         
+        // Save the character being deleted for undo
+        char deleted_char[2] = {line[tv->cursor_col - 1], '\0'};
+        record_undo(tv, UNDO_DELETE_CHAR, tv->cursor_line, tv->cursor_col - 1, deleted_char, 1);
+        
         // Shift characters left
         memmove(line + tv->cursor_col - 1, line + tv->cursor_col, 
                 len - tv->cursor_col + 1);
@@ -528,6 +610,9 @@ void textview_backspace(TextView *tv) {
         char *prev_line = tv->lines[tv->cursor_line - 1];
         char *current_line = tv->lines[tv->cursor_line];
         int prev_len = strlen(prev_line);
+        
+        // Record undo for line join (save current line content)
+        record_undo(tv, UNDO_JOIN_LINES, tv->cursor_line - 1, prev_len, current_line, strlen(current_line));
         
         // Concatenate lines
         char *new_line = malloc(prev_len + strlen(current_line) + 1);
@@ -1435,15 +1520,11 @@ bool textview_handle_key_press(TextView *tv, XKeyEvent *event) {
     char buffer[32];
     int len = XLookupString(event, buffer, sizeof(buffer), &keysym, NULL);
     
-    // Check for clipboard shortcuts (Super or Ctrl key)
-    if ((event->state & Mod4Mask) || (event->state & ControlMask)) {
-        fprintf(stderr, "[TextView] Mod4/Ctrl detected, keysym=0x%lx\n", keysym);
+    // Check for Super key shortcuts
+    if (event->state & Mod4Mask) {
         switch (keysym) {
             case XK_c:  // Copy
             case XK_C:
-            case XK_y:  // Alternative copy for testing
-            case XK_Y:
-                fprintf(stderr, "[TextView] Copy triggered (key=%c)\n", (char)keysym);
                 textview_copy(tv);
                 return true;
                 
@@ -1460,6 +1541,16 @@ bool textview_handle_key_press(TextView *tv, XKeyEvent *event) {
             case XK_a:  // Select All
             case XK_A:
                 textview_select_all(tv);
+                return true;
+                
+            case XK_z:  // Undo
+            case XK_Z:
+                textview_undo(tv);
+                return true;
+                
+            case XK_r:  // Redo
+            case XK_R:
+                textview_redo(tv);
                 return true;
         }
     }
@@ -2782,4 +2873,349 @@ void textview_highlight_all_lines(TextView *tv) {
     
     // Trigger redraw
     textview_draw(tv);
+}
+
+// =============================================================================
+// UNDO/REDO IMPLEMENTATION
+// =============================================================================
+
+// Create a new undo entry
+static UndoEntry* create_undo_entry(UndoType type, int line, int col, 
+                                   const char *text, int text_len) {
+    UndoEntry *entry = calloc(1, sizeof(UndoEntry));
+    if (!entry) return NULL;
+    
+    entry->type = type;
+    entry->line = line;
+    entry->col = col;
+    entry->text_len = text_len;
+    
+    if (text && text_len > 0) {
+        entry->text = malloc(text_len + 1);
+        if (entry->text) {
+            memcpy(entry->text, text, text_len);
+            entry->text[text_len] = '\0';
+        }
+    }
+    
+    return entry;
+}
+
+// Free an undo entry
+static void free_undo_entry(UndoEntry *entry) {
+    if (!entry) return;
+    if (entry->text) free(entry->text);
+    free(entry);
+}
+
+// Clear all redo entries (called when new edit is made after undo)
+static void clear_redo_history(TextView *tv) {
+    if (!tv || !tv->undo_history) return;
+    
+    UndoHistory *history = (UndoHistory*)tv->undo_history;
+    
+    // If we're at the tail, there's no redo history to clear
+    if (history->current == history->tail) return;
+    
+    // Delete all entries after current
+    UndoEntry *entry = history->current ? history->current->next : history->head;
+    while (entry) {
+        UndoEntry *next = entry->next;
+        
+        // Remove from list
+        if (entry->prev) entry->prev->next = NULL;
+        history->tail = entry->prev;
+        history->count--;
+        
+        free_undo_entry(entry);
+        entry = next;
+    }
+}
+
+// Record an undo operation
+static void record_undo(TextView *tv, UndoType type, int line, int col, 
+                       const char *text, int text_len) {
+    if (!tv || !tv->undo_history) return;
+    
+    UndoHistory *history = (UndoHistory*)tv->undo_history;
+    
+    // Don't record if we're in undo/redo operation
+    if (history->in_undo_redo) return;
+    
+    // Clear any redo history
+    clear_redo_history(tv);
+    
+    // Create new entry
+    UndoEntry *entry = create_undo_entry(type, line, col, text, text_len);
+    if (!entry) return;
+    
+    // Add to list
+    if (!history->head) {
+        // First entry
+        history->head = history->tail = entry;
+    } else {
+        // Add to tail
+        entry->prev = history->tail;
+        history->tail->next = entry;
+        history->tail = entry;
+    }
+    
+    history->current = entry;
+    history->count++;
+    
+    // Remove oldest entries if we exceed max
+    while (history->count > history->max_count && history->head) {
+        UndoEntry *old = history->head;
+        history->head = old->next;
+        if (history->head) {
+            history->head->prev = NULL;
+        } else {
+            history->tail = NULL;
+        }
+        history->count--;
+        free_undo_entry(old);
+    }
+}
+
+// Undo the last operation
+void textview_undo(TextView *tv) {
+    if (!tv || !tv->undo_history || tv->read_only) return;
+    
+    UndoHistory *history = (UndoHistory*)tv->undo_history;
+    if (!history->current) return;
+    
+    UndoEntry *entry = history->current;
+    history->in_undo_redo = true;  // Prevent recording
+    
+    // Restore cursor position first
+    tv->cursor_line = entry->line;
+    tv->cursor_col = entry->col;
+    
+    // Perform the reverse operation
+    switch (entry->type) {
+        case UNDO_INSERT_CHAR:
+            // Undo character insertion - delete it
+            if (tv->cursor_col < strlen(tv->lines[tv->cursor_line])) {
+                char *line = tv->lines[tv->cursor_line];
+                int len = strlen(line);
+                memmove(line + tv->cursor_col, line + tv->cursor_col + 1, 
+                        len - tv->cursor_col);
+            }
+            break;
+            
+        case UNDO_DELETE_CHAR:
+            // Undo character deletion - reinsert it
+            if (entry->text && entry->text_len > 0) {
+                char *line = tv->lines[tv->cursor_line];
+                int len = strlen(line);
+                char *new_line = malloc(len + 2);
+                if (tv->cursor_col > 0) {
+                    strncpy(new_line, line, tv->cursor_col);
+                }
+                new_line[tv->cursor_col] = entry->text[0];
+                strcpy(new_line + tv->cursor_col + 1, line + tv->cursor_col);
+                free(tv->lines[tv->cursor_line]);
+                tv->lines[tv->cursor_line] = new_line;
+            }
+            break;
+            
+        case UNDO_NEWLINE:
+            // Undo newline - join lines
+            if (tv->cursor_line < tv->line_count - 1) {
+                char *current = tv->lines[tv->cursor_line];
+                char *next = tv->lines[tv->cursor_line + 1];
+                char *joined = malloc(strlen(current) + strlen(next) + 1);
+                strcpy(joined, current);
+                strcat(joined, next);
+                
+                free(current);
+                free(next);
+                tv->lines[tv->cursor_line] = joined;
+                
+                // Shift lines up
+                for (int i = tv->cursor_line + 1; i < tv->line_count - 1; i++) {
+                    tv->lines[i] = tv->lines[i + 1];
+                }
+                tv->line_count--;
+            }
+            break;
+            
+        case UNDO_JOIN_LINES:
+            // Undo line join - split lines
+            if (entry->text) {
+                // Need to split the line at cursor position
+                char *line = tv->lines[tv->cursor_line];
+                
+                // Grow line array if needed
+                if (tv->line_count >= tv->line_capacity) {
+                    tv->line_capacity += LINE_CHUNK_SIZE;
+                    tv->lines = realloc(tv->lines, tv->line_capacity * sizeof(char*));
+                }
+                
+                // Shift lines down
+                for (int i = tv->line_count; i > tv->cursor_line + 1; i--) {
+                    tv->lines[i] = tv->lines[i - 1];
+                }
+                
+                // Split the line
+                char *first = malloc(tv->cursor_col + 1);
+                strncpy(first, line, tv->cursor_col);
+                first[tv->cursor_col] = '\0';
+                
+                char *second = strdup(line + tv->cursor_col);
+                
+                free(tv->lines[tv->cursor_line]);
+                tv->lines[tv->cursor_line] = first;
+                tv->lines[tv->cursor_line + 1] = second;
+                tv->line_count++;
+            }
+            break;
+            
+        default:
+            break;
+    }
+    
+    // Move current pointer back
+    history->current = entry->prev;
+    
+    history->in_undo_redo = false;
+    tv->modified = true;
+    
+    // Update display
+    if (tv->syntax_data) {
+        invalidate_lines(tv, 0, tv->line_count - 1);
+    }
+    textview_ensure_cursor_visible(tv);
+    textview_update_scrollbar(tv);
+    textview_draw(tv);
+}
+
+// Redo the last undone operation
+void textview_redo(TextView *tv) {
+    if (!tv || !tv->undo_history || tv->read_only) return;
+    
+    UndoHistory *history = (UndoHistory*)tv->undo_history;
+    
+    // Find the next entry to redo
+    UndoEntry *entry = history->current ? history->current->next : history->head;
+    if (!entry) return;
+    
+    history->in_undo_redo = true;  // Prevent recording
+    
+    // Restore cursor position
+    tv->cursor_line = entry->line;
+    tv->cursor_col = entry->col;
+    
+    // Perform the operation again
+    switch (entry->type) {
+        case UNDO_INSERT_CHAR:
+            // Redo character insertion
+            if (entry->text && entry->text_len > 0) {
+                char *line = tv->lines[tv->cursor_line];
+                int len = strlen(line);
+                char *new_line = malloc(len + 2);
+                if (tv->cursor_col > 0) {
+                    strncpy(new_line, line, tv->cursor_col);
+                }
+                new_line[tv->cursor_col] = entry->text[0];
+                strcpy(new_line + tv->cursor_col + 1, line + tv->cursor_col);
+                free(tv->lines[tv->cursor_line]);
+                tv->lines[tv->cursor_line] = new_line;
+                tv->cursor_col++;
+            }
+            break;
+            
+        case UNDO_DELETE_CHAR:
+            // Redo character deletion
+            if (tv->cursor_col < strlen(tv->lines[tv->cursor_line])) {
+                char *line = tv->lines[tv->cursor_line];
+                int len = strlen(line);
+                memmove(line + tv->cursor_col, line + tv->cursor_col + 1, 
+                        len - tv->cursor_col);
+            }
+            break;
+            
+        case UNDO_NEWLINE:
+            // Redo newline insertion
+            {
+                // Grow line array if needed
+                if (tv->line_count >= tv->line_capacity) {
+                    tv->line_capacity += LINE_CHUNK_SIZE;
+                    tv->lines = realloc(tv->lines, tv->line_capacity * sizeof(char*));
+                }
+                
+                char *current = tv->lines[tv->cursor_line];
+                
+                // Shift lines down
+                for (int i = tv->line_count; i > tv->cursor_line + 1; i--) {
+                    tv->lines[i] = tv->lines[i - 1];
+                }
+                
+                // Split the line
+                tv->lines[tv->cursor_line] = malloc(tv->cursor_col + 1);
+                strncpy(tv->lines[tv->cursor_line], current, tv->cursor_col);
+                tv->lines[tv->cursor_line][tv->cursor_col] = '\0';
+                
+                tv->lines[tv->cursor_line + 1] = strdup(current + tv->cursor_col);
+                free(current);
+                
+                tv->line_count++;
+                tv->cursor_line++;
+                tv->cursor_col = 0;
+            }
+            break;
+            
+        case UNDO_JOIN_LINES:
+            // Redo line join - basically join the lines again
+            if (tv->cursor_line < tv->line_count - 1) {
+                char *current = tv->lines[tv->cursor_line];
+                char *next = tv->lines[tv->cursor_line + 1];
+                char *joined = malloc(strlen(current) + strlen(next) + 1);
+                strcpy(joined, current);
+                strcat(joined, next);
+                
+                free(current);
+                free(next);
+                tv->lines[tv->cursor_line] = joined;
+                
+                // Shift lines up
+                for (int i = tv->cursor_line + 1; i < tv->line_count - 1; i++) {
+                    tv->lines[i] = tv->lines[i + 1];
+                }
+                tv->line_count--;
+            }
+            break;
+            
+        default:
+            break;
+    }
+    
+    // Move current pointer forward
+    history->current = entry;
+    
+    history->in_undo_redo = false;
+    tv->modified = true;
+    
+    // Update display
+    if (tv->syntax_data) {
+        invalidate_lines(tv, 0, tv->line_count - 1);
+    }
+    textview_ensure_cursor_visible(tv);
+    textview_update_scrollbar(tv);
+    textview_draw(tv);
+}
+
+// Check if undo is available
+bool textview_can_undo(TextView *tv) {
+    if (!tv || !tv->undo_history) return false;
+    UndoHistory *history = (UndoHistory*)tv->undo_history;
+    return history->current != NULL;
+}
+
+// Check if redo is available
+bool textview_can_redo(TextView *tv) {
+    if (!tv || !tv->undo_history) return false;
+    UndoHistory *history = (UndoHistory*)tv->undo_history;
+    return (history->current != history->tail) && 
+           (history->current ? history->current->next : history->head) != NULL;
 }

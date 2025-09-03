@@ -112,6 +112,9 @@ typedef struct TextView {
     
     // Syntax highlighting (opaque pointer to avoid circular dependency)
     void *syntax_data;  // Actually TextViewSyntax* but kept opaque
+    
+    // Undo/Redo support (opaque pointer)
+    void *undo_history;  // Actually UndoHistory* but kept opaque
 } TextView;
 
 // Creation and destruction
@@ -153,6 +156,12 @@ void textview_cut(TextView *tv);
 void textview_paste(TextView *tv);
 void textview_handle_selection_request(TextView *tv, XSelectionRequestEvent *req);
 void textview_handle_selection_notify(TextView *tv, XSelectionEvent *sel);
+
+// Undo/Redo operations
+void textview_undo(TextView *tv);
+void textview_redo(TextView *tv);
+bool textview_can_undo(TextView *tv);
+bool textview_can_redo(TextView *tv);
 
 // Display
 void textview_draw(TextView *tv);

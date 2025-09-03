@@ -45,68 +45,14 @@ void editpad_run(EditPad *ep) {
                     editpad_handle_focus_change(ep, false);
                     break;
                     
+                // Note: This old KeyPress handler is no longer used
+                // The newer handler below (line 233+) properly delegates to TextView
+                /*
                 case KeyPress: {
-                    KeySym keysym;
-                    char buffer[32];
-                    XLookupString(&event.xkey, buffer, sizeof(buffer), &keysym, NULL);
-                    
-                    // Check for shortcuts (Super key combinations)
-                    if (event.xkey.state & Mod4Mask) {  // Super key
-                        switch (keysym) {
-                            case XK_n:  // Super+N - New
-                                editpad_new_file(ep);
-                                break;
-                            case XK_o:  // Super+O - Open
-                                // TODO: Launch ReqASL
-                                break;
-                            case XK_s:  // Super+S - Save
-                                if (event.xkey.state & ShiftMask) {
-                                    editpad_save_file_as(ep);  // Super+Shift+S
-                                } else {
-                                    editpad_save_file(ep);
-                                }
-                                break;
-                            case XK_q:  // Super+Q - Quit
-                                running = false;
-                                break;
-                            case XK_z:  // Super+Z - Undo
-                                if (event.xkey.state & ShiftMask) {
-                                    editpad_redo(ep);  // Super+Shift+Z
-                                } else {
-                                    editpad_undo(ep);
-                                }
-                                break;
-                            case XK_x:  // Super+X - Cut
-                                editpad_cut(ep);
-                                break;
-                            case XK_c:  // Super+C - Copy
-                                editpad_copy(ep);
-                                break;
-                            case XK_v:  // Super+V - Paste
-                                editpad_paste(ep);
-                                break;
-                            case XK_a:  // Super+A - Select All
-                                editpad_select_all(ep);
-                                break;
-                            case XK_f:  // Super+F - Find
-                                editpad_find(ep);
-                                break;
-                            case XK_h:  // Super+H - Replace
-                                editpad_replace(ep);
-                                break;
-                            case XK_g:  // Super+G - Goto Line
-                                editpad_goto_line(ep);
-                                break;
-                            case XK_l:  // Super+L - Toggle Line Numbers
-                                editpad_toggle_line_numbers(ep);
-                                break;
-                            case XK_w:  // Super+W - Toggle Word Wrap
-                                editpad_toggle_word_wrap(ep);
-                                break;
-                        }
-                    }
+                    // Old handler - commented out to avoid conflicts
                     break;
                 }
+                */
                     
                 
                 case ClientMessage:
@@ -239,11 +185,13 @@ void editpad_run(EditPad *ep) {
                         
                         fprintf(stderr, "[EditPad] Super key pressed, keysym=0x%lx (%c)\n", keysym, (char)keysym);
                         
-                        // Skip clipboard shortcuts - let TextView handle them
+                        // Skip clipboard and undo/redo shortcuts - let TextView handle them
                         if (!(keysym == XK_c || keysym == XK_C ||  // Copy
                               keysym == XK_x || keysym == XK_X ||  // Cut
                               keysym == XK_v || keysym == XK_V ||  // Paste
-                              keysym == XK_a || keysym == XK_A)) { // Select All
+                              keysym == XK_a || keysym == XK_A ||  // Select All
+                              keysym == XK_z || keysym == XK_Z ||  // Undo
+                              keysym == XK_r || keysym == XK_R)) { // Redo
                             
                             bool handled = true;
                             switch (keysym) {
@@ -272,13 +220,7 @@ void editpad_run(EditPad *ep) {
                             case XK_n:  // Super+N - New
                                 editpad_new_file(ep);
                                 break;
-                            case XK_z:  // Super+Z - Undo
-                                if (event.xkey.state & ShiftMask) {
-                                    editpad_redo(ep);  // Super+Shift+Z
-                                } else {
-                                    editpad_undo(ep);
-                                }
-                                break;
+                            // Super+Z and Super+R now handled by TextView for undo/redo
                             case XK_f:  // Super+F - Find
                                 editpad_find(ep);
                                 break;
