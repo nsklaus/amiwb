@@ -660,8 +660,23 @@ void textview_draw(TextView *tv) {
     
     if (tv->line_numbers) {
         // Calculate width needed for line numbers
+        // Determine how many digits we need for the largest line number
+        int digits = 1;
+        int temp = tv->line_count;
+        while (temp >= 10) {
+            digits++;
+            temp /= 10;
+        }
+        // Use at least 4 digits for consistency, but more if needed
+        if (digits < 4) digits = 4;
+        
+        // Create format string like "%4d" or "%6d" based on digit count
+        char format[16];
+        snprintf(format, sizeof(format), "%%%dd", digits);
+        
+        // Calculate the width using the actual format we'll use for drawing
         char line_num_str[32];
-        snprintf(line_num_str, sizeof(line_num_str), "%d", tv->line_count);
+        snprintf(line_num_str, sizeof(line_num_str), format, tv->line_count);
         XGlyphInfo extents;
         XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line_num_str, 
                        strlen(line_num_str), &extents);
@@ -733,12 +748,24 @@ void textview_draw(TextView *tv) {
     
     // First pass: Draw all line numbers without clipping
     if (tv->line_numbers) {
+        // Calculate format for line numbers (same as in width calculation)
+        int digits = 1;
+        int temp = tv->line_count;
+        while (temp >= 10) {
+            digits++;
+            temp /= 10;
+        }
+        if (digits < 4) digits = 4;
+        
+        char format[16];
+        snprintf(format, sizeof(format), "%%%dd", digits);
+        
         int line_y = tv->line_height - 2;
         for (int i = tv->scroll_y; 
              i < tv->line_count && i < tv->scroll_y + lines_to_draw; 
              i++) {
             char line_num[32];
-            snprintf(line_num, sizeof(line_num), "%4d", i + 1);
+            snprintf(line_num, sizeof(line_num), format, i + 1);
             XftDrawStringUtf8(tv->xft_draw, &tv->xft_line_num_color, tv->font,
                           5, line_y - 2, (FcChar8*)line_num, strlen(line_num));
             line_y += tv->line_height;
@@ -1137,8 +1164,20 @@ void textview_update_cursor(TextView *tv) {
         
         // Redraw line number if enabled
         if (tv->line_numbers) {
+            // Calculate format for line numbers (same as in textview_draw)
+            int digits = 1;
+            int temp = tv->line_count;
+            while (temp >= 10) {
+                digits++;
+                temp /= 10;
+            }
+            if (digits < 4) digits = 4;
+            
+            char format[16];
+            snprintf(format, sizeof(format), "%%%dd", digits);
+            
             char line_num[32];
-            snprintf(line_num, sizeof(line_num), "%4d", line_idx + 1);
+            snprintf(line_num, sizeof(line_num), format, line_idx + 1);
             XftDrawStringUtf8(tv->xft_draw, &tv->xft_line_num_color, tv->font,
                             5, y - 2, (FcChar8*)line_num, strlen(line_num));
         }
@@ -1223,8 +1262,9 @@ void textview_update_cursor(TextView *tv) {
     if (tv->prev_cursor_line != tv->cursor_line) {
         draw_line_at(tv->prev_cursor_line, false);  // Clear old cursor
         draw_line_at(tv->cursor_line, true);        // Draw new cursor
-    } else if (tv->prev_cursor_col != tv->cursor_col) {
-        // Cursor moved within same line, just redraw that line
+    } else {
+        // Same line - always redraw to ensure cursor is visible
+        // This handles both column changes and clicking on same position
         draw_line_at(tv->cursor_line, true);
     }
     
