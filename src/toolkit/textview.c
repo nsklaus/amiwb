@@ -40,7 +40,6 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     // Initialize text buffer
     tv->line_capacity = INITIAL_LINE_CAPACITY;
     tv->lines = calloc(tv->line_capacity, sizeof(char*));
-    tv->lines_dirty = calloc(tv->line_capacity, sizeof(bool));
     
     // Start with one empty line
     tv->lines[0] = strdup("");
@@ -183,13 +182,8 @@ void textview_destroy(TextView *tv) {
     // Free text lines
     for (int i = 0; i < tv->line_count; i++) {
         free(tv->lines[i]);
-        if (tv->line_colors && tv->line_colors[i]) {
-            free(tv->line_colors[i]);
-        }
     }
     free(tv->lines);
-    free(tv->lines_dirty);
-    if (tv->line_colors) free(tv->line_colors);
     
     // Free clipboard buffer
     if (tv->clipboard_buffer) free(tv->clipboard_buffer);
@@ -233,7 +227,6 @@ void textview_set_text(TextView *tv, const char *text) {
         if (tv->line_count >= tv->line_capacity) {
             tv->line_capacity += LINE_CHUNK_SIZE;
             tv->lines = realloc(tv->lines, tv->line_capacity * sizeof(char*));
-            tv->lines_dirty = realloc(tv->lines_dirty, tv->line_capacity * sizeof(bool));
         }
         
         // Copy line (strip \r if present)
@@ -267,7 +260,6 @@ void textview_set_text(TextView *tv, const char *text) {
             }
         }
         tv->lines[tv->line_count][dest_pos] = '\0';
-        tv->lines_dirty[tv->line_count] = true;
         tv->line_count++;
         
         start = (*end == '\n') ? end + 1 : end;
@@ -347,7 +339,6 @@ void textview_insert_char(TextView *tv, char c) {
     
     free(tv->lines[tv->cursor_line]);
     tv->lines[tv->cursor_line] = new_line;
-    tv->lines_dirty[tv->cursor_line] = true;
     
     tv->cursor_col++;
     tv->modified = true;
@@ -372,7 +363,6 @@ void textview_new_line(TextView *tv) {
     if (tv->line_count >= tv->line_capacity) {
         tv->line_capacity += LINE_CHUNK_SIZE;
         tv->lines = realloc(tv->lines, tv->line_capacity * sizeof(char*));
-        tv->lines_dirty = realloc(tv->lines_dirty, tv->line_capacity * sizeof(bool));
     }
     
     // Split current line at cursor
@@ -391,13 +381,10 @@ void textview_new_line(TextView *tv) {
     // Shift lines down
     for (int i = tv->line_count; i > tv->cursor_line + 1; i--) {
         tv->lines[i] = tv->lines[i - 1];
-        tv->lines_dirty[i] = tv->lines_dirty[i - 1];
     }
     
     // Insert new line
     tv->lines[tv->cursor_line + 1] = new_line;
-    tv->lines_dirty[tv->cursor_line] = true;
-    tv->lines_dirty[tv->cursor_line + 1] = true;
     tv->line_count++;
     
     // Move cursor to start of new line
@@ -437,7 +424,6 @@ void textview_backspace(TextView *tv) {
                 len - tv->cursor_col + 1);
         
         tv->cursor_col--;
-        tv->lines_dirty[tv->cursor_line] = true;
     } else if (tv->cursor_line > 0) {
         // Join with previous line
         char *prev_line = tv->lines[tv->cursor_line - 1];
@@ -456,14 +442,12 @@ void textview_backspace(TextView *tv) {
         // Shift lines up
         for (int i = tv->cursor_line; i < tv->line_count - 1; i++) {
             tv->lines[i] = tv->lines[i + 1];
-            tv->lines_dirty[i] = tv->lines_dirty[i + 1];
         }
         tv->line_count--;
         
         // Move cursor to join point
         tv->cursor_line--;
         tv->cursor_col = prev_len;
-        tv->lines_dirty[tv->cursor_line] = true;
     }
     
     tv->modified = true;
@@ -496,7 +480,6 @@ void textview_delete_key(TextView *tv) {
         // Delete character at cursor
         memmove(line + tv->cursor_col, line + tv->cursor_col + 1, 
                 len - tv->cursor_col);
-        tv->lines_dirty[tv->cursor_line] = true;
     } else if (tv->cursor_line < tv->line_count - 1) {
         // Join with next line
         char *next_line = tv->lines[tv->cursor_line + 1];
@@ -513,10 +496,8 @@ void textview_delete_key(TextView *tv) {
         // Shift lines up
         for (int i = tv->cursor_line + 1; i < tv->line_count - 1; i++) {
             tv->lines[i] = tv->lines[i + 1];
-            tv->lines_dirty[i] = tv->lines_dirty[i + 1];
         }
         tv->line_count--;
-        tv->lines_dirty[tv->cursor_line] = true;
     }
     
     tv->modified = true;
@@ -1970,18 +1951,6 @@ void textview_delete_selection(TextView *tv) {
     textview_draw(tv);
 }
 
-void textview_set_syntax(TextView *tv, void *syntax_def) {
-    if (!tv) return;
-    tv->current_syntax = syntax_def;
-    // Mark all lines for re-highlighting
-    for (int i = 0; i < tv->line_count; i++) {
-        tv->lines_dirty[i] = true;
-    }
-}
-
-void textview_update_highlighting(TextView *tv) {
-    // TODO: Implement syntax highlighting
-}
 
 // Set selection colors
 void textview_set_selection_colors(TextView *tv, unsigned int bg, unsigned int fg) {

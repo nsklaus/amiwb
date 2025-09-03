@@ -89,11 +89,6 @@ typedef struct TextView {
     int prev_cursor_line;
     int prev_cursor_col;
     
-    // Syntax highlighting
-    void *current_syntax;   // Points to SyntaxDef (forward declaration)
-    int **line_colors;      // Color for each character on each line
-    bool *lines_dirty;      // Which lines need re-highlighting
-    
     // State
     bool has_focus;
     bool modified;
@@ -172,9 +167,5 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event);
 bool textview_handle_focus_in(TextView *tv);
 bool textview_handle_focus_out(TextView *tv);
 bool textview_handle_configure(TextView *tv, XConfigureEvent *event);
-
-// Syntax highlighting (implemented later)
-void textview_set_syntax(TextView *tv, void *syntax_def);
-void textview_update_highlighting(TextView *tv);
 
 #endif // TEXTVIEW_H
