@@ -190,7 +190,7 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     
     FILE *f = fopen(filename, "rb");  // Open in binary mode for proper size
     if (!f) {
-        fprintf(stderr, "[ERROR] EditPad: Cannot open file: %s (errno=%d: %s)\n", 
+        log_error("[ERROR] EditPad: Cannot open file: %s (errno=%d: %s)", 
                 filename, errno, strerror(errno));
         return;
     }
@@ -202,13 +202,13 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     
     
     if (size < 0) {
-        fprintf(stderr, "[ERROR] EditPad: Invalid file size %ld\n", size);
+        log_error("[ERROR] EditPad: Invalid file size %ld", size);
         fclose(f);
         return;
     }
     
     if (size == 0) {
-        fprintf(stderr, "[WARNING] EditPad: File is empty\n");
+        log_error("[WARNING] EditPad: File is empty");
         textview_set_text(ep->text_view, "");
         strncpy(ep->current_file, filename, PATH_SIZE - 1);
         ep->current_file[PATH_SIZE - 1] = '\0';
@@ -221,7 +221,7 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     
     char *content = malloc(size + 1);
     if (!content) {
-        fprintf(stderr, "[ERROR] EditPad: Failed to allocate %ld bytes for file content\n", size + 1);
+        log_error("[ERROR] EditPad: Failed to allocate %ld bytes for file content", size + 1);
         fclose(f);
         return;
     }
@@ -231,7 +231,7 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     
     
     if (bytes_read != size) {
-        fprintf(stderr, "[WARNING] EditPad: Read size mismatch (expected %ld, got %zu)\n", 
+        log_error("[WARNING] EditPad: Read size mismatch (expected %ld, got %zu)", 
                 size, bytes_read);
     }
     
@@ -249,7 +249,7 @@ void editpad_open_file(EditPad *ep, const char *filename) {
     }
     
     if (null_bytes > 0) {
-        fprintf(stderr, "[WARNING] EditPad: File contains %d NULL bytes (might be binary)\n", null_bytes);
+        log_error("[WARNING] EditPad: File contains %d NULL bytes (might be binary)", null_bytes);
     }
     if (utf8_sequences > 0) {
     }
@@ -265,7 +265,7 @@ void editpad_open_file(EditPad *ep, const char *filename) {
         }
         free(loaded_text);
     } else {
-        fprintf(stderr, "[WARNING] EditPad: TextView returned NULL text after loading\n");
+        log_error("[WARNING] EditPad: TextView returned NULL text after loading");
     }
     
     free(content);
@@ -318,7 +318,7 @@ void editpad_save_file(EditPad *ep) {
         ep->modified = false;
         editpad_update_title(ep);
     } else {
-        fprintf(stderr, "Cannot save file: %s\n", ep->current_file);
+        log_error("[ERROR] Cannot save file: %s", ep->current_file);
     }
     
     free(content);
@@ -329,7 +329,6 @@ void editpad_save_file_as(EditPad *ep) {
     if (!ep) return;
     
     // Launch ReqASL in save mode to get filename
-    fprintf(stderr, "[EditPad] Launching ReqASL for save as\n");
     
     // Build command with initial path if we have a current file
     char command[PATH_SIZE * 2];
@@ -356,7 +355,7 @@ void editpad_save_file_as(EditPad *ep) {
             // Remove newline
             filepath[strcspn(filepath, "\n")] = 0;
             if (strlen(filepath) > 0) {
-                fprintf(stderr, "[EditPad] Saving file as: %s\n", filepath);
+                // Saving file as
                 
                 // Get text from TextView
                 char *content = textview_get_text(ep->text_view);
@@ -374,19 +373,19 @@ void editpad_save_file_as(EditPad *ep) {
                         ep->modified = false;
                         editpad_update_title(ep);
                         
-                        fprintf(stderr, "[EditPad] File saved successfully: %s\n", filepath);
+                        // File saved successfully
                     } else {
-                        fprintf(stderr, "[EditPad] Failed to save file: %s\n", filepath);
+                        log_error("[ERROR] Failed to save file: %s", filepath);
                     }
                     free(content);
                 }
             } else {
-                fprintf(stderr, "[EditPad] Save As cancelled\n");
+                // Save As cancelled
             }
         }
         pclose(fp);
     } else {
-        fprintf(stderr, "[EditPad] Failed to launch ReqASL\n");
+        log_error("[ERROR] Failed to launch ReqASL for save dialog");
     }
 }
 
@@ -444,6 +443,10 @@ void editpad_load_config(EditPad *ep) {
         f = fopen(config_path, "w");
         if (f) {
             fprintf(f, "# EditPad Configuration\n");
+            fprintf(f, "\n");
+            fprintf(f, "# Log file path (can use ~ for home directory)\n");
+            fprintf(f, "log_path = ~/.config/amiwb/editpad.log\n");
+            fprintf(f, "\n");
             fprintf(f, "# Font settings\n");
             fprintf(f, "font = Source Code Pro:style=Bold\n");
             fprintf(f, "fontsize = 11\n");
@@ -509,6 +512,9 @@ void editpad_load_config(EditPad *ep) {
         } else if (strcmp(key, "cursor.color") == 0) {
             if (value[0] == '#') value++;
             ep->cursor_color = (unsigned int)strtol(value, NULL, 16);
+        } else if (strcmp(key, "log_path") == 0) {
+            // Set the global log path
+            editpad_set_log_path(value);
         }
     }
     
@@ -586,5 +592,4 @@ void editpad_replace(EditPad *ep) {
 
 void editpad_goto_line(EditPad *ep) {
     // TODO: Implement goto line dialog
-    fprintf(stderr, "[EditPad] Goto Line dialog not implemented yet\n");
 }

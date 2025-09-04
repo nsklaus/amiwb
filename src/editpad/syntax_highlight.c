@@ -42,12 +42,12 @@ static const char *python_keywords[] = {
     "raise", "return", "try", "while", "with", "yield", "True", "False", "None", NULL
 };
 
-// Shell keywords
-static const char *shell_keywords[] = {
-    "if", "then", "else", "elif", "fi", "case", "esac", "for", "while",
-    "do", "done", "function", "return", "break", "continue", "exit", "export",
-    "local", "readonly", "shift", "source", "alias", "unalias", NULL
-};
+// Shell keywords - TODO: Implement shell highlighting
+// static const char *shell_keywords[] = {
+//     "if", "then", "else", "elif", "fi", "case", "esac", "for", "while",
+//     "do", "done", "function", "return", "break", "continue", "exit", "export",
+//     "local", "readonly", "shift", "source", "alias", "unalias", NULL
+// };
 
 // Create syntax highlighter
 SyntaxHighlight* syntax_create(void) {

@@ -1,0 +1,51 @@
+# EditPad Configuration
+
+# Log file path (can use ~ for home directory)
+log_path = ~/Sources/amiwb/editpad.log
+
+# Font settings
+font = Source Code Pro:style=Bold
+fontsize = 11
+
+# Editor preferences
+linenumbers = false
+wordwrap = false
+tabwidth = 4
+autoindent = true
+
+# Colors (hex RGB values)
+selection.bg = #99CCFF
+selection.fg = #000000
+cursor.color = #4858B0
+
+# Syntax highlighting colors (hex RGB values)
+# These map to nano's color names
+syntax.black = #000000
+syntax.red = #AA4444          # Changed from bright red to darker red
+syntax.green = #00AA00
+syntax.yellow = #AAAA00
+syntax.blue = #0000EE
+syntax.magenta = #AA00AA
+syntax.cyan = #00AAAA
+syntax.white = #BBBBBB
+
+syntax.brightblack = #555555
+syntax.brightred = #FF8888    # Softer bright red
+syntax.brightgreen = #55FF55
+syntax.brightyellow = #FFFF55
+syntax.brightblue = #5555FF
+syntax.brightmagenta = #FF55FF
+syntax.brightcyan = #55FFFF
+syntax.brightwhite = #FFFFFF
+
+syntax.normal = #000000        # Default text color (black)
+
+# Syntax element colors (override defaults)
+syntax.comment = #6b3a07       # Brown (visible on gray background)
+syntax.string = #AA4444         # Dark red
+syntax.keyword = #0000EE        # Blue
+syntax.type = #00AA00           # Dark green  
+syntax.preprocessor = #AA00AA   # Magenta
+syntax.number = #00AAAA         # Dark cyan
+syntax.function = #0000AA       # Dark blue
+syntax.operator = #000000       # Black

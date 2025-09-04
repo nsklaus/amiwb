@@ -72,4 +72,8 @@ void editpad_handle_focus_change(EditPad *ep, bool focused);
 // Configuration
 void editpad_load_config(EditPad *ep);
 
+// Logging (defined in editpad_main.c)
+void log_error(const char *format, ...);
+void editpad_set_log_path(const char *path);
+
 #endif // EDITPAD_H

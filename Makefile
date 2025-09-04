@@ -135,18 +135,24 @@ install-amiwb: amiwb
 	fi; \
 	if [ -n "$$USER_HOME" ] && [ -d "$$USER_HOME" ]; then \
 		CONFIG_DIR="$$USER_HOME/.config/amiwb"; \
-		if [ ! -d "$$CONFIG_DIR" ]; then \
-			mkdir -p "$$CONFIG_DIR"; \
+		mkdir -p "$$CONFIG_DIR"; \
+		if [ ! -f "$$CONFIG_DIR/amiwbrc" ]; then \
 			cp dotfiles/home_dot_config_amiwb/amiwbrc "$$CONFIG_DIR/amiwbrc"; \
+			echo "Installed amiwbrc to $$CONFIG_DIR/"; \
+		fi; \
+		if [ ! -f "$$CONFIG_DIR/toolsdaemonrc" ]; then \
 			cp dotfiles/home_dot_config_amiwb/toolsdaemonrc "$$CONFIG_DIR/toolsdaemonrc"; \
-			if [ -n "$$SUDO_USER" ]; then \
-				chown -R $$SUDO_USER:$$SUDO_USER "$$CONFIG_DIR"; \
-			elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
-				chown -R $$USER:$$USER "$$CONFIG_DIR" 2>/dev/null || true; \
-			fi; \
-			echo "Config files installed to $$CONFIG_DIR/"; \
-		else \
-			echo "Config directory $$CONFIG_DIR/ already exists (not overwritten)"; \
+			echo "Installed toolsdaemonrc to $$CONFIG_DIR/"; \
+		fi; \
+		if [ ! -f "$$CONFIG_DIR/editpad/editpadrc" ]; then \
+			mkdir -p "$$CONFIG_DIR/editpad"; \
+			cp dotfiles/home_dot_config_amiwb/editpad/editpadrc "$$CONFIG_DIR/editpad/editpadrc"; \
+			echo "Installed editpadrc to $$CONFIG_DIR/editpad/"; \
+		fi; \
+		if [ -n "$$SUDO_USER" ]; then \
+			chown -R $$SUDO_USER:$$SUDO_USER "$$CONFIG_DIR"; \
+		elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
+			chown -R $$USER:$$USER "$$CONFIG_DIR" 2>/dev/null || true; \
 		fi; \
 	fi
 	@echo "AmiWB installed"

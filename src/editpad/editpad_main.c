@@ -2,10 +2,81 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include <time.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
+
+// Global log path - set from config or use default
+static char g_log_path[PATH_SIZE] = "~/.config/amiwb/editpad.log";
+
+// Set the log path (called from editpad_load_config)
+void editpad_set_log_path(const char *path) {
+    if (path && *path) {
+        strncpy(g_log_path, path, PATH_SIZE - 1);
+        g_log_path[PATH_SIZE - 1] = '\0';
+    }
+}
+
+// Initialize log file with timestamp header (truncate on each run)
+static void editpad_log_init(void) {
+    char path_buf[1024];
+    const char *cfg = g_log_path;
+    // Expand leading ~ in the configured path for fopen()
+    if (cfg && strncmp(cfg, "~/", 2) == 0) {
+        const char *home = getenv("HOME");
+        if (home) {
+            snprintf(path_buf, sizeof(path_buf), "%s/%s", home, cfg + 2);
+        } else {
+            snprintf(path_buf, sizeof(path_buf), "%s", cfg); // fallback
+        }
+    } else {
+        snprintf(path_buf, sizeof(path_buf), "%s", cfg ? cfg : "editpad.log");
+    }
+    FILE *lf = fopen(path_buf, "w"); // overwrite each run
+    if (lf) {
+        // Header with timestamp - only thing that goes in log during normal operation
+        time_t now = time(NULL);
+        struct tm tm; 
+        localtime_r(&now, &tm);
+        char ts[128];
+        strftime(ts, sizeof(ts), "%a %d %b %Y - %H:%M", &tm);
+        fprintf(lf, "EditPad log file, started on: %s\n", ts);
+        fprintf(lf, "----------------------------------------\n");
+        fclose(lf);  // Close immediately - no fd inheritance
+    }
+}
+
+// Error logging function - only logs actual errors
+void log_error(const char *format, ...) {
+    char log_path[1024];
+    const char *cfg = g_log_path;
+    
+    // Expand leading ~ in the configured path
+    if (cfg && strncmp(cfg, "~/", 2) == 0) {
+        const char *home = getenv("HOME");
+        if (!home) return;  // Silent fail - no logs if no home
+        snprintf(log_path, sizeof(log_path), "%s/%s", home, cfg + 2);
+    } else {
+        snprintf(log_path, sizeof(log_path), "%s", cfg ? cfg : "editpad.log");
+    }
+    
+    // Open, write, close immediately - no fd inheritance
+    FILE *log = fopen(log_path, "a");
+    if (!log) return;  // Silent fail - don't break on log errors
+    
+    va_list args;
+    va_start(args, format);
+    vfprintf(log, format, args);
+    va_end(args);
+    fprintf(log, "\n");
+    
+    fclose(log);
+}
 
 // Main event loop for EditPad
 void editpad_run(EditPad *ep) {
@@ -200,7 +271,6 @@ void editpad_run(EditPad *ep) {
                                 }
                                 break;
                             case XK_o:  // Super+O - Open
-                                fprintf(stderr, "[EditPad] Launching ReqASL for file open\n");
                                 FILE *fp = popen("reqasl --mode open", "r");
                                 if (fp) {
                                     char filepath[PATH_SIZE];
@@ -289,17 +359,20 @@ int main(int argc, char *argv[]) {
     // Open X display
     Display *display = XOpenDisplay(NULL);
     if (!display) {
-        fprintf(stderr, "Cannot open X display\n");
+        log_error("[ERROR] Cannot open X display");
         return 1;
     }
     
-    // Create EditPad
+    // Create EditPad (this will load config and set log path)
     EditPad *ep = editpad_create(display);
     if (!ep) {
-        fprintf(stderr, "Failed to create EditPad\n");
+        log_error("[ERROR] Failed to create EditPad");
         XCloseDisplay(display);
         return 1;
     }
+    
+    // Initialize log file AFTER config is loaded
+    editpad_log_init();
     
     // Set up WM_DELETE_WINDOW
     Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
