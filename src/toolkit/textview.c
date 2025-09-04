@@ -3006,6 +3006,9 @@ void textview_undo(TextView *tv) {
                 char *new_line = malloc(len + 2);
                 if (tv->cursor_col > 0) {
                     strncpy(new_line, line, tv->cursor_col);
+                    new_line[tv->cursor_col] = '\0';  // Ensure null termination
+                } else {
+                    new_line[0] = '\0';  // Start with empty string when cursor at beginning
                 }
                 new_line[tv->cursor_col] = entry->text[0];
                 strcpy(new_line + tv->cursor_col + 1, line + tv->cursor_col);
@@ -3111,6 +3114,9 @@ void textview_redo(TextView *tv) {
                 char *new_line = malloc(len + 2);
                 if (tv->cursor_col > 0) {
                     strncpy(new_line, line, tv->cursor_col);
+                    new_line[tv->cursor_col] = '\0';  // Ensure null termination
+                } else {
+                    new_line[0] = '\0';  // Start with empty string when cursor at beginning
                 }
                 new_line[tv->cursor_col] = entry->text[0];
                 strcpy(new_line + tv->cursor_col + 1, line + tv->cursor_col);

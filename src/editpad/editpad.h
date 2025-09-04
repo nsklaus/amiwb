@@ -7,7 +7,7 @@
 #include "../amiwb/config.h"
 #include "syntax_highlight.h"
 
-typedef struct {
+typedef struct EditPad {
     Display *display;
     Window root;
     Window main_window;
@@ -37,6 +37,9 @@ typedef struct {
     
     // Track if initial title has been set
     bool initial_title_set;
+    
+    // Dialogs
+    void *find_dialog;  // FindDialog pointer (void* to avoid circular dependency)
     
 } EditPad;
 
@@ -71,6 +74,7 @@ void editpad_toggle_word_wrap(EditPad *ep);
 // Window operations
 void editpad_update_title(EditPad *ep);
 void editpad_handle_focus_change(EditPad *ep, bool focused);
+void editpad_update_menu_states(EditPad *ep);
 
 // Configuration
 void editpad_load_config(EditPad *ep);

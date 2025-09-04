@@ -906,7 +906,15 @@ void handle_property_notify(XPropertyEvent *event) {
     // Check if this is our custom title change property
     Display *dpy = get_display();
     Atom amiwb_title_change = XInternAtom(dpy, "_AMIWB_TITLE_CHANGE", False);
+    Atom amiwb_menu_states = XInternAtom(dpy, "_AMIWB_MENU_STATES", False);
     
+    // Handle menu state changes
+    if (event->atom == amiwb_menu_states) {
+        // Call menu handler to update menu states
+        extern void handle_menu_state_change(Window win);
+        handle_menu_state_change(event->window);
+        return;
+    }
     
     if (event->atom == amiwb_title_change) {
         if (event->state == PropertyNewValue) {

@@ -185,6 +185,15 @@ void textview_set_syntax_highlight(TextView *tv, void *context,
                                    uint32_t *palette, int palette_size);
 void textview_highlight_all_lines(TextView *tv);
 
+// Search and Replace
+bool textview_find_next(TextView *tv, const char *text, bool case_sensitive, bool whole_word, bool wrap);
+bool textview_find_prev(TextView *tv, const char *text, bool case_sensitive, bool whole_word, bool wrap);
+bool textview_replace(TextView *tv, const char *find_text, const char *replace_text, 
+                     bool case_sensitive, bool whole_word);
+int textview_replace_all(TextView *tv, const char *find_text, const char *replace_text,
+                        bool case_sensitive, bool whole_word);
+void textview_clear_search_highlight(TextView *tv);
+
 // Event handling
 bool textview_handle_key_press(TextView *tv, XKeyEvent *event);
 bool textview_handle_button_press(TextView *tv, XButtonEvent *event);

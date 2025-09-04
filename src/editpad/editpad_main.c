@@ -1,4 +1,5 @@
 #include "editpad.h"
+#include "find.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -88,15 +89,10 @@ void editpad_run(EditPad *ep) {
     while (running) {
         XNextEvent(ep->display, &event);
         
-        log_error("[DEBUG] Event type=%d for window=0x%lx (main=0x%lx, tv=0x%lx)",
-                 event.type, event.xany.window, ep->main_window, 
-                 ep->text_view ? ep->text_view->window : 0);
-        
         // Check if event is for our windows
         if (event.xany.window == ep->main_window) {
             // Set initial title on MapNotify or FocusIn (not on first event)
             if (!ep->initial_title_set && (event.type == MapNotify || event.type == FocusIn)) {
-                log_error("[DEBUG] Setting initial title on event type=%d", event.type);
                 ep->modified = false;
                 if (ep->text_view) {
                     ep->text_view->modified = false;
@@ -110,17 +106,11 @@ void editpad_run(EditPad *ep) {
                     if (event.xexpose.count == 0) {
                         // Set initial title on first expose (after AmiWB has managed the window)
                         if (!ep->initial_title_set) {
-                            log_error("[DEBUG] Main window Expose, initial_title_set=false");
-                            log_error("[DEBUG] BEFORE reset: ep->modified=%d, tv->modified=%d", 
-                                     ep->modified, ep->text_view ? ep->text_view->modified : -1);
                             // Ensure modified is false for initial title
                             ep->modified = false;
                             if (ep->text_view) {
                                 ep->text_view->modified = false;
                             }
-                            log_error("[DEBUG] AFTER reset: ep->modified=%d, tv->modified=%d", 
-                                     ep->modified, ep->text_view ? ep->text_view->modified : -1);
-                            log_error("[DEBUG] Calling editpad_update_title now...");
                             editpad_update_title(ep);
                             ep->initial_title_set = true;
                         }
@@ -192,10 +182,10 @@ void editpad_run(EditPad *ep) {
                                 case 2:  // Save
                                     editpad_save_file(ep);
                                     break;
-                                case 3:  // SaveAs
+                                case 3:  // Save As
                                     editpad_save_file_as(ep);
                                     break;
-                                case 5:  // Quit (skip separator at 4)
+                                case 4:  // Quit
                                     running = false;
                                     break;
                             }
@@ -212,10 +202,10 @@ void editpad_run(EditPad *ep) {
                                 case 2:  // Paste
                                     editpad_paste(ep);
                                     break;
-                                case 4:  // SelectAll (skip separator at 3)
+                                case 3:  // Select All
                                     editpad_select_all(ep);
                                     break;
-                                case 6:  // Undo (skip separator at 5)
+                                case 4:  // Undo
                                     editpad_undo(ep);
                                     break;
                             }
@@ -226,10 +216,7 @@ void editpad_run(EditPad *ep) {
                                 case 0:  // Find
                                     editpad_find(ep);
                                     break;
-                                case 2:  // Replace
-                                    editpad_replace(ep);
-                                    break;
-                                case 3:  // GotoLine
+                                case 1:  // Goto Line
                                     editpad_goto_line(ep);
                                     break;
                             }
@@ -253,12 +240,7 @@ void editpad_run(EditPad *ep) {
             switch (event.type) {
                 case Expose:
                     if (event.xexpose.count == 0) {
-                        log_error("[DEBUG] TextView Expose, tv->modified=%d, ep->modified=%d", 
-                                 ep->text_view->modified, ep->modified);
                         textview_draw(ep->text_view);
-                        if (ep->text_view->modified && !ep->initial_title_set) {
-                            log_error("[DEBUG] TextView set modified during draw!");
-                        }
                     }
                     break;
                     
@@ -356,16 +338,15 @@ void editpad_run(EditPad *ep) {
                     if (textview_handle_key_press(ep->text_view, &event.xkey)) {
                         // Mark as modified if text changed, but only after initial title is set
                         if (!ep->modified && ep->text_view->modified && ep->initial_title_set) {
-                            log_error("[DEBUG] KEY EVENT syncing modified from tv=%d to ep",
-                                     ep->text_view->modified);
                             ep->modified = true;
                             editpad_update_title(ep);
+                            editpad_update_menu_states(ep);  // Update menu states after text change
                         } else if (!ep->initial_title_set && !ep->modified) {
                             // First key event - set initial title
-                            log_error("[DEBUG] First key event, setting initial title");
                             ep->initial_title_set = true;
                             editpad_update_title(ep);
                         }
+                        editpad_update_menu_states(ep);  // Always update menu states after key press
                     }
                     break;
                 }
@@ -376,6 +357,7 @@ void editpad_run(EditPad *ep) {
                     
                 case ButtonRelease:
                     textview_handle_button_release(ep->text_view, &event.xbutton);
+                    editpad_update_menu_states(ep);  // Update menu states after selection change
                     break;
                     
                 case MotionNotify:
@@ -393,6 +375,25 @@ void editpad_run(EditPad *ep) {
                 case ConfigureNotify:
                     textview_handle_configure(ep->text_view, &event.xconfigure);
                     break;
+            }
+        } else if (ep->find_dialog) {
+            // Check if event is for Find dialog
+            FindDialog *find = (FindDialog*)ep->find_dialog;
+            if (find->base && event.xany.window == find->base->window) {
+                // If the window was destroyed by AmiWB, clean up our structures
+                if (event.type == DestroyNotify) {
+                    // Window is gone - free our dialog structures to prevent memory leak
+                    find_dialog_destroy(find);
+                    ep->find_dialog = NULL;
+                    continue;
+                }
+                
+                // Let AmiWB handle all window management (close, iconify, etc.)
+                // We only handle the dialog's internal events (buttons, input, etc.)
+                if (find_dialog_handle_event(find, &event)) {
+                    // Event was handled by dialog
+                    continue;
+                }
             }
         }
     }

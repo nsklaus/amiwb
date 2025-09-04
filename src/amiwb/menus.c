@@ -2457,16 +2457,15 @@ static void parse_and_switch_app_menus(const char *app_name, const char *menu_da
             if (strcmp(item, "New") == 0) submenu->shortcuts[item_index] = strdup("N");
             else if (strcmp(item, "Open") == 0) submenu->shortcuts[item_index] = strdup("O");
             else if (strcmp(item, "Save") == 0) submenu->shortcuts[item_index] = strdup("S");
-            else if (strcmp(item, "SaveAs") == 0) submenu->shortcuts[item_index] = strdup("^S");
+            else if (strcmp(item, "Save As") == 0) submenu->shortcuts[item_index] = strdup("^S");
             else if (strcmp(item, "Quit") == 0) submenu->shortcuts[item_index] = strdup("Q");
             else if (strcmp(item, "Cut") == 0) submenu->shortcuts[item_index] = strdup("X");
             else if (strcmp(item, "Copy") == 0) submenu->shortcuts[item_index] = strdup("C");
             else if (strcmp(item, "Paste") == 0) submenu->shortcuts[item_index] = strdup("V");
-            else if (strcmp(item, "SelectAll") == 0) submenu->shortcuts[item_index] = strdup("A");
+            else if (strcmp(item, "Select All") == 0) submenu->shortcuts[item_index] = strdup("A");
             else if (strcmp(item, "Undo") == 0) submenu->shortcuts[item_index] = strdup("Z");
             else if (strcmp(item, "Find") == 0) submenu->shortcuts[item_index] = strdup("F");
-            else if (strcmp(item, "Replace") == 0) submenu->shortcuts[item_index] = strdup("R");
-            else if (strcmp(item, "GotoLine") == 0) submenu->shortcuts[item_index] = strdup("L");
+            else if (strcmp(item, "Goto Line") == 0) submenu->shortcuts[item_index] = strdup("L");
             
             item = strtok_r(NULL, ",", &saveptr2);
             item_index++;
@@ -2491,6 +2490,55 @@ static void parse_and_switch_app_menus(const char *app_name, const char *menu_da
     switch_to_app_menu(app_name, menu_items, submenus, menu_count, app_window);
 }
 
+// Update menu item states from app window property
+static void update_app_menu_states(Window app_window) {
+    if (!app_window || !app_menu_active || !full_submenus) return;
+    
+    Display *dpy = get_display();
+    if (!dpy) return;
+    
+    // Get the menu states property
+    Atom states_atom = XInternAtom(dpy, "_AMIWB_MENU_STATES", False);
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char *states_data = NULL;
+    
+    if (XGetWindowProperty(dpy, app_window, states_atom, 0, 65536, False,
+                          AnyPropertyType, &actual_type, &actual_format,
+                          &nitems, &bytes_after, &states_data) == Success && states_data) {
+        
+        // Parse the states data
+        // Format: "menu_index,item_index,state;menu_index,item_index,state;..."
+        // Example: "1,4,0;1,5,1" means Edit menu(1), Undo(4) disabled(0), Redo(5) enabled(1)
+        char *data_copy = strdup((char*)states_data);
+        char *saveptr;
+        char *state_str = strtok_r(data_copy, ";", &saveptr);
+        
+        while (state_str) {
+            int menu_idx, item_idx, enabled;
+            if (sscanf(state_str, "%d,%d,%d", &menu_idx, &item_idx, &enabled) == 3) {
+                // Update the menu item state
+                if (menu_idx >= 0 && menu_idx < full_menu_item_count) {
+                    Menu *submenu = full_submenus[menu_idx];
+                    if (submenu && item_idx >= 0 && item_idx < submenu->item_count) {
+                        submenu->enabled[item_idx] = (enabled != 0);
+                    }
+                }
+            }
+            state_str = strtok_r(NULL, ";", &saveptr);
+        }
+        
+        free(data_copy);
+        XFree(states_data);
+        
+        // Redraw the menu if it's currently visible
+        if (active_menu && active_menu->canvas) {
+            redraw_canvas(active_menu->canvas);
+        }
+    }
+}
+
 // Send menu selection back to app via client message
 static void send_menu_selection_to_app(Window app_window, int menu_index, int item_index) {
     Display *dpy = get_display();
@@ -2509,6 +2557,14 @@ static void send_menu_selection_to_app(Window app_window, int menu_index, int it
     XFlush(dpy);
     
     // Sent menu selection to app
+}
+
+// Update menu states when app changes them
+void handle_menu_state_change(Window win) {
+    if (!win || !current_app_window || win != current_app_window) return;
+    
+    // Update the menu states from the property
+    update_app_menu_states(win);
 }
 
 // Check if a window has toolkit app menus via X11 properties
@@ -2548,6 +2604,9 @@ void check_for_app_menus(Window win) {
             parse_and_switch_app_menus((char*)app_type, (char*)menu_data, win);
             
             XFree(menu_data);
+            
+            // Also update menu states if available
+            update_app_menu_states(win);
         }
         XFree(app_type);
     } else {

@@ -1,4 +1,5 @@
 #include "editpad.h"
+#include "find.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -114,7 +115,7 @@ EditPad* editpad_create(Display *display) {
                    (unsigned char*)app_type, strlen(app_type));
     
     // Set menu data (simple format for now)
-    const char *menu_data = "File:New,Open,Save,SaveAs,Quit|Edit:Cut,Copy,Paste,SelectAll,Undo|Search:Find,Replace,GotoLine|View:WordWrap,LineNumbers";
+    const char *menu_data = "File:New,Open,Save,Save As,Quit|Edit:Cut,Copy,Paste,Select All,Undo|Search:Find,Goto Line|View:Word Wrap,Line Numbers";
     XChangeProperty(display, ep->main_window, menu_data_atom,
                    XA_STRING, 8, PropModeReplace,
                    (unsigned char*)menu_data, strlen(menu_data));
@@ -134,12 +135,20 @@ EditPad* editpad_create(Display *display) {
     // Don't set the title here - let it be set after the first expose event
     // when AmiWB has had a chance to manage the window
     
+    // Set initial menu states
+    editpad_update_menu_states(ep);
+    
     return ep;
 }
 
 // Destroy EditPad and free resources
 void editpad_destroy(EditPad *ep) {
     if (!ep) return;
+    
+    // Destroy dialogs
+    if (ep->find_dialog) {
+        find_dialog_destroy((FindDialog*)ep->find_dialog);
+    }
     
     if (ep->syntax) {
         syntax_destroy(ep->syntax);
@@ -154,6 +163,76 @@ void editpad_destroy(EditPad *ep) {
     }
     
     free(ep);
+}
+
+// Update menu item states based on what operations are available
+void editpad_update_menu_states(EditPad *ep) {
+    if (!ep) return;
+    
+    // Build menu state string
+    // Format: "menu_index,item_index,enabled;menu_index,item_index,enabled;..."
+    // Edit menu is index 1, items: Cut(0), Copy(1), Paste(2), SelectAll(3), Undo(4)
+    char menu_states[512];
+    char *p = menu_states;
+    int remaining = sizeof(menu_states);
+    
+    // Check what operations are available
+    bool can_undo = ep->text_view ? textview_can_undo(ep->text_view) : false;
+    bool has_selection = ep->text_view ? ep->text_view->has_selection : false;
+    bool has_text = false;
+    if (ep->text_view) {
+        // Check if there's any text in the buffer
+        char *content = textview_get_text(ep->text_view);
+        if (content) {
+            has_text = (strlen(content) > 0);
+            free(content);
+        }
+    }
+    
+    // Update Edit menu items
+    // Cut (0) - enabled if there's a selection
+    int written = snprintf(p, remaining, "1,0,%d;", has_selection ? 1 : 0);
+    p += written; remaining -= written;
+    
+    // Copy (1) - enabled if there's a selection  
+    written = snprintf(p, remaining, "1,1,%d;", has_selection ? 1 : 0);
+    p += written; remaining -= written;
+    
+    // Paste (2) - always enabled (clipboard might have content from other apps)
+    written = snprintf(p, remaining, "1,2,1;");
+    p += written; remaining -= written;
+    
+    // Select All (3) - enabled only if there's text to select
+    written = snprintf(p, remaining, "1,3,%d;", has_text ? 1 : 0);
+    p += written; remaining -= written;
+    
+    // Undo (4) - enabled based on undo history
+    written = snprintf(p, remaining, "1,4,%d;", can_undo ? 1 : 0);
+    p += written; remaining -= written;
+    
+    // Update Search menu items (menu index 2)
+    // Find (0) - enabled only if there's text to search
+    written = snprintf(p, remaining, "2,0,%d;", has_text ? 1 : 0);
+    p += written; remaining -= written;
+    
+    // Goto Line (1) - enabled only if there's text
+    written = snprintf(p, remaining, "2,1,%d;", has_text ? 1 : 0);
+    p += written; remaining -= written;
+    
+    // Update View menu items (menu index 3)
+    // Word Wrap (0) - disabled (not implemented)
+    written = snprintf(p, remaining, "3,0,0;");
+    p += written; remaining -= written;
+    
+    // Line Numbers (1) - always enabled
+    written = snprintf(p, remaining, "3,1,1");
+    
+    // Set the property
+    Atom menu_states_atom = XInternAtom(ep->display, "_AMIWB_MENU_STATES", False);
+    XChangeProperty(ep->display, ep->main_window, menu_states_atom,
+                   XA_STRING, 8, PropModeReplace,
+                   (unsigned char*)menu_states, strlen(menu_states));
+    XFlush(ep->display);
 }
 
 // Update window title based on file and modified state
@@ -630,7 +709,16 @@ void editpad_select_all(EditPad *ep) {
 }
 
 void editpad_find(EditPad *ep) {
-    // TODO: Implement find dialog
+    if (!ep) return;
+    
+    // Create Find dialog if not exists
+    if (!ep->find_dialog) {
+        ep->find_dialog = find_dialog_create(ep);
+    }
+    
+    if (ep->find_dialog) {
+        find_dialog_show((FindDialog*)ep->find_dialog);
+    }
 }
 
 void editpad_replace(EditPad *ep) {
