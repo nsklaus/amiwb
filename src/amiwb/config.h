@@ -19,11 +19,11 @@
 #define DESKFONTCOL WHITE
 #define WINFONTCOL BLACK
 
-#define DOUBLE_CLICK_TIME 1000 	// Time threshold for double-click in ms.
-#define CLICK_TOLERANCE 10 		// Pixel tolerance for double-click.
-#define DRAG_THRESHOLD 10 		// Pixel threshold to start drag.
-#define ICON_SPACING 70 		// Spacing between icons in grid (increased).
-#define MAX_FILES 10000 		// Max icons per canvas.
+#define DOUBLE_CLICK_TIME 1000  // Time threshold for double-click in ms.
+#define CLICK_TOLERANCE 10      // Pixel tolerance for double-click.
+#define DRAG_THRESHOLD 10       // Pixel threshold to start drag.
+#define ICON_SPACING 70         // Spacing between icons in grid (increased).
+#define MAX_FILES 10000         // Max icons per canvas.
 
 // Buffer sizes for paths and filenames
 // These are reasonable sizes that cover 99.9% of real-world usage
@@ -35,9 +35,9 @@
 // NOTE: Border sizes differ by window type:
 // - Workbench windows (file manager): 20px all borders (for scrollbar/resize gadget)  
 // - Client windows & dialogs: 8px left/right, 20px top/bottom
-#define BORDER_HEIGHT_TOP 20 	// height of titlebar (all windows)
-#define BORDER_WIDTH_LEFT 8 	// width of left border (all windows)
-#define BORDER_WIDTH_RIGHT 20  	// width of right border (workbench windows only)
+#define BORDER_HEIGHT_TOP 20    // height of titlebar (all windows)
+#define BORDER_WIDTH_LEFT 8     // width of left border (all windows)
+#define BORDER_WIDTH_RIGHT 20   // width of right border (workbench windows only)
 #define BORDER_WIDTH_RIGHT_CLIENT 8  // width of right border (client windows)
 #define BORDER_HEIGHT_BOTTOM 20 // height of bottom border (all windows)
 
@@ -48,19 +48,20 @@
 #define BUTTON_LOWER_SIZE 30
 #define BUTTON_RESIZE_SIZE 20
 
-#define GLOBAL_DEPTH 24 		// Set to 8, 16, 24, or 32
+#define GLOBAL_DEPTH 24         // Set to 8, 16, 24, or 32
 // TYPE_ICONIFIED is defined as enum in icons.h
-#define MAX_WINDOWS 100 		// Max open windows.
-#define ICON_HEADER_SIZE 20 	// Size of icon file header.
+#define MAX_WINDOWS 100         // Max open windows.
+#define ICON_HEADER_SIZE 20     // Size of icon file header.
 #define ICON_RENDER_DEPTH 32    // Icons need 32-bit for alpha channel
 // TYPE_TOOL and TYPE_DRAWER are defined as enum in icons.h
-#define MENUBAR_HEIGHT 20 		// Height of menubar.
-#define MENU_ITEM_HEIGHT 20 	// Height of menu item.
+#define MENUBAR_HEIGHT 20       // Height of menubar.
+#define MENU_ITEM_HEIGHT 20     // Height of menu item.
 #define MENU_SHOW_DATE 1        // Show date/time on menubar (0=off, 1=on)
 
 // "%I:%M %p" = 02:00pm
 // "%a %e %b %H:%M" = Sun 17 Aug 02:00
-#define MENUBAR_DATE_FORMAT "%I:%M %p"  // Date/time format for menubar (see strftime)
+// #define MENUBAR_DATE_FORMAT "%I:%M %p"  // Date/time format for menubar (see strftime)
+#define MENUBAR_DATE_FORMAT "%a.%e %b %H:%M"  // Date/time format for menubar (see strftime)
 
 // Global shortcut symbol (Unicode 2237: ∷)
 #define SHORTCUT_SYMBOL "\xe2\x88\xb7"  // UTF-8 encoding of ∷ (U+2237)
@@ -81,8 +82,8 @@ extern char *iconify_path;
 #define max(a,b) ((a) > (b) ? (a) : (b))
 #define min(a,b) ((a) < (b) ? (a) : (b))
 
-#define DEBUG false  		// enable debug output
-#define MIN_KNOB_SIZE 10  	// Minimum size for scrollbar knobs in pixels
+#define DEBUG false         // enable debug output
+#define MIN_KNOB_SIZE 10    // Minimum size for scrollbar knobs in pixels
 
 // Wallpaper settings now in ~/.config/amiwb/amiwbrc
 // Removed: DESKPICT, DESKTILE, WINDPICT, WINDTILE

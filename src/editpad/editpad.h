@@ -35,6 +35,9 @@ typedef struct {
     // Menu state
     bool has_focus;
     
+    // Track if initial title has been set
+    bool initial_title_set;
+    
 } EditPad;
 
 // Main functions

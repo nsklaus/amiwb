@@ -1683,7 +1683,7 @@ void trigger_copy_action(void) {
         
         if (result == 0) {
             // Copy started successfully - icon will be created when it completes
-            log_error("[INFO] Copy started: %s -> %s", saved_path, copy_path);
+            // Copy started successfully
         } else {
             log_error("[ERROR] Copy failed for: %s", saved_path);  // Use saved path
         }
@@ -2173,7 +2173,7 @@ void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus
         system_menu_items = full_menu_items;
         system_submenus = full_submenus;
         system_menu_item_count = full_menu_item_count;
-        log_error("[INFO] Saved system menus: %d items", system_menu_item_count);
+        // Saved system menus
     }
     
     // Switch logo to app name
@@ -2196,7 +2196,7 @@ void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus
     app_menu_active = true;
     current_app_window = app_window;
     
-    log_error("[INFO] Switched to %s menus (%d items)", app_name, item_count);
+    // Switched to app menus
     
     // Redraw menubar with new content
     redraw_canvas(menubar->canvas);
@@ -2228,7 +2228,7 @@ void restore_system_menu(void) {
     app_menu_active = false;
     current_app_window = None;
     
-    log_error("[INFO] Restored system menus");
+    // Restored system menus
     
     // Redraw menubar
     redraw_canvas(menubar->canvas);
@@ -2370,7 +2370,7 @@ static Menu **create_test_editpad_menus(void) {
 
 // TEST FUNCTION: Simulate EditPad getting focus
 void test_editpad_menu_substitution(Window test_window) {
-    log_error("[INFO] TEST: Switching to EditPad menus");
+    // TEST: Switching to EditPad menus
     
     // Create EditPad menu items
     char **editpad_items = calloc(4, sizeof(char*));
@@ -2388,7 +2388,7 @@ void test_editpad_menu_substitution(Window test_window) {
 
 // TEST FUNCTION: Simulate EditPad losing focus
 void test_restore_system_menus(void) {
-    log_error("[INFO] TEST: Restoring system menus");
+    // TEST: Restoring system menus
     restore_system_menu();
 }
 
@@ -2400,7 +2400,7 @@ static void parse_and_switch_app_menus(const char *app_name, const char *menu_da
         return;
     }
     
-    log_error("[INFO] Parsing menu data for %s: %s", app_name, menu_data);
+    // Parsing menu data
     
     // Count top-level menus (separated by |)
     int menu_count = 1;
@@ -2508,7 +2508,7 @@ static void send_menu_selection_to_app(Window app_window, int menu_index, int it
     XSendEvent(dpy, app_window, False, NoEventMask, &event);
     XFlush(dpy);
     
-    log_error("[INFO] Sent menu selection to app: menu=%d, item=%d", menu_index, item_index);
+    // Sent menu selection to app
 }
 
 // Check if a window has toolkit app menus via X11 properties
@@ -2535,14 +2535,14 @@ void check_for_app_menus(Window win) {
                           AnyPropertyType, &actual_type, &actual_format,
                           &nitems, &bytes_after, &app_type) == Success && app_type) {
         
-        log_error("[INFO] Found toolkit app: %s", (char*)app_type);
+        // Found toolkit app
         
         // It's a toolkit app! Get menu data
         if (XGetWindowProperty(dpy, win, menu_atom, 0, 65536, False,
                               AnyPropertyType, &actual_type, &actual_format,
                               &nitems, &bytes_after, &menu_data) == Success && menu_data) {
             
-            log_error("[INFO] Found menu data: %s", (char*)menu_data);
+            // Found menu data
             
             // Parse menu data and switch menus
             parse_and_switch_app_menus((char*)app_type, (char*)menu_data, win);
@@ -2552,7 +2552,7 @@ void check_for_app_menus(Window win) {
         XFree(app_type);
     } else {
         // Not a toolkit app - restore system menus
-        log_error("[INFO] Not a toolkit app, restoring system menus");
+        // Not a toolkit app, restoring system menus
         restore_system_menu();
     }
 }

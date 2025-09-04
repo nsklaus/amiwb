@@ -176,7 +176,7 @@ static void load_one_deficon(const char *basename, char **out_storage) {
             log_error("[ERROR] strdup failed for path: %s", path);
             return;
         }
-        log_error("[INFO] deficons present: %s -> %s", basename, path);
+        log_error("[ICON] deficons present: %s -> %s", basename, path);
     } else {
         log_error("[WARNING] deficons missing: %s -> %s/?!)", basename, deficons_dir);
     }

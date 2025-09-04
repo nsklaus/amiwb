@@ -891,39 +891,61 @@ void handle_configure_request(XConfigureRequestEvent *event) {
 
 // Dispatch property notify
 // WM hints, protocols, and netwm properties changes.
-// Also handles dynamic title updates via AMIWB_TITLE_CHANGE property
+// Also handles dynamic title updates via _AMIWB_TITLE_CHANGE property
 void handle_property_notify(XPropertyEvent *event) {
     // We're only interested in client windows
     Canvas *canvas = find_canvas_by_client(event->window);
     if (!canvas) {
-        return;
+        // Try to find by main window too
+        canvas = find_canvas(event->window);
+        if (!canvas) {
+            return;
+        }
     }
     
     // Check if this is our custom title change property
     Display *dpy = get_display();
-    Atom amiwb_title_change = XInternAtom(dpy, "AMIWB_TITLE_CHANGE", False);
+    Atom amiwb_title_change = XInternAtom(dpy, "_AMIWB_TITLE_CHANGE", False);
     
-    if (event->atom == amiwb_title_change && event->state == PropertyNewValue) {
-        // Get the new title from the property
-        Atom actual_type;
-        int actual_format;
-        unsigned long nitems, bytes_after;
-        unsigned char *data = NULL;
-        
-        if (XGetWindowProperty(dpy, event->window, amiwb_title_change,
-                              0, 256, False, AnyPropertyType,
-                              &actual_type, &actual_format, &nitems, &bytes_after,
-                              &data) == Success && data) {
+    
+    if (event->atom == amiwb_title_change) {
+        if (event->state == PropertyNewValue) {
+            // Get the new title from the property
+            Atom actual_type;
+            int actual_format;
+            unsigned long nitems, bytes_after;
+            unsigned char *data = NULL;
             
-            // Update the canvas title_change field
+            if (XGetWindowProperty(dpy, event->window, amiwb_title_change,
+                                  0, 256, False, AnyPropertyType,
+                                  &actual_type, &actual_format, &nitems, &bytes_after,
+                                  &data) == Success && data) {
+                
+                // Update the canvas title_change field
+                if (canvas->title_change) {
+                    free(canvas->title_change);
+                    canvas->title_change = NULL;
+                }
+                
+                // Only set if we got valid data
+                if (nitems > 0) {
+                    canvas->title_change = strdup((char *)data);
+                    if (!canvas->title_change) {
+                        log_error("[ERROR] Failed to allocate memory for title_change");
+                    }
+                }
+                XFree(data);
+                
+                // Trigger a redraw of the canvas to show the new title
+                redraw_canvas(canvas);
+            }
+        } else if (event->state == PropertyDelete) {
+            // Property was deleted - revert to base title
             if (canvas->title_change) {
                 free(canvas->title_change);
+                canvas->title_change = NULL;
+                redraw_canvas(canvas);
             }
-            canvas->title_change = strdup((char *)data);
-            XFree(data);
-            
-            // Trigger a redraw of the canvas to show the new title
-            redraw_canvas(canvas);
         }
     }
 }

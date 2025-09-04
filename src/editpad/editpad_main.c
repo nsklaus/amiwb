@@ -23,7 +23,7 @@ void editpad_set_log_path(const char *path) {
 }
 
 // Initialize log file with timestamp header (truncate on each run)
-static void editpad_log_init(void) {
+void editpad_log_init(void) {
     char path_buf[1024];
     const char *cfg = g_log_path;
     // Expand leading ~ in the configured path for fopen()
@@ -88,11 +88,42 @@ void editpad_run(EditPad *ep) {
     while (running) {
         XNextEvent(ep->display, &event);
         
+        log_error("[DEBUG] Event type=%d for window=0x%lx (main=0x%lx, tv=0x%lx)",
+                 event.type, event.xany.window, ep->main_window, 
+                 ep->text_view ? ep->text_view->window : 0);
+        
         // Check if event is for our windows
         if (event.xany.window == ep->main_window) {
+            // Set initial title on MapNotify or FocusIn (not on first event)
+            if (!ep->initial_title_set && (event.type == MapNotify || event.type == FocusIn)) {
+                log_error("[DEBUG] Setting initial title on event type=%d", event.type);
+                ep->modified = false;
+                if (ep->text_view) {
+                    ep->text_view->modified = false;
+                }
+                editpad_update_title(ep);
+                ep->initial_title_set = true;
+            }
+            
             switch (event.type) {
                 case Expose:
                     if (event.xexpose.count == 0) {
+                        // Set initial title on first expose (after AmiWB has managed the window)
+                        if (!ep->initial_title_set) {
+                            log_error("[DEBUG] Main window Expose, initial_title_set=false");
+                            log_error("[DEBUG] BEFORE reset: ep->modified=%d, tv->modified=%d", 
+                                     ep->modified, ep->text_view ? ep->text_view->modified : -1);
+                            // Ensure modified is false for initial title
+                            ep->modified = false;
+                            if (ep->text_view) {
+                                ep->text_view->modified = false;
+                            }
+                            log_error("[DEBUG] AFTER reset: ep->modified=%d, tv->modified=%d", 
+                                     ep->modified, ep->text_view ? ep->text_view->modified : -1);
+                            log_error("[DEBUG] Calling editpad_update_title now...");
+                            editpad_update_title(ep);
+                            ep->initial_title_set = true;
+                        }
                         // Redraw status bar if needed
                         // TextView handles its own expose events
                     }
@@ -222,7 +253,12 @@ void editpad_run(EditPad *ep) {
             switch (event.type) {
                 case Expose:
                     if (event.xexpose.count == 0) {
+                        log_error("[DEBUG] TextView Expose, tv->modified=%d, ep->modified=%d", 
+                                 ep->text_view->modified, ep->modified);
                         textview_draw(ep->text_view);
+                        if (ep->text_view->modified && !ep->initial_title_set) {
+                            log_error("[DEBUG] TextView set modified during draw!");
+                        }
                     }
                     break;
                     
@@ -318,9 +354,16 @@ void editpad_run(EditPad *ep) {
                     
                     // Pass non-shortcut keys to TextView
                     if (textview_handle_key_press(ep->text_view, &event.xkey)) {
-                        // Mark as modified if text changed
-                        if (!ep->modified && ep->text_view->modified) {
+                        // Mark as modified if text changed, but only after initial title is set
+                        if (!ep->modified && ep->text_view->modified && ep->initial_title_set) {
+                            log_error("[DEBUG] KEY EVENT syncing modified from tv=%d to ep",
+                                     ep->text_view->modified);
                             ep->modified = true;
+                            editpad_update_title(ep);
+                        } else if (!ep->initial_title_set && !ep->modified) {
+                            // First key event - set initial title
+                            log_error("[DEBUG] First key event, setting initial title");
+                            ep->initial_title_set = true;
                             editpad_update_title(ep);
                         }
                     }

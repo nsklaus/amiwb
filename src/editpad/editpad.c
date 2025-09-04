@@ -36,6 +36,7 @@ EditPad* editpad_create(Display *display) {
     // Load configuration
     editpad_load_config(ep);
     
+    
     // Initialize syntax highlighting
     ep->syntax = syntax_create();
     if (ep->syntax) {
@@ -58,9 +59,10 @@ EditPad* editpad_create(Display *display) {
                                    0, CopyFromParent, InputOutput, CopyFromParent,
                                    CWBackPixel | CWBorderPixel | CWEventMask, &attrs);
     
-    // Set window properties
+    // Set window properties - just the base app name
+    // The dynamic title will be set by editpad_update_title() after mapping
     XTextProperty window_name;
-    char *title = "EditPad - Untitled";
+    char *title = "EditPad";
     XStringListToTextProperty(&title, 1, &window_name);
     XSetWMName(display, ep->main_window, &window_name);
     XFree(window_name.value);
@@ -97,6 +99,7 @@ EditPad* editpad_create(Display *display) {
     // Set initial state
     ep->untitled = true;
     ep->modified = false;
+    ep->initial_title_set = false;
     strcpy(ep->current_file, "");
     
     // Register with AmiWB for menu substitution
@@ -105,7 +108,7 @@ EditPad* editpad_create(Display *display) {
     Atom menu_data_atom = XInternAtom(display, "_AMIWB_MENU_DATA", False);
     
     // Set app type
-    const char *app_type = "EDITPAD";
+    const char *app_type = "EditPad";
     XChangeProperty(display, ep->main_window, app_type_atom,
                    XA_STRING, 8, PropModeReplace,
                    (unsigned char*)app_type, strlen(app_type));
@@ -116,8 +119,20 @@ EditPad* editpad_create(Display *display) {
                    XA_STRING, 8, PropModeReplace,
                    (unsigned char*)menu_data, strlen(menu_data));
     
+    // Set initial title BEFORE mapping the window
+    Atom title_change_atom = XInternAtom(display, "_AMIWB_TITLE_CHANGE", False);
+    Atom utf8_string = XInternAtom(display, "UTF8_STRING", False);
+    const char *initial_title = "New File";
+    XChangeProperty(display, ep->main_window, title_change_atom,
+                   utf8_string, 8, PropModeReplace,
+                   (unsigned char*)initial_title, strlen(initial_title));
+    
     XMapWindow(display, ep->main_window);
     XFlush(display);
+    XSync(display, False);  // Ensure window is mapped
+    
+    // Don't set the title here - let it be set after the first expose event
+    // when AmiWB has had a chance to manage the window
     
     return ep;
 }
@@ -145,22 +160,44 @@ void editpad_destroy(EditPad *ep) {
 void editpad_update_title(EditPad *ep) {
     if (!ep) return;
     
-    char title[PATH_SIZE + 32];
+    // Build the full title for standard WMs
+    char full_title[PATH_SIZE + 32];
     if (ep->untitled) {
-        snprintf(title, sizeof(title), "EditPad - Untitled%s",
+        snprintf(full_title, sizeof(full_title), "EditPad - Untitled%s",
                 ep->modified ? " *" : "");
     } else {
         const char *basename = strrchr(ep->current_file, '/');
         basename = basename ? basename + 1 : ep->current_file;
-        snprintf(title, sizeof(title), "EditPad - %s%s",
+        snprintf(full_title, sizeof(full_title), "EditPad - %s%s",
                 basename, ep->modified ? " *" : "");
     }
     
+    // Set standard WM_NAME for compatibility with other WMs
     XTextProperty window_name;
-    char *title_ptr = title;
+    char *title_ptr = full_title;
     XStringListToTextProperty(&title_ptr, 1, &window_name);
     XSetWMName(ep->display, ep->main_window, &window_name);
     XFree(window_name.value);
+    
+    // Also set AmiWB's dynamic title property (just the filename part)
+    char dynamic_title[PATH_SIZE + 8];
+    if (ep->untitled) {
+        snprintf(dynamic_title, sizeof(dynamic_title), "%sNew File",
+                ep->modified ? "* " : "");
+    } else {
+        const char *basename = strrchr(ep->current_file, '/');
+        basename = basename ? basename + 1 : ep->current_file;
+        snprintf(dynamic_title, sizeof(dynamic_title), "%s%s",
+                ep->modified ? "* " : "", basename);
+    }
+    // Set the _AMIWB_TITLE_CHANGE property for AmiWB's dynamic title system
+    Atom amiwb_title_atom = XInternAtom(ep->display, "_AMIWB_TITLE_CHANGE", False);
+    Atom utf8_string = XInternAtom(ep->display, "UTF8_STRING", False);
+    XChangeProperty(ep->display, ep->main_window, amiwb_title_atom,
+                   utf8_string, 8, PropModeReplace,
+                   (unsigned char*)dynamic_title, strlen(dynamic_title));
+    XFlush(ep->display);  // Force immediate property update
+    XSync(ep->display, False);  // Also sync to ensure it's processed
 }
 
 // New file
@@ -425,11 +462,17 @@ void editpad_load_config(EditPad *ep) {
     // First try ~/.config/amiwb/editpad/editpadrc
     snprintf(config_path, sizeof(config_path), "%s/.config/amiwb/editpad/editpadrc", getenv("HOME"));
     f = fopen(config_path, "r");
+    if (f) {
+        log_error("[INFO] Opened config file: %s", config_path);
+    }
     
     // Fallback to old location
     if (!f) {
         snprintf(config_path, sizeof(config_path), "%s/.config/amiwb/editpadrc", getenv("HOME"));
         f = fopen(config_path, "r");
+        if (f) {
+            log_error("[INFO] Opened config file (fallback): %s", config_path);
+        }
     }
     
     if (!f) {
@@ -479,8 +522,12 @@ void editpad_load_config(EditPad *ep) {
         char *key = line;
         char *value = eq + 1;
         
-        // Trim whitespace
+        // Trim whitespace from key and value
         while (*key == ' ' || *key == '\t') key++;
+        char *key_end = eq - 1;
+        while (key_end > key && (*key_end == ' ' || *key_end == '\t')) key_end--;
+        *(key_end + 1) = '\0';
+        
         while (*value == ' ' || *value == '\t') value++;
         char *end = value + strlen(value) - 1;
         while (end > value && (*end == '\n' || *end == ' ' || *end == '\t')) {

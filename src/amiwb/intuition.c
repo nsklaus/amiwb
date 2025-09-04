@@ -836,7 +836,7 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
         }
         
         // Check if the client has set a custom display title
-        Atom amiwb_title_change = XInternAtom(display, "AMIWB_TITLE_CHANGE", False);
+        Atom amiwb_title_change = XInternAtom(display, "_AMIWB_TITLE_CHANGE", False);
         Atom actual_type;
         int actual_format;
         unsigned long nitems, bytes_after;
