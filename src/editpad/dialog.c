@@ -493,12 +493,16 @@ void dialog_draw(Dialog *dialog) {
         }
     }
     
-    // Special handling for Find dialog - draw the "Find:" label
+    // Special handling for Find dialog - draw the "Find:" and "Replace:" labels
     if (dialog->type == DIALOG_FIND && dialog->font) {
         // Draw "Find:" label at the same Y as the input field
         // Input field is at y=40, so center text vertically with it
         XftDrawString8(dialog->xft_draw, &dialog->fg_color, dialog->font,
                       20, 40 + 18, (XftChar8*)"Find:", 5);
+        
+        // Draw "Replace:" label at y=80
+        XftDrawString8(dialog->xft_draw, &dialog->fg_color, dialog->font,
+                      20, 80 + 18, (XftChar8*)"Replace:", 8);
     }
     
     XFlush(dialog->display);

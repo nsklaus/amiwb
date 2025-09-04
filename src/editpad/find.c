@@ -7,6 +7,8 @@
 
 // Button callbacks
 static void find_next_callback(void *user_data);
+static void replace_once_callback(void *user_data);
+static void replace_all_callback(void *user_data);
 static void find_prev_callback(void *user_data);
 static void close_callback(void *user_data);
 
@@ -30,31 +32,43 @@ FindDialog* find_dialog_create(EditPad *editpad) {
     find->base->dialog_data = find;
     
     // Create UI elements
-    // Field positions
-    int field_x = 80;
-    int field_width = 280;
-    int button_width = 80;
+    // Layout constants
+    int field_x = 80;  // X position for input fields
+    int field_width = 200;  // Shorter to make room for buttons
+    int button_width = 60;  // Smaller buttons
     int button_height = 25;
+    int button_spacing = 5;
+    int field_height = 25;
     
-    // Find field at y=40
-    find->find_field = dialog_add_field(find->base, field_x, 40, field_width, 25);
+    // Calculate button positions (after the input field)
+    int buttons_x = field_x + field_width + 10;
+    
+    // Line 1: Find field and Next/Prev buttons at y=40
+    int find_y = 40;
+    find->find_field = dialog_add_field(find->base, field_x, find_y, field_width, field_height);
     if (find->find_field) {
         inputfield_set_focus(find->find_field, true);
     }
     
-    // Find Next and Find Prev buttons at y=80
-    int button_y = 80;
-    int button_spacing = 10;
-    int find_buttons_width = (button_width * 2) + button_spacing;
-    int find_buttons_x = (find->base->width - find_buttons_width) / 2;
-    
     find->find_next_button = dialog_add_button(find->base, 
-        find_buttons_x, button_y, button_width, button_height,
-        "Find Next", find_next_callback);
+        buttons_x, find_y, button_width, button_height,
+        "Next", find_next_callback);
     
     find->find_prev_button = dialog_add_button(find->base,
-        find_buttons_x + button_width + button_spacing, button_y, button_width, button_height,
-        "Find Prev", find_prev_callback);
+        buttons_x + button_width + button_spacing, find_y, button_width, button_height,
+        "Prev", find_prev_callback);
+    
+    // Line 2: Replace field and Once/All buttons at y=80
+    int replace_y = 80;
+    find->replace_field = dialog_add_field(find->base, field_x, replace_y, field_width, field_height);
+    
+    find->replace_once_button = dialog_add_button(find->base,
+        buttons_x, replace_y, button_width, button_height,
+        "Once", replace_once_callback);
+    
+    find->replace_all_button = dialog_add_button(find->base,
+        buttons_x + button_width + button_spacing, replace_y, button_width, button_height,
+        "All", replace_all_callback);
     
     // Cancel button centered at bottom with breathing room (25px from bottom)
     int cancel_y = find->base->height - button_height - 25;
@@ -152,14 +166,33 @@ void find_dialog_set_search_text(FindDialog *dialog, const char *text) {
 
 // Search next
 void find_dialog_search_next(FindDialog *dialog) {
-    if (!dialog || !dialog->find_field || !dialog->editpad || !dialog->editpad->text_view) return;
+    if (!dialog || !dialog->find_field || !dialog->editpad || !dialog->editpad->text_view) {
+        log_error("[DEBUG] find_dialog_search_next: Invalid dialog or components");
+        return;
+    }
     
     const char *search_text = inputfield_get_text(dialog->find_field);
-    if (!search_text || !*search_text) return;
+    if (!search_text || !*search_text) {
+        log_error("[DEBUG] find_dialog_search_next: Empty search text");
+        return;
+    }
     
-    // TODO: Implement actual search when TextView has search support
-    // For now, just store the search text
+    log_error("[DEBUG] find_dialog_search_next: Searching for '%s' (case_sensitive=%d, wrap=%d)",
+            search_text, dialog->case_sensitive, dialog->wrap_around);
+    
+    // Store the search text
     strncpy(dialog->last_search, search_text, sizeof(dialog->last_search) - 1);
+    
+    // Perform the search
+    bool found = textview_find_next(dialog->editpad->text_view, search_text, 
+                                    dialog->case_sensitive, dialog->wrap_around);
+    
+    log_error("[DEBUG] find_dialog_search_next: Search result = %s", 
+            found ? "FOUND" : "NOT FOUND");
+    
+    if (!found) {
+        // TODO: Show "Not found" message (when we have status bar or message dialog)
+    }
 }
 
 // Search previous
@@ -169,9 +202,16 @@ void find_dialog_search_prev(FindDialog *dialog) {
     const char *search_text = inputfield_get_text(dialog->find_field);
     if (!search_text || !*search_text) return;
     
-    // TODO: Implement actual search when TextView has search support
-    // For now, just store the search text
+    // Store the search text
     strncpy(dialog->last_search, search_text, sizeof(dialog->last_search) - 1);
+    
+    // Perform the search
+    bool found = textview_find_prev(dialog->editpad->text_view, search_text,
+                                    dialog->case_sensitive, dialog->wrap_around);
+    
+    if (!found) {
+        // TODO: Show "Not found" message (when we have status bar or message dialog)
+    }
 }
 
 // Button callbacks
@@ -202,4 +242,55 @@ static void close_callback(void *user_data) {
         base->xft_draw = NULL;
     }
     XDestroyWindow(base->display, base->window);
+}
+
+static void replace_once_callback(void *user_data) {
+    Dialog *base = (Dialog*)user_data;
+    if (!base || !base->dialog_data) return;
+    
+    FindDialog *find = (FindDialog*)base->dialog_data;
+    if (!find->editpad || !find->editpad->text_view) return;
+    
+    const char *search_text = inputfield_get_text(find->find_field);
+    const char *replace_text = inputfield_get_text(find->replace_field);
+    
+    if (!search_text || !*search_text) return;
+    if (!replace_text) replace_text = "";  // Allow empty replacement
+    
+    TextView *tv = find->editpad->text_view;
+    
+    // Check if current selection matches search text
+    char *selected = textview_get_selection(tv);
+    if (selected) {
+        // If selection matches search text, replace it
+        if ((find->case_sensitive && strcmp(selected, search_text) == 0) ||
+            (!find->case_sensitive && strcasecmp(selected, search_text) == 0)) {
+            textview_replace_selection(tv, replace_text);
+        }
+        free(selected);
+    }
+    
+    // Find next occurrence
+    find_dialog_search_next(find);
+}
+
+static void replace_all_callback(void *user_data) {
+    Dialog *base = (Dialog*)user_data;
+    if (!base || !base->dialog_data) return;
+    
+    FindDialog *find = (FindDialog*)base->dialog_data;
+    if (!find->editpad || !find->editpad->text_view) return;
+    
+    const char *search_text = inputfield_get_text(find->find_field);
+    const char *replace_text = inputfield_get_text(find->replace_field);
+    
+    if (!search_text || !*search_text) return;
+    if (!replace_text) replace_text = "";  // Allow empty replacement
+    
+    // Replace all occurrences
+    int count = textview_replace_all(find->editpad->text_view, search_text,
+                                     replace_text, find->case_sensitive);
+    
+    // TODO: Show count message (e.g., "Replaced 5 occurrences")
+    (void)count;  // Suppress unused warning for now
 }

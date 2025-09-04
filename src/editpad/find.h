@@ -15,11 +15,17 @@ typedef struct FindDialog {
     Dialog *base;  // Base dialog
     struct EditPad *editpad;  // Parent EditPad instance
     
-    // UI elements
+    // UI elements - Find line
     InputField *find_field;
-    
     Button *find_next_button;
     Button *find_prev_button;
+    
+    // UI elements - Replace line
+    InputField *replace_field;
+    Button *replace_once_button;
+    Button *replace_all_button;
+    
+    // UI elements - Bottom
     Button *close_button;
     
     // Options (future: add checkboxes when toolkit has them)

@@ -185,15 +185,6 @@ void textview_set_syntax_highlight(TextView *tv, void *context,
                                    uint32_t *palette, int palette_size);
 void textview_highlight_all_lines(TextView *tv);
 
-// Search and Replace
-bool textview_find_next(TextView *tv, const char *text, bool case_sensitive, bool whole_word, bool wrap);
-bool textview_find_prev(TextView *tv, const char *text, bool case_sensitive, bool whole_word, bool wrap);
-bool textview_replace(TextView *tv, const char *find_text, const char *replace_text, 
-                     bool case_sensitive, bool whole_word);
-int textview_replace_all(TextView *tv, const char *find_text, const char *replace_text,
-                        bool case_sensitive, bool whole_word);
-void textview_clear_search_highlight(TextView *tv);
-
 // Event handling
 bool textview_handle_key_press(TextView *tv, XKeyEvent *event);
 bool textview_handle_button_press(TextView *tv, XButtonEvent *event);
@@ -202,5 +193,14 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event);
 bool textview_handle_focus_in(TextView *tv);
 bool textview_handle_focus_out(TextView *tv);
 bool textview_handle_configure(TextView *tv, XConfigureEvent *event);
+
+// Search operations
+bool textview_find_next(TextView *tv, const char *search_text, 
+                        bool case_sensitive, bool wrap_around);
+bool textview_find_prev(TextView *tv, const char *search_text,
+                        bool case_sensitive, bool wrap_around);
+void textview_replace_selection(TextView *tv, const char *replacement);
+int textview_replace_all(TextView *tv, const char *search_text, 
+                        const char *replacement, bool case_sensitive);
 
 #endif // TEXTVIEW_H

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>  // For strcasecmp
 #include <X11/keysym.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
@@ -854,6 +855,9 @@ void textview_ensure_cursor_visible(TextView *tv) {
         if (max_scroll < 0) max_scroll = 0;
         if (tv->scroll_x > max_scroll) tv->scroll_x = max_scroll;
     }
+    
+    // Update scrollbar to reflect new position
+    textview_update_scrollbar(tv);
 }
 
 // Draw the TextView
@@ -3219,4 +3223,268 @@ bool textview_can_redo(TextView *tv) {
     UndoHistory *history = (UndoHistory*)tv->undo_history;
     return (history->current != history->tail) && 
            (history->current ? history->current->next : history->head) != NULL;
+}
+
+// ============================================================================
+// Search and Replace Functions
+// ============================================================================
+
+// Helper: Case-insensitive string search
+
+static char* strcasestr_custom(const char *haystack, const char *needle) {
+    if (!*needle) return (char*)haystack;
+    
+    size_t needle_len = strlen(needle);
+    for (; *haystack; haystack++) {
+        if (strncasecmp(haystack, needle, needle_len) == 0) {
+            return (char*)haystack;
+        }
+    }
+    return NULL;
+}
+
+// Find next occurrence of search text
+bool textview_find_next(TextView *tv, const char *search_text, 
+                        bool case_sensitive, bool wrap_around) {
+    if (!tv || !search_text || !*search_text) return false;
+    
+    fprintf(stderr, "[DEBUG] textview_find_next: searching for '%s', lines=%d, cursor at %d:%d\n", 
+            search_text, tv->line_count, tv->cursor_line, tv->cursor_col);
+    
+    // Start searching from cursor position
+    int start_line = tv->cursor_line;
+    int start_col = tv->cursor_col;
+    
+    // If there's a selection, start after it
+    if (tv->sel_start_line != -1) {
+        if (tv->sel_end_line > tv->sel_start_line ||
+            (tv->sel_end_line == tv->sel_start_line && 
+             tv->sel_end_col > tv->sel_start_col)) {
+            start_line = tv->sel_end_line;
+            start_col = tv->sel_end_col;
+        }
+    }
+    
+    // Search from current position to end
+    for (int line = start_line; line < tv->line_count; line++) {
+        const char *line_text = tv->lines[line];
+        const char *search_start = line_text;
+        
+        // On the first line, start from cursor column
+        if (line == start_line) {
+            search_start = line_text + start_col;
+        }
+        
+        // Search in this line
+        const char *found = case_sensitive ? 
+            strstr(search_start, search_text) :
+            strcasestr_custom(search_start, search_text);
+        
+        if (found) {
+            // Found a match!
+            int col = found - line_text;
+            
+            fprintf(stderr, "[DEBUG] textview_find_next: Found at line %d, col %d\n", line, col);
+            
+            // Move cursor and select the match
+            tv->cursor_line = line;
+            tv->cursor_col = col;
+            tv->sel_start_line = line;
+            tv->sel_start_col = col;
+            tv->sel_end_line = line;
+            tv->sel_end_col = col + strlen(search_text);
+            tv->has_selection = true;  // Make sure selection is marked as active
+            
+            // Ensure visible
+            textview_ensure_cursor_visible(tv);
+            textview_draw(tv);
+            
+            return true;
+        }
+    }
+    
+    // If wrap_around, search from beginning to original position
+    if (wrap_around) {
+        for (int line = 0; line <= start_line; line++) {
+            const char *line_text = tv->lines[line];
+            const char *search_end = line_text + strlen(line_text);
+            
+            // On the last line, stop at original cursor position
+            if (line == start_line) {
+                search_end = line_text + start_col;
+            }
+            
+            // Search in this line
+            const char *found = case_sensitive ?
+                strstr(line_text, search_text) :
+                strcasestr_custom(line_text, search_text);
+            
+            if (found && found < search_end) {
+                // Found a match!
+                int col = found - line_text;
+                
+                fprintf(stderr, "[DEBUG] textview_find_next: Found (wrapped) at line %d, col %d\n", line, col);
+                
+                // Move cursor and select the match
+                tv->cursor_line = line;
+                tv->cursor_col = col;
+                tv->sel_start_line = line;
+                tv->sel_start_col = col;
+                tv->sel_end_line = line;
+                tv->sel_end_col = col + strlen(search_text);
+                tv->has_selection = true;  // Make sure selection is marked as active
+                
+                // Ensure visible
+                textview_ensure_cursor_visible(tv);
+                textview_draw(tv);
+                
+                return true;
+            }
+        }
+    }
+    
+    return false;  // Not found
+}
+
+// Find previous occurrence of search text
+bool textview_find_prev(TextView *tv, const char *search_text,
+                        bool case_sensitive, bool wrap_around) {
+    if (!tv || !search_text || !*search_text) return false;
+    
+    // Start searching from cursor position
+    int start_line = tv->cursor_line;
+    int start_col = tv->cursor_col;
+    
+    // If there's a selection, start before it
+    if (tv->sel_start_line != -1) {
+        start_line = tv->sel_start_line;
+        start_col = tv->sel_start_col;
+    }
+    
+    // Search backwards from current position
+    for (int line = start_line; line >= 0; line--) {
+        const char *line_text = tv->lines[line];
+        
+        // Find last occurrence before cursor
+        const char *last_found = NULL;
+        const char *search_pos = line_text;
+        
+        // Find all occurrences in this line
+        while (search_pos) {
+            const char *next = case_sensitive ?
+                strstr(search_pos, search_text) :
+                strcasestr_custom(search_pos, search_text);
+            
+            if (!next) break;
+            
+            // Check if this occurrence is before our limit
+            if (line < start_line || (line == start_line && (next - line_text) < start_col)) {
+                last_found = next;
+            }
+            
+            search_pos = next + 1;
+        }
+        
+        if (last_found) {
+            // Found a match!
+            int col = last_found - line_text;
+            
+            // Move cursor and select the match
+            tv->cursor_line = line;
+            tv->cursor_col = col;
+            tv->sel_start_line = line;
+            tv->sel_start_col = col;
+            tv->sel_end_line = line;
+            tv->sel_end_col = col + strlen(search_text);
+            
+            // Ensure visible
+            textview_ensure_cursor_visible(tv);
+            textview_draw(tv);
+            
+            return true;
+        }
+    }
+    
+    // If wrap_around, search from end back to original position
+    if (wrap_around) {
+        for (int line = tv->line_count - 1; line >= start_line; line--) {
+            const char *line_text = tv->lines[line];
+            
+            // Find last occurrence
+            const char *last_found = NULL;
+            const char *search_pos = line_text;
+            
+            // Find all occurrences in this line
+            while (search_pos) {
+                const char *next = case_sensitive ?
+                    strstr(search_pos, search_text) :
+                    strcasestr_custom(search_pos, search_text);
+                
+                if (!next) break;
+                
+                // Check if this occurrence is after our limit
+                if (line > start_line || (line == start_line && (next - line_text) >= start_col)) {
+                    last_found = next;
+                }
+                
+                search_pos = next + 1;
+            }
+            
+            if (last_found) {
+                // Found a match!
+                int col = last_found - line_text;
+                
+                // Move cursor and select the match
+                tv->cursor_line = line;
+                tv->cursor_col = col;
+                tv->sel_start_line = line;
+                tv->sel_start_col = col;
+                tv->sel_end_line = line;
+                tv->sel_end_col = col + strlen(search_text);
+                
+                // Ensure visible
+                textview_ensure_cursor_visible(tv);
+                textview_draw(tv);
+                
+                return true;
+            }
+        }
+    }
+    
+    return false;  // Not found
+}
+
+// Replace currently selected text
+void textview_replace_selection(TextView *tv, const char *replacement) {
+    if (!tv || !replacement) return;
+    
+    // Check if there's a selection
+    if (tv->sel_start_line == -1) return;
+    
+    // Delete the selection
+    textview_delete_selection(tv);
+    
+    // Insert the replacement text
+    textview_insert_string(tv, replacement);
+}
+
+// Replace all occurrences of search text
+int textview_replace_all(TextView *tv, const char *search_text, 
+                         const char *replacement, bool case_sensitive) {
+    if (!tv || !search_text || !*search_text || !replacement) return 0;
+    
+    int count = 0;
+    
+    // Start from beginning
+    tv->cursor_line = 0;
+    tv->cursor_col = 0;
+    textview_clear_selection(tv);
+    
+    // Find and replace all occurrences
+    while (textview_find_next(tv, search_text, case_sensitive, false)) {
+        textview_replace_selection(tv, replacement);
+        count++;
+    }
+    
+    return count;
 }
