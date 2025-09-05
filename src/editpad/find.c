@@ -166,19 +166,10 @@ void find_dialog_set_search_text(FindDialog *dialog, const char *text) {
 
 // Search next
 void find_dialog_search_next(FindDialog *dialog) {
-    if (!dialog || !dialog->find_field || !dialog->editpad || !dialog->editpad->text_view) {
-        log_error("[DEBUG] find_dialog_search_next: Invalid dialog or components");
-        return;
-    }
+    if (!dialog || !dialog->find_field || !dialog->editpad || !dialog->editpad->text_view) return;
     
     const char *search_text = inputfield_get_text(dialog->find_field);
-    if (!search_text || !*search_text) {
-        log_error("[DEBUG] find_dialog_search_next: Empty search text");
-        return;
-    }
-    
-    log_error("[DEBUG] find_dialog_search_next: Searching for '%s' (case_sensitive=%d, wrap=%d)",
-            search_text, dialog->case_sensitive, dialog->wrap_around);
+    if (!search_text || !*search_text) return;
     
     // Store the search text
     strncpy(dialog->last_search, search_text, sizeof(dialog->last_search) - 1);
@@ -186,9 +177,6 @@ void find_dialog_search_next(FindDialog *dialog) {
     // Perform the search
     bool found = textview_find_next(dialog->editpad->text_view, search_text, 
                                     dialog->case_sensitive, dialog->wrap_around);
-    
-    log_error("[DEBUG] find_dialog_search_next: Search result = %s", 
-            found ? "FOUND" : "NOT FOUND");
     
     if (!found) {
         // TODO: Show "Not found" message (when we have status bar or message dialog)

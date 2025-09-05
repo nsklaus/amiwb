@@ -3248,9 +3248,6 @@ bool textview_find_next(TextView *tv, const char *search_text,
                         bool case_sensitive, bool wrap_around) {
     if (!tv || !search_text || !*search_text) return false;
     
-    fprintf(stderr, "[DEBUG] textview_find_next: searching for '%s', lines=%d, cursor at %d:%d\n", 
-            search_text, tv->line_count, tv->cursor_line, tv->cursor_col);
-    
     // Start searching from cursor position
     int start_line = tv->cursor_line;
     int start_col = tv->cursor_col;
@@ -3283,8 +3280,6 @@ bool textview_find_next(TextView *tv, const char *search_text,
         if (found) {
             // Found a match!
             int col = found - line_text;
-            
-            fprintf(stderr, "[DEBUG] textview_find_next: Found at line %d, col %d\n", line, col);
             
             // Move cursor and select the match
             tv->cursor_line = line;
@@ -3322,8 +3317,6 @@ bool textview_find_next(TextView *tv, const char *search_text,
             if (found && found < search_end) {
                 // Found a match!
                 int col = found - line_text;
-                
-                fprintf(stderr, "[DEBUG] textview_find_next: Found (wrapped) at line %d, col %d\n", line, col);
                 
                 // Move cursor and select the match
                 tv->cursor_line = line;

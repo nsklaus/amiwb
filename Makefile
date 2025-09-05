@@ -169,6 +169,24 @@ install-reqasl: reqasl $(REQASL_HOOK)
 install-editpad: editpad
 	mkdir -p /usr/local/bin
 	cp $(EDITPAD_EXEC) /usr/local/bin/
+	# Install desktop file for user
+	@if [ -n "$$SUDO_USER" ]; then \
+		USER_HOME=$$(getent passwd $$SUDO_USER | cut -d: -f6); \
+	elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
+		USER_HOME=$$(getent passwd $$USER | cut -d: -f6); \
+	else \
+		USER_HOME="$$HOME"; \
+	fi; \
+	if [ -n "$$USER_HOME" ] && [ -d "$$USER_HOME" ]; then \
+		mkdir -p "$$USER_HOME/.local/share/applications"; \
+		cp dotfiles/editpad.desktop "$$USER_HOME/.local/share/applications/"; \
+		if [ -n "$$SUDO_USER" ]; then \
+			chown $$SUDO_USER:$$SUDO_USER "$$USER_HOME/.local/share/applications/editpad.desktop"; \
+		elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
+			chown $$USER:$$USER "$$USER_HOME/.local/share/applications/editpad.desktop" 2>/dev/null || true; \
+		fi; \
+		echo "EditPad desktop file installed to $$USER_HOME/.local/share/applications/"; \
+	fi
 	@echo "EditPad installed"
 
 uninstall:

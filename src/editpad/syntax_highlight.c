@@ -154,6 +154,9 @@ Language syntax_detect_language(const char *filename) {
     // Makefile
     if (strcmp(ext, "mk") == 0) return LANG_MAKEFILE;
     
+    // Markdown
+    if (strcmp(ext, "md") == 0 || strcmp(ext, "markdown") == 0) return LANG_MARKDOWN;
+    
     return LANG_NONE;
 }
 
@@ -439,6 +442,252 @@ static SyntaxColor* highlight_python_line(SyntaxHighlight *sh, const char *line,
     return colors;
 }
 
+// Highlight markdown line - using same colors as C
+static SyntaxColor* highlight_markdown_line(SyntaxHighlight *sh, const char *line, int line_num) {
+    if (!sh || !line) return NULL;
+    
+    int len = strlen(line);
+    SyntaxColor *colors = calloc(len + 1, sizeof(SyntaxColor));
+    if (!colors) return NULL;
+    
+    // Initialize all to normal
+    for (int i = 0; i < len; i++) {
+        colors[i] = SYNTAX_NORMAL;
+    }
+    
+    // Track if we're in a C code block
+    static bool in_c_block = false;
+    static bool in_python_block = false;
+    static bool in_js_block = false;
+    static bool in_generic_block = false;
+    
+    int i = 0;
+    
+    // Check for code block markers
+    if (strncmp(line, "```", 3) == 0) {
+        // Check if it's a language-specific block start
+        if (len > 3) {
+            if (strncmp(line + 3, "c", 1) == 0 && (len == 4 || !isalpha(line[4]))) {
+                in_c_block = true;
+                in_python_block = false;
+                in_js_block = false;
+                in_generic_block = false;
+            } else if (strncmp(line + 3, "cpp", 3) == 0 || strncmp(line + 3, "c++", 3) == 0) {
+                in_c_block = true;  // Use C highlighting for C++ too
+                in_python_block = false;
+                in_js_block = false;
+                in_generic_block = false;
+            } else if (strncmp(line + 3, "python", 6) == 0 || strncmp(line + 3, "py", 2) == 0) {
+                in_python_block = true;
+                in_c_block = false;
+                in_js_block = false;
+                in_generic_block = false;
+            } else if (strncmp(line + 3, "javascript", 10) == 0 || strncmp(line + 3, "js", 2) == 0) {
+                in_js_block = true;
+                in_c_block = false;
+                in_python_block = false;
+                in_generic_block = false;
+            } else if (len > 3) {
+                // Some other language or generic code block
+                in_generic_block = true;
+                in_c_block = false;
+                in_python_block = false;
+                in_js_block = false;
+            }
+        } else {
+            // End of code block
+            if (in_c_block || in_python_block || in_js_block || in_generic_block) {
+                in_c_block = false;
+                in_python_block = false;
+                in_js_block = false;
+                in_generic_block = false;
+            } else {
+                // Start of generic code block
+                in_generic_block = true;
+            }
+        }
+        
+        // Color the ``` markers
+        for (i = 0; i < len; i++) {
+            colors[i] = SYNTAX_COMMENT;
+        }
+        return colors;
+    }
+    
+    // If we're inside a code block, highlight accordingly
+    if (in_c_block) {
+        // Use C highlighter for content
+        SyntaxHighlight temp_sh = *sh;
+        temp_sh.lang = LANG_C;
+        SyntaxColor *c_colors = highlight_c_line(&temp_sh, line, line_num);
+        if (c_colors) {
+            free(colors);
+            return c_colors;
+        }
+    } else if (in_python_block) {
+        // Use Python highlighter
+        SyntaxHighlight temp_sh = *sh;
+        temp_sh.lang = LANG_PYTHON;
+        SyntaxColor *py_colors = highlight_python_line(&temp_sh, line, line_num);
+        if (py_colors) {
+            free(colors);
+            return py_colors;
+        }
+    } else if (in_js_block) {
+        // JavaScript uses C highlighter
+        SyntaxHighlight temp_sh = *sh;
+        temp_sh.lang = LANG_JAVASCRIPT;
+        SyntaxColor *js_colors = highlight_c_line(&temp_sh, line, line_num);
+        if (js_colors) {
+            free(colors);
+            return js_colors;
+        }
+    } else if (in_generic_block) {
+        // Generic code block - use STRING color
+        for (i = 0; i < len; i++) {
+            colors[i] = SYNTAX_STRING;
+        }
+        return colors;
+    }
+    
+    // Headers (# ## ### etc) - use KEYWORD color (blue)
+    if (line[0] == '#') {
+        int level = 0;
+        while (i < len && line[i] == '#' && level < 6) {
+            colors[i] = SYNTAX_KEYWORD;
+            i++;
+            level++;
+        }
+        // Color the rest of the header line
+        while (i < len) {
+            colors[i] = SYNTAX_KEYWORD;
+            i++;
+        }
+        return colors;
+    }
+    
+    // Bullet lists (* - +) at start - use OPERATOR color
+    if ((line[0] == '*' || line[0] == '-' || line[0] == '+') && 
+        (len > 1 && line[1] == ' ')) {
+        colors[0] = SYNTAX_OPERATOR;
+        i = 1;
+    }
+    
+    // Numbered lists (1. 2. etc) - use NUMBER color
+    if (isdigit(line[0])) {
+        int j = 0;
+        while (j < len && isdigit(line[j])) j++;
+        if (j < len && line[j] == '.') {
+            for (int k = 0; k <= j; k++) {
+                colors[k] = SYNTAX_NUMBER;
+            }
+            i = j + 1;
+        }
+    }
+    
+    // Process inline elements
+    while (i < len) {
+        // Bold (**text** or __text__) - use TYPE color (green)
+        if ((i < len - 1) && 
+            ((line[i] == '*' && line[i+1] == '*') || 
+             (line[i] == '_' && line[i+1] == '_'))) {
+            colors[i] = SYNTAX_TYPE;
+            colors[i+1] = SYNTAX_TYPE;
+            i += 2;
+            // Find closing
+            while (i < len - 1) {
+                if ((line[i] == '*' && line[i+1] == '*') || 
+                    (line[i] == '_' && line[i+1] == '_')) {
+                    colors[i] = SYNTAX_TYPE;
+                    colors[i+1] = SYNTAX_TYPE;
+                    i += 2;
+                    break;
+                }
+                colors[i] = SYNTAX_TYPE;
+                i++;
+            }
+            continue;
+        }
+        
+        // Italic (*text* or _text_) - use FUNCTION color (dark blue)
+        if ((line[i] == '*' || line[i] == '_') && 
+            (i == 0 || !isalnum(line[i-1]))) {
+            char marker = line[i];
+            colors[i] = SYNTAX_FUNCTION;
+            i++;
+            // Find closing
+            while (i < len) {
+                if (line[i] == marker && (i == len-1 || !isalnum(line[i+1]))) {
+                    colors[i] = SYNTAX_FUNCTION;
+                    i++;
+                    break;
+                }
+                colors[i] = SYNTAX_FUNCTION;
+                i++;
+            }
+            continue;
+        }
+        
+        // Inline code `code` - use STRING color (dark red)
+        if (line[i] == '`') {
+            colors[i] = SYNTAX_STRING;
+            i++;
+            // Find closing backtick
+            while (i < len) {
+                colors[i] = SYNTAX_STRING;
+                if (line[i] == '`') {
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            continue;
+        }
+        
+        // Links [text](url) - use PREPROCESSOR color (magenta)
+        if (line[i] == '[') {
+            colors[i] = SYNTAX_PREPROCESSOR;
+            i++;
+            // Find closing ]
+            while (i < len && line[i] != ']') {
+                colors[i] = SYNTAX_PREPROCESSOR;
+                i++;
+            }
+            if (i < len && line[i] == ']') {
+                colors[i] = SYNTAX_PREPROCESSOR;
+                i++;
+                // Check for (url)
+                if (i < len && line[i] == '(') {
+                    colors[i] = SYNTAX_PREPROCESSOR;
+                    i++;
+                    while (i < len && line[i] != ')') {
+                        colors[i] = SYNTAX_PREPROCESSOR;
+                        i++;
+                    }
+                    if (i < len && line[i] == ')') {
+                        colors[i] = SYNTAX_PREPROCESSOR;
+                        i++;
+                    }
+                }
+            }
+            continue;
+        }
+        
+        // Blockquotes > - use COMMENT color (brown)
+        if (i == 0 && line[i] == '>') {
+            while (i < len) {
+                colors[i] = SYNTAX_COMMENT;
+                i++;
+            }
+            return colors;
+        }
+        
+        i++;
+    }
+    
+    return colors;
+}
+
 // Main highlight function
 SyntaxColor* syntax_highlight_line(SyntaxHighlight *sh, const char *line, int line_num) {
     if (!sh || !line) return NULL;
@@ -462,6 +711,9 @@ SyntaxColor* syntax_highlight_line(SyntaxHighlight *sh, const char *line, int li
         case LANG_MAKEFILE:
             // TODO: Implement makefile highlighting
             break;
+            
+        case LANG_MARKDOWN:
+            return highlight_markdown_line(sh, line, line_num);
             
         default:
             break;

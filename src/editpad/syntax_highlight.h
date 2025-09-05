@@ -27,6 +27,7 @@ typedef enum {
     LANG_SHELL,
     LANG_MAKEFILE,
     LANG_JAVASCRIPT,
+    LANG_MARKDOWN,
     LANG_MAX
 } Language;
 

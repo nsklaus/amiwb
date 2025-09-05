@@ -1,0 +1,23 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=EditPad
+GenericName=Text Editor
+Comment=AmigaOS-style text editor for AmiWB
+Exec=/home/klaus/Sources/amiwb/editpad %F
+Terminal=false
+MimeType=text/plain;text/x-csrc;text/x-chdr;text/x-c++src;text/x-c++hdr;text/x-java;text/x-python;text/x-shellscript;text/x-makefile;text/html;text/css;text/javascript;text/xml;text/x-diff;text/x-patch;text/markdown;text/x-markdown;application/x-shellscript;
+Icon=/home/klaus/Sources/amiwb/icons/editpad.png
+Categories=Development;TextEditor;Utility;
+Keywords=Text;Editor;Amiga;AmiWB;Code;Programming;Markdown;
+StartupNotify=true
+StartupWMClass=editpad
+Actions=new-window;new-document;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=/home/klaus/Sources/amiwb/editpad --new-window
+
+[Desktop Action new-document]
+Name=New Document
+Exec=/home/klaus/Sources/amiwb/editpad --new
