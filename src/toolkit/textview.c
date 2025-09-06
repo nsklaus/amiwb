@@ -90,6 +90,9 @@ typedef struct {
 // Forward declarations for undo functions
 static void record_undo(TextView *tv, UndoType type, int line, int col, 
                        const char *text, int text_len);
+static void record_undo_delete_text(TextView *tv, int start_line, int start_col,
+                                   int end_line, int end_col, 
+                                   const char *text, int text_len);
 static void clear_redo_history(TextView *tv);
 static UndoEntry* create_undo_entry(UndoType type, int line, int col, 
                                    const char *text, int text_len);
@@ -2038,6 +2041,14 @@ bool textview_handle_key_press(TextView *tv, XKeyEvent *event) {
             }
             return true;
             
+        case XK_Escape:
+            // Clear selection if any
+            if (tv->has_selection) {
+                tv->has_selection = false;
+                textview_draw(tv);
+            }
+            return true;
+            
         default:
             // Handle printable characters
             if (len > 0 && buffer[0] >= 32 && buffer[0] < 127) {
@@ -2811,6 +2822,10 @@ void textview_delete_selection(TextView *tv) {
         return;
     }
     
+    // Save the selected text for undo before deleting
+    char *selected_text = textview_get_selection(tv);
+    int selected_len = selected_text ? strlen(selected_text) : 0;
+    
     if (start_line == end_line) {
         // Single line deletion
         char *line = tv->lines[start_line];
@@ -2883,6 +2898,15 @@ void textview_delete_selection(TextView *tv) {
             tv->line_count -= lines_to_delete;
         }
     }
+    
+    // Record undo for selection deletion
+    if (selected_text && selected_len > 0) {
+        record_undo_delete_text(tv, start_line, start_col, end_line, end_col,
+                              selected_text, selected_len);
+    }
+    
+    // Free the saved text
+    if (selected_text) free(selected_text);
     
     // Move cursor to start of deletion
     tv->cursor_line = start_line;
@@ -3521,6 +3545,56 @@ static void clear_redo_history(TextView *tv) {
     }
 }
 
+// Record an undo operation for text deletion with selection range
+static void record_undo_delete_text(TextView *tv, int start_line, int start_col,
+                                   int end_line, int end_col, 
+                                   const char *text, int text_len) {
+    if (!tv || !tv->undo_history) return;
+    
+    UndoHistory *history = (UndoHistory*)tv->undo_history;
+    
+    // Don't record if we're in undo/redo operation
+    if (history->in_undo_redo) return;
+    
+    // Clear any redo history
+    clear_redo_history(tv);
+    
+    // Create new entry
+    UndoEntry *entry = create_undo_entry(UNDO_DELETE_TEXT, start_line, start_col, text, text_len);
+    if (!entry) return;
+    
+    // Set the end position for the deletion
+    entry->end_line = end_line;
+    entry->end_col = end_col;
+    
+    // Add to list
+    if (!history->head) {
+        // First entry
+        history->head = history->tail = entry;
+    } else {
+        // Add to tail
+        entry->prev = history->tail;
+        history->tail->next = entry;
+        history->tail = entry;
+    }
+    
+    history->current = entry;
+    history->count++;
+    
+    // Remove oldest entries if we exceed max
+    while (history->count > history->max_count && history->head) {
+        UndoEntry *old = history->head;
+        history->head = old->next;
+        if (history->head) {
+            history->head->prev = NULL;
+        } else {
+            history->tail = NULL;
+        }
+        history->count--;
+        free_undo_entry(old);
+    }
+}
+
 // Record an undo operation
 static void record_undo(TextView *tv, UndoType type, int line, int col, 
                        const char *text, int text_len) {
@@ -3584,11 +3658,20 @@ void textview_undo(TextView *tv) {
     switch (entry->type) {
         case UNDO_INSERT_CHAR:
             // Undo character insertion - delete it
-            if (tv->cursor_col < strlen(tv->lines[tv->cursor_line])) {
+            {
                 char *line = tv->lines[tv->cursor_line];
-                int len = strlen(line);
-                memmove(line + tv->cursor_col, line + tv->cursor_col + 1, 
-                        len - tv->cursor_col);
+                int line_len_chars = utf8_strlen(line);
+                if (tv->cursor_col < line_len_chars) {
+                    // Convert character position to byte offset
+                    int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                    // Get the number of bytes for this character
+                    int char_bytes = utf8_char_bytes(line[byte_offset]);
+                    if (char_bytes <= 0) char_bytes = 1;
+                    
+                    int len = strlen(line);
+                    memmove(line + byte_offset, line + byte_offset + char_bytes, 
+                            len - byte_offset - char_bytes + 1);
+                }
             }
             break;
             
@@ -3597,15 +3680,15 @@ void textview_undo(TextView *tv) {
             if (entry->text && entry->text_len > 0) {
                 char *line = tv->lines[tv->cursor_line];
                 int len = strlen(line);
-                char *new_line = malloc(len + 2);
-                if (tv->cursor_col > 0) {
-                    strncpy(new_line, line, tv->cursor_col);
-                    new_line[tv->cursor_col] = '\0';  // Ensure null termination
-                } else {
-                    new_line[0] = '\0';  // Start with empty string when cursor at beginning
+                // Convert character position to byte offset
+                int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                
+                char *new_line = malloc(len + entry->text_len + 1);
+                if (byte_offset > 0) {
+                    memcpy(new_line, line, byte_offset);
                 }
-                new_line[tv->cursor_col] = entry->text[0];
-                strcpy(new_line + tv->cursor_col + 1, line + tv->cursor_col);
+                memcpy(new_line + byte_offset, entry->text, entry->text_len);
+                strcpy(new_line + byte_offset + entry->text_len, line + byte_offset);
                 free(tv->lines[tv->cursor_line]);
                 tv->lines[tv->cursor_line] = new_line;
             }
@@ -3632,6 +3715,53 @@ void textview_undo(TextView *tv) {
             }
             break;
             
+        case UNDO_DELETE_TEXT:
+            // Undo text deletion - reinsert the deleted text  
+            if (entry->text && entry->text_len > 0) {
+                // For single-line deletion, just insert the text
+                if (entry->line == entry->end_line) {
+                    char *line = tv->lines[tv->cursor_line];
+                    int len = strlen(line);
+                    int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                    
+                    char *new_line = malloc(len + entry->text_len + 1);
+                    if (byte_offset > 0) {
+                        memcpy(new_line, line, byte_offset);
+                    }
+                    memcpy(new_line + byte_offset, entry->text, entry->text_len);
+                    strcpy(new_line + byte_offset + entry->text_len, line + byte_offset);
+                    free(tv->lines[tv->cursor_line]);
+                    tv->lines[tv->cursor_line] = new_line;
+                    
+                    // Set selection to the restored text
+                    tv->sel_start_line = entry->line;
+                    tv->sel_start_col = entry->col;
+                    tv->sel_end_line = entry->end_line;
+                    tv->sel_end_col = entry->end_col;
+                    tv->has_selection = true;
+                    
+                    // Move cursor to end of inserted text
+                    tv->cursor_col = entry->end_col;
+                } else {
+                    // Multi-line text - need to split and insert multiple lines
+                    // This is complex, so for now just insert as single line
+                    // TODO: Properly handle multi-line undo
+                    char *line = tv->lines[tv->cursor_line];
+                    int len = strlen(line);
+                    int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                    
+                    char *new_line = malloc(len + entry->text_len + 1);
+                    if (byte_offset > 0) {
+                        memcpy(new_line, line, byte_offset);
+                    }
+                    memcpy(new_line + byte_offset, entry->text, entry->text_len);
+                    strcpy(new_line + byte_offset + entry->text_len, line + byte_offset);
+                    free(tv->lines[tv->cursor_line]);
+                    tv->lines[tv->cursor_line] = new_line;
+                }
+            }
+            break;
+            
         case UNDO_JOIN_LINES:
             // Undo line join - split lines
             if (entry->text) {
@@ -3649,12 +3779,15 @@ void textview_undo(TextView *tv) {
                     tv->lines[i] = tv->lines[i - 1];
                 }
                 
-                // Split the line
-                char *first = malloc(tv->cursor_col + 1);
-                strncpy(first, line, tv->cursor_col);
-                first[tv->cursor_col] = '\0';
+                // Convert character position to byte offset for splitting
+                int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
                 
-                char *second = strdup(line + tv->cursor_col);
+                // Split the line
+                char *first = malloc(byte_offset + 1);
+                memcpy(first, line, byte_offset);
+                first[byte_offset] = '\0';
+                
+                char *second = strdup(line + byte_offset);
                 
                 free(tv->lines[tv->cursor_line]);
                 tv->lines[tv->cursor_line] = first;
@@ -3705,15 +3838,15 @@ void textview_redo(TextView *tv) {
             if (entry->text && entry->text_len > 0) {
                 char *line = tv->lines[tv->cursor_line];
                 int len = strlen(line);
-                char *new_line = malloc(len + 2);
-                if (tv->cursor_col > 0) {
-                    strncpy(new_line, line, tv->cursor_col);
-                    new_line[tv->cursor_col] = '\0';  // Ensure null termination
-                } else {
-                    new_line[0] = '\0';  // Start with empty string when cursor at beginning
+                // Convert character position to byte offset
+                int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                
+                char *new_line = malloc(len + entry->text_len + 1);
+                if (byte_offset > 0) {
+                    memcpy(new_line, line, byte_offset);
                 }
-                new_line[tv->cursor_col] = entry->text[0];
-                strcpy(new_line + tv->cursor_col + 1, line + tv->cursor_col);
+                memcpy(new_line + byte_offset, entry->text, entry->text_len);
+                strcpy(new_line + byte_offset + entry->text_len, line + byte_offset);
                 free(tv->lines[tv->cursor_line]);
                 tv->lines[tv->cursor_line] = new_line;
                 tv->cursor_col++;
@@ -3722,11 +3855,20 @@ void textview_redo(TextView *tv) {
             
         case UNDO_DELETE_CHAR:
             // Redo character deletion
-            if (tv->cursor_col < strlen(tv->lines[tv->cursor_line])) {
+            {
                 char *line = tv->lines[tv->cursor_line];
-                int len = strlen(line);
-                memmove(line + tv->cursor_col, line + tv->cursor_col + 1, 
-                        len - tv->cursor_col);
+                int line_len_chars = utf8_strlen(line);
+                if (tv->cursor_col < line_len_chars) {
+                    // Convert character position to byte offset
+                    int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                    // Get the number of bytes for this character
+                    int char_bytes = utf8_char_bytes(line[byte_offset]);
+                    if (char_bytes <= 0) char_bytes = 1;
+                    
+                    int len = strlen(line);
+                    memmove(line + byte_offset, line + byte_offset + char_bytes, 
+                            len - byte_offset - char_bytes + 1);
+                }
             }
             break;
             
@@ -3757,6 +3899,25 @@ void textview_redo(TextView *tv) {
                 tv->line_count++;
                 tv->cursor_line++;
                 tv->cursor_col = 0;
+            }
+            break;
+            
+        case UNDO_DELETE_TEXT:
+            // Redo text deletion - delete the text again
+            if (entry->text && entry->text_len > 0) {
+                // Set selection to the text that needs to be deleted
+                tv->sel_start_line = entry->line;
+                tv->sel_start_col = entry->col;
+                tv->sel_end_line = entry->end_line;
+                tv->sel_end_col = entry->end_col;
+                tv->has_selection = true;
+                
+                // Delete the selection (without recording undo since we're in redo)
+                UndoHistory *history = (UndoHistory*)tv->undo_history;
+                bool was_in_undo = history->in_undo_redo;
+                history->in_undo_redo = true;  // Prevent recording
+                textview_delete_selection(tv);
+                history->in_undo_redo = was_in_undo;
             }
             break;
             
