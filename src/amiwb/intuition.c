@@ -1074,6 +1074,78 @@ void cycle_prev_window(void) {
     XRaiseWindow(display, prev_window->win);
 }
 
+// Get list of all windows (WINDOW and DIALOG types)
+// Returns count, and fills windows array with pointers
+int get_window_list(Canvas ***windows) {
+    static Canvas *window_list[256];  // Static to avoid allocation
+    int count = 0;
+    
+    for (int i = 0; i < canvas_count; i++) {
+        Canvas *c = canvas_array[i];
+        if (c && (c->type == WINDOW || c->type == DIALOG)) {
+            window_list[count++] = c;
+            if (count >= 256) break;  // Safety limit
+        }
+    }
+    
+    if (windows) *windows = window_list;
+    return count;
+}
+
+// Activate window by its index in canvas_array
+void activate_window_by_index(int index) {
+    if (index < 0 || index >= canvas_count) return;
+    Canvas *c = canvas_array[index];
+    if (!c || (c->type != WINDOW && c->type != DIALOG)) return;
+    
+    // Check if window is iconified (not visible)
+    XWindowAttributes attrs;
+    if (XGetWindowAttributes(display, c->win, &attrs)) {
+        if (attrs.map_state != IsViewable) {
+            // Window is iconified - find and restore it
+            FileIcon **icon_array = get_icon_array();
+            int icon_count = get_icon_count();
+            for (int i = 0; i < icon_count; i++) {
+                FileIcon *ic = icon_array[i];
+                if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == c) {
+                    restore_iconified(ic);
+                    return;
+                }
+            }
+        }
+    }
+    
+    // Window is visible - activate it
+    set_active_window(c);
+    XRaiseWindow(display, c->win);
+}
+
+// Iconify all windows (show desktop)
+void iconify_all_windows(void) {
+    // Build list of windows to iconify (can't modify canvas_array while iterating)
+    Canvas *to_iconify[256];
+    int count = 0;
+    
+    for (int i = 0; i < canvas_count; i++) {
+        Canvas *c = canvas_array[i];
+        if (c && (c->type == WINDOW || c->type == DIALOG)) {
+            // Check if window is visible
+            XWindowAttributes attrs;
+            if (XGetWindowAttributes(display, c->win, &attrs)) {
+                if (attrs.map_state == IsViewable) {
+                    to_iconify[count++] = c;
+                    if (count >= 256) break;
+                }
+            }
+        }
+    }
+    
+    // Now iconify all the windows
+    for (int i = 0; i < count; i++) {
+        iconify_canvas(to_iconify[i]);
+    }
+}
+
 void compute_max_scroll(Canvas *c) {
     if (!c) return;
     int content_width, content_height;

@@ -465,6 +465,19 @@ static Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, in
 
 // Dispatch mouse button press
 void handle_button_press(XButtonEvent *event) {
+    // Check if window list menu is open and close it on any click outside
+    Menu *active = get_active_menu();
+    if (active && active->parent_index == -1) {  // parent_index == -1 means window list
+        // Check if click is outside the window list menu
+        Canvas *menu_canvas = active->canvas;
+        Canvas *menubar = get_menubar();
+        // Don't close if clicking on menubar (button area will be handled by menu_handle_menubar_press)
+        if (menu_canvas && event->window != menu_canvas->win && event->window != menubar->win) {
+            // Click is outside the window list and not on menubar - close it
+            close_window_list_if_open();
+        }
+    }
+    
     int cx = event->x, cy = event->y; // may be rewritten
     Canvas *canvas = find_canvas(event->window);
     // Handle button press

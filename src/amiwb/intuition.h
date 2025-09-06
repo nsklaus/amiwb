@@ -143,6 +143,9 @@ void suppress_desktop_deactivate_for_ms(int ms);
 // Window cycling functions
 void cycle_next_window(void);               // Cycle to next window (Super+M)
 void cycle_prev_window(void);               // Cycle to previous window (Super+Shift+M)
+int get_window_list(Canvas ***windows);     // Get list of all windows (returns count)
+void activate_window_by_index(int index);   // Activate window by its index in canvas_array
+void iconify_all_windows(void);             // Iconify all windows (show desktop)
 
 // Compute scroll limits from content and clamp current scroll.
 void compute_max_scroll(Canvas *canvas);

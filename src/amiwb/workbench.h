@@ -66,4 +66,8 @@ off_t read_directory_size_result(int pipe_fd);                 // Read result fr
 // Progress dialog monitoring (called from event loop)
 void workbench_check_progress_dialogs(void);
 
+// Spatial mode control
+bool get_spatial_mode(void);
+void set_spatial_mode(bool mode);
+
 #endif

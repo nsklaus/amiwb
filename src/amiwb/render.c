@@ -765,25 +765,21 @@ void redraw_canvas(Canvas *canvas) {
                                      menu->parent_menu->parent_menu == get_menubar_menu() &&
                                      menu->parent_menu->parent_index == 1;  // Window menu is at index 1
             
-            // For Show Hidden submenu, show checkmark next to active choice
-            if (is_window_submenu && menu->parent_index == 5) {  // Show Hidden submenu
+            // For View Modes submenu, show checkmarks for active states
+            if (is_window_submenu && menu->parent_index == 5) {  // View Modes submenu
                 bool show_checkmark = false;
-                if (i == 0 && get_global_show_hidden()) show_checkmark = true;   // "Yes" is active
-                if (i == 1 && !get_global_show_hidden()) show_checkmark = true;  // "No" is active
+                bool is_icons_mode = get_active_view_is_icons();
                 
-                if (show_checkmark) {
-                    XGlyphInfo check_extents;
-                    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)CHECKMARK, strlen(CHECKMARK), &check_extents);
-                    int check_x = canvas->width - check_extents.xOff - 10;  // Same padding as shortcuts
-                    XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, check_x, item_y + y_base, (FcChar8 *)CHECKMARK, strlen(CHECKMARK));
+                // Handle Icons/Names (mutually exclusive - only one can be checked)
+                if (i == 0) {  // "Icons" menu item
+                    show_checkmark = is_icons_mode;
+                } else if (i == 1) {  // "Names" menu item
+                    show_checkmark = !is_icons_mode;
+                } else if (i == 2) {  // "Hidden" menu item (independent toggle)
+                    show_checkmark = get_global_show_hidden();
+                } else if (i == 3) {  // "Spatial" menu item (independent toggle)
+                    show_checkmark = get_spatial_mode();
                 }
-            }
-            
-            // For View By submenu, show checkmark next to active view mode
-            if (is_window_submenu && menu->parent_index == 6) {  // View By submenu
-                bool show_checkmark = false;
-                if (i == 0 && get_active_view_is_icons()) show_checkmark = true;   // "Icons" is active
-                if (i == 1 && !get_active_view_is_icons()) show_checkmark = true;  // "Names" is active
                 
                 if (show_checkmark) {
                     XGlyphInfo check_extents;
@@ -808,9 +804,9 @@ void redraw_canvas(Canvas *canvas) {
     // No need to destroy - using cached XftDraw
 
         // ============
-        // menu button and date/time
+        // menu button and date/time - ONLY FOR MENUBAR, NOT DROPDOWNS!
         // ============
-        if (!get_show_menus_state()){
+        if (is_menubar && !get_show_menus_state()){
             
 #if MENU_SHOW_DATE
             // Display date and time on the right side

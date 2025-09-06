@@ -163,6 +163,18 @@ static char *def_epub_info = NULL;
 static char *def_dir_info  = NULL;   // for directories
 static char *def_foo_info  = NULL;   // generic fallback for unknown filetypes
 
+// Spatial mode control (true = new window per directory, false = reuse window)
+static bool spatial_mode = true;  // Default to spatial (AmigaOS style)
+
+// Spatial mode getters/setters
+bool get_spatial_mode(void) {
+    return spatial_mode;
+}
+
+void set_spatial_mode(bool mode) {
+    spatial_mode = mode;
+}
+
 // Resolve and cache a deficon path if present on disk; keeps runtime lookups cheap.
 static void load_one_deficon(const char *basename, char **out_storage) {
     if (!basename || !out_storage) return;
@@ -2484,7 +2496,38 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
 
 static void open_directory(FileIcon *icon, Canvas *current_canvas) {
     if (!icon || !icon->path) return;
-    // If window for this path exists, raise and activate it
+    
+    // Non-spatial mode: reuse current window if we have one
+    if (!get_spatial_mode() && current_canvas && current_canvas->type == WINDOW) {
+        // Store the new path in a temporary variable first
+        char *new_path = strdup(icon->path);
+        
+        // Update window title
+        const char *dir_name = strrchr(new_path, '/');
+        if (dir_name) dir_name++; else dir_name = new_path;
+        
+        // Free old paths
+        if (current_canvas->path) free(current_canvas->path);
+        if (current_canvas->title_base) free(current_canvas->title_base);
+        
+        // Set new paths
+        current_canvas->path = new_path;
+        current_canvas->title_base = strdup(dir_name);
+        
+        // Clear existing icons and refresh with new directory
+        refresh_canvas_from_directory(current_canvas, current_canvas->path);
+        
+        // Reset scroll position for new directory
+        current_canvas->scroll_x = 0;
+        current_canvas->scroll_y = 0;
+        
+        // Initial placement for reused window (same as new window)
+        icon_cleanup(current_canvas);
+        redraw_canvas(current_canvas);
+        return;
+    }
+    
+    // Spatial mode or no current window: check if window for this path exists
     Canvas *existing = find_window_by_path(icon->path);
     if (existing) {
         // Check if window is iconified (not visible)

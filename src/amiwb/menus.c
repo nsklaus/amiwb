@@ -212,7 +212,7 @@ void init_menus(void) {
     menubar->item_count = 4;
     menubar->items = malloc(menubar->item_count * sizeof(char*));
     menubar->items[0] = strdup("Workbench");
-    menubar->items[1] = strdup("Window");
+    menubar->items[1] = strdup("Windows");
     menubar->items[2] = strdup("Icons");
     menubar->items[3] = strdup("Tools");
     menubar->shortcuts = NULL;  // Top-level menubar doesn't need shortcuts
@@ -256,83 +256,49 @@ void init_menus(void) {
     wb_submenu->canvas = NULL;
     menubar->submenus[0] = wb_submenu;
 
-    // Window submenu (index 1)
+    // Windows submenu (index 1)
     // Window management and content view controls.
     Menu *win_submenu = malloc(sizeof(Menu));
-    win_submenu->item_count = 8;
+    win_submenu->item_count = 6;  // Removed Cycle (now in button menu)
     win_submenu->items = malloc(win_submenu->item_count * sizeof(char*));
     win_submenu->items[0] = strdup("New Drawer");
     win_submenu->items[1] = strdup("Open Parent");
     win_submenu->items[2] = strdup("Close");
     win_submenu->items[3] = strdup("Select Contents");
     win_submenu->items[4] = strdup("Clean Up");
-    win_submenu->items[5] = strdup("Show Hidden");
-    win_submenu->items[6] = strdup("View By ..");
-    win_submenu->items[7] = strdup("Cycle");
+    win_submenu->items[5] = strdup("View Modes");
     
-    // Initialize shortcuts for Window menu
+    // Initialize shortcuts for Windows menu
     win_submenu->shortcuts = malloc(win_submenu->item_count * sizeof(char*));
     win_submenu->shortcuts[0] = strdup("N");  // New Drawer - Super+N
     win_submenu->shortcuts[1] = strdup("P");  // Open Parent - Super+P
     win_submenu->shortcuts[2] = strdup("Q");  // Close - Super+Q
     win_submenu->shortcuts[3] = strdup("A");  // Select Contents - Super+A
     win_submenu->shortcuts[4] = strdup(";");  // Clean Up - Super+;
-    win_submenu->shortcuts[5] = NULL;  // Show Hidden - no shortcut yet
-    win_submenu->shortcuts[6] = NULL;  // View By .. - no shortcut yet
-    win_submenu->shortcuts[7] = NULL;  // Cycle - submenu with shortcuts
+    win_submenu->shortcuts[5] = NULL;  // View Modes - no shortcut yet
     init_menu_enabled(win_submenu);  // Initialize all items as enabled
     win_submenu->selected_item = -1;
     win_submenu->parent_menu = menubar;
     win_submenu->parent_index = 1;
     win_submenu->submenus = calloc(win_submenu->item_count, sizeof(Menu*));
     win_submenu->canvas = NULL;
-    // Create nested submenu for "Show Hidden" (index 5)
-    // Simple Yes/No toggle nested under Window menu.
-    Menu *show_hidden_sub = malloc(sizeof(Menu));
-    show_hidden_sub->item_count = 2;
-    show_hidden_sub->items = malloc(show_hidden_sub->item_count * sizeof(char*));
-    show_hidden_sub->items[0] = strdup("Yes");
-    show_hidden_sub->items[1] = strdup("No");
-    init_menu_shortcuts(show_hidden_sub);  // Initialize all shortcuts to NULL
-    init_menu_enabled(show_hidden_sub);  // Initialize all items as enabled
-    show_hidden_sub->selected_item = -1;
-    show_hidden_sub->parent_menu = win_submenu;   // parent is Window submenu
-    show_hidden_sub->parent_index = 5;            // index within Window submenu
-    show_hidden_sub->submenus = NULL;
-    show_hidden_sub->canvas = NULL;
-    win_submenu->submenus[5] = show_hidden_sub;
-    // Create nested submenu for "View By .." (index 6)
-    // Switch listing mode between icon and name views.
+    // Create nested submenu for "View Modes" (index 5)
+    // Switch listing mode and toggle hidden files.
     Menu *view_by_sub = malloc(sizeof(Menu));
-    view_by_sub->item_count = 2;
+    view_by_sub->item_count = 4;  // Icons, Names, Hidden, Spatial
     view_by_sub->items = malloc(view_by_sub->item_count * sizeof(char*));
     view_by_sub->items[0] = strdup("Icons");
     view_by_sub->items[1] = strdup("Names");
+    view_by_sub->items[2] = strdup("Hidden");
+    view_by_sub->items[3] = strdup("Spatial");
     init_menu_shortcuts(view_by_sub);  // Initialize all shortcuts to NULL
     init_menu_enabled(view_by_sub);  // Initialize all items as enabled
     view_by_sub->selected_item = -1;
     view_by_sub->parent_menu = win_submenu;
-    view_by_sub->parent_index = 6;
+    view_by_sub->parent_index = 5;  // Changed from 6 to 5
     view_by_sub->submenus = NULL;
     view_by_sub->canvas = NULL;
-    win_submenu->submenus[6] = view_by_sub;
-    // Create nested submenu for "Cycle" (index 7)
-    // Cycle through open windows with Next/Previous
-    Menu *cycle_sub = malloc(sizeof(Menu));
-    cycle_sub->item_count = 2;
-    cycle_sub->items = malloc(cycle_sub->item_count * sizeof(char*));
-    cycle_sub->items[0] = strdup("Next");
-    cycle_sub->items[1] = strdup("Previous");
-    cycle_sub->shortcuts = malloc(cycle_sub->item_count * sizeof(char*));
-    cycle_sub->shortcuts[0] = strdup("M");         // Next - Super+M
-    cycle_sub->shortcuts[1] = strdup("^M");   // Previous - Super+Shift+M  
-    init_menu_enabled(cycle_sub);  // Initialize all items as enabled
-    cycle_sub->selected_item = -1;
-    cycle_sub->parent_menu = win_submenu;
-    cycle_sub->parent_index = 7;
-    cycle_sub->submenus = NULL;
-    cycle_sub->canvas = NULL;
-    win_submenu->submenus[7] = cycle_sub;
+    win_submenu->submenus[5] = view_by_sub;
     menubar->submenus[1] = win_submenu;
 
     // Icons submenu (index 2)
@@ -571,9 +537,12 @@ void update_menubar_time(void) {
     if (now / 60 != last_minute / 60) {
         last_minute = now;
         
-        // Redraw menubar if in logo mode
+        // Redraw menubar if in logo mode AND no dropdown is open
+        // Don't redraw if window list menu is shown (parent_index == -1 indicates window list)
         if (menubar && menubar->canvas && !get_show_menus_state()) {
-            redraw_canvas(menubar->canvas);
+            if (!active_menu || active_menu->parent_index != -1) {
+                redraw_canvas(menubar->canvas);
+            }
         }
     }
 #endif
@@ -875,11 +844,308 @@ void menu_handle_button_release(XButtonEvent *event) {
     }
 }
 
+// Close window list menu if it's open
+void close_window_list_if_open(void) {
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return;
+    
+    // Check if active menu is the window list (parent_index == -1)
+    if (active_menu && active_menu->parent_index == -1) {
+        if (active_menu->canvas) {
+            XSync(ctx->dpy, False);
+            if (active_menu->canvas->win != None) {
+                clear_press_target_if_matches(active_menu->canvas->win);
+                XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                XSync(ctx->dpy, False);
+            }
+            destroy_canvas(active_menu->canvas);
+        }
+        // Free the menu structure and its items
+        if (active_menu->items) {
+            for (int i = 0; i < active_menu->item_count; i++) {
+                if (active_menu->items[i]) free(active_menu->items[i]);
+            }
+            free(active_menu->items);
+        }
+        if (active_menu->shortcuts) {
+            for (int i = 0; i < active_menu->item_count; i++) {
+                if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+            }
+            free(active_menu->shortcuts);
+        }
+        if (active_menu->enabled) free(active_menu->enabled);
+        free(active_menu);
+        active_menu = NULL;
+    }
+}
+
 // Handle button press on menubar
 // Right-click toggles logo vs menus on the menubar.
+// Show window list menu at specified position
+static void show_window_list_menu(int x, int y) {
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return;
+    
+    // Close any existing dropdown
+    if (active_menu && active_menu->canvas) {
+        XSync(ctx->dpy, False);
+        if (active_menu->canvas->win != None) {
+            clear_press_target_if_matches(active_menu->canvas->win);
+            XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+            XSync(ctx->dpy, False);
+        }
+        destroy_canvas(active_menu->canvas);
+        active_menu = NULL;
+    }
+    
+    // Create a temporary menu for the window list
+    Menu *window_menu = malloc(sizeof(Menu));
+    if (!window_menu) return;
+    
+    // Get current window list
+    Canvas **window_list;
+    int window_count = get_window_list(&window_list);
+    
+    // Build menu items
+    window_menu->item_count = window_count + 1;  // +1 for "Desktop" option
+    window_menu->items = malloc(window_menu->item_count * sizeof(char*));
+    window_menu->shortcuts = malloc(window_menu->item_count * sizeof(char*));
+    window_menu->enabled = malloc(window_menu->item_count * sizeof(bool));
+    
+    // Add Desktop option first
+    window_menu->items[0] = strdup("Desktop");
+    window_menu->shortcuts[0] = NULL;  // No shortcut for Desktop in window list
+    window_menu->enabled[0] = true;
+    
+    // Add each window
+    for (int i = 0; i < window_count; i++) {
+        Canvas *c = window_list[i];
+        const char *title = c->title_base ? c->title_base : "Untitled";
+        
+        // Check if this is a Workbench window (no client window)
+        bool is_workbench = (c->client_win == None);
+        
+        // Build the display string with smart truncation
+        char display_title[50];
+        
+        if (is_workbench) {
+            // Need room for " [WB]" (5 chars), so max title length is ~20
+            if (strlen(title) > 20) {
+                // Title is too long, need to truncate
+                char temp[25];
+                
+                // Find first space after position 15
+                int first_space = -1;
+                for (int j = 15; title[j] && j < 25; j++) {
+                    if (title[j] == ' ') {
+                        first_space = j;
+                        break;
+                    }
+                }
+                
+                if (first_space > 0) {
+                    // Found a space after position 15, truncate there
+                    strncpy(temp, title, first_space);
+                    temp[first_space] = '\0';
+                    snprintf(display_title, sizeof(display_title), "%s. [WB]", temp);
+                } else {
+                    // No space found, hard truncate at 15
+                    strncpy(temp, title, 15);
+                    temp[15] = '\0';
+                    snprintf(display_title, sizeof(display_title), "%s. [WB]", temp);
+                }
+            } else {
+                // Title fits, just add suffix
+                snprintf(display_title, sizeof(display_title), "%s [WB]", title);
+            }
+        } else {
+            // Client window - truncate at 25 if needed
+            if (strlen(title) > 25) {
+                char temp[30];
+                // Find first space after position 20
+                int first_space = -1;
+                for (int j = 20; title[j] && j < 30; j++) {
+                    if (title[j] == ' ') {
+                        first_space = j;
+                        break;
+                    }
+                }
+                
+                if (first_space > 0) {
+                    // Found a space, truncate there
+                    strncpy(temp, title, first_space);
+                    temp[first_space] = '\0';
+                    snprintf(display_title, sizeof(display_title), "%s.", temp);
+                } else {
+                    // No space found, hard truncate at 20
+                    strncpy(temp, title, 20);
+                    temp[20] = '\0';
+                    snprintf(display_title, sizeof(display_title), "%s.", temp);
+                }
+            } else {
+                // Title fits
+                snprintf(display_title, sizeof(display_title), "%s", title);
+            }
+        }
+        
+        window_menu->items[i + 1] = strdup(display_title);
+        window_menu->shortcuts[i + 1] = NULL;  // No shortcuts for individual windows
+        window_menu->enabled[i + 1] = true;
+    }
+    
+    window_menu->selected_item = -1;
+    window_menu->parent_menu = NULL;
+    window_menu->parent_index = -1;  // Special value for window list
+    window_menu->submenus = NULL;
+    window_menu->is_custom = false;
+    window_menu->commands = NULL;
+    
+    // Calculate menu width for window list (simpler than regular menus - no shortcuts)
+    int max_width = 0;
+    for (int i = 0; i < window_menu->item_count; i++) {
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(ctx->dpy, font, 
+            (FcChar8 *)window_menu->items[i], strlen(window_menu->items[i]), &extents);
+        if (extents.xOff > max_width) {
+            max_width = extents.xOff;
+        }
+    }
+    // Just add small padding: 10px left, 10px right
+    int menu_width = max_width + 20;
+    if (menu_width < 80) menu_width = 80;  // Minimum width
+    
+    int menu_height = window_menu->item_count * MENU_ITEM_HEIGHT + 8;
+    
+    // Get screen dimensions
+    int screen_width = DisplayWidth(ctx->dpy, DefaultScreen(ctx->dpy));
+    int screen_height = DisplayHeight(ctx->dpy, DefaultScreen(ctx->dpy));
+    
+    // Position menu at right edge of screen
+    x = screen_width - menu_width;
+    
+    // Adjust y position if menu would go off screen
+    if (y + menu_height > screen_height) {
+        y = screen_height - menu_height;
+    }
+    
+    window_menu->canvas = create_canvas(NULL, x, y, menu_width, menu_height, MENU);
+    if (window_menu->canvas) {
+        window_menu->canvas->bg_color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+        active_menu = window_menu;
+        window_menu->selected_item = -1;
+        XMapRaised(ctx->dpy, window_menu->canvas->win);
+        redraw_canvas(window_menu->canvas);
+        // Ensure window stays on top even if menubar redraws
+        XRaiseWindow(ctx->dpy, window_menu->canvas->win);
+        XFlush(ctx->dpy);
+    }
+}
+
 void menu_handle_menubar_press(XButtonEvent *event) {
+    RenderContext *ctx = get_render_context();
+    if (!ctx) return;
+    
+    // Handle right-click - always toggle menubar state and close any dropdown
     if (event->button == Button3) {
+        // Close window list menu if open
+        if (active_menu && active_menu->parent_index == -1) {
+            // This is the window list menu
+            XSync(ctx->dpy, False);
+            if (active_menu->canvas->win != None) {
+                clear_press_target_if_matches(active_menu->canvas->win);
+                XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                XSync(ctx->dpy, False);
+            }
+            destroy_canvas(active_menu->canvas);
+            
+            // Free the temporary window menu
+            if (active_menu->items) {
+                for (int i = 0; i < active_menu->item_count; i++) {
+                    if (active_menu->items[i]) free(active_menu->items[i]);
+                }
+                free(active_menu->items);
+            }
+            if (active_menu->shortcuts) {
+                for (int i = 0; i < active_menu->item_count; i++) {
+                    if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+                }
+                free(active_menu->shortcuts);
+            }
+            if (active_menu->enabled) free(active_menu->enabled);
+            free(active_menu);
+            active_menu = NULL;
+        }
         toggle_menubar_state();
+    } else if (event->button == Button1) {
+        // Check if we're in logo mode and clicking on the right button area
+        if (!show_menus) {
+            int screen_width = DisplayWidth(ctx->dpy, DefaultScreen(ctx->dpy));
+            // Button is drawn at width-28 and is 26 pixels wide (from render.c)
+            int button_start = screen_width - 30;  // Give a bit more area for easier clicking
+            
+            if (event->x >= button_start) {
+                // Check if window list is already open
+                if (active_menu && active_menu->parent_index == -1) {
+                    // Window list is open - close it
+                    XSync(ctx->dpy, False);
+                    if (active_menu->canvas->win != None) {
+                        clear_press_target_if_matches(active_menu->canvas->win);
+                        XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                        XSync(ctx->dpy, False);
+                    }
+                    destroy_canvas(active_menu->canvas);
+                    
+                    // Free the temporary window menu
+                    if (active_menu->items) {
+                        for (int i = 0; i < active_menu->item_count; i++) {
+                            if (active_menu->items[i]) free(active_menu->items[i]);
+                        }
+                        free(active_menu->items);
+                    }
+                    if (active_menu->shortcuts) {
+                        for (int i = 0; i < active_menu->item_count; i++) {
+                            if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+                        }
+                        free(active_menu->shortcuts);
+                    }
+                    if (active_menu->enabled) free(active_menu->enabled);
+                    free(active_menu);
+                    active_menu = NULL;
+                } else {
+                    // Show window list below the button (menubar height)
+                    // x position will be calculated to align with screen edge
+                    show_window_list_menu(0, MENU_ITEM_HEIGHT);  // x is ignored, calculated inside
+                }
+            } else {
+                // Click outside button area - close window list if open
+                if (active_menu && active_menu->parent_index == -1) {
+                    XSync(ctx->dpy, False);
+                    if (active_menu->canvas->win != None) {
+                        clear_press_target_if_matches(active_menu->canvas->win);
+                        XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                        XSync(ctx->dpy, False);
+                    }
+                    destroy_canvas(active_menu->canvas);
+                    
+                    // Free the temporary window menu
+                    if (active_menu->items) {
+                        for (int i = 0; i < active_menu->item_count; i++) {
+                            if (active_menu->items[i]) free(active_menu->items[i]);
+                        }
+                        free(active_menu->items);
+                    }
+                    if (active_menu->shortcuts) {
+                        for (int i = 0; i < active_menu->item_count; i++) {
+                            if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+                        }
+                        free(active_menu->shortcuts);
+                    }
+                    if (active_menu->enabled) free(active_menu->enabled);
+                    free(active_menu);
+                    active_menu = NULL;
+                }
+            }
+        }
     }
 }
 
@@ -1054,9 +1320,9 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
         }
     }
     
-    // Update enabled states for Window menu based on active window
+    // Update enabled states for Windows menu based on active window
     // Only do this for system menus, not app menus
-    if (!app_menu_active && menu == menubar && index == 1) {  // Window menu
+    if (!app_menu_active && menu == menubar && index == 1) {  // Windows menu
         Canvas *aw = get_active_window();
         bool has_active_window = (aw && aw->type == WINDOW);
         bool is_workbench_window = (aw && aw->type == WINDOW && aw->client_win == None);
@@ -1080,9 +1346,7 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
             active_menu->enabled[2] = has_active_window;                      // Close - only if there's a window
             active_menu->enabled[3] = is_workbench_window || desktop_focused;  // Select Contents - workbench or desktop
             active_menu->enabled[4] = is_workbench_window || desktop_focused;  // Clean Up - workbench or desktop
-            active_menu->enabled[5] = is_workbench_window || desktop_focused;  // Show Hidden - workbench or desktop  
-            active_menu->enabled[6] = is_workbench_window;                     // View By - only for workbench windows (not desktop)
-            active_menu->enabled[7] = true;                                    // Cycle - always enabled
+            active_menu->enabled[5] = is_workbench_window || desktop_focused;  // View Modes - workbench or desktop
         }
     }
     
@@ -1104,6 +1368,79 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
 void handle_menu_selection(Menu *menu, int item_index) {
     const char *item = menu->items[item_index];
     
+    // Handle window list menu (parent_index == -1)
+    if (menu->parent_index == -1) {
+        if (strcmp(item, "Desktop") == 0) {
+            // Iconify all windows to show desktop
+            iconify_all_windows();
+        } else {
+            // Find the window by title and activate it
+            Canvas **window_list;
+            int window_count = get_window_list(&window_list);
+            
+            for (int i = 0; i < window_count; i++) {
+                Canvas *c = window_list[i];
+                const char *title = c->title_base ? c->title_base : "Untitled";
+                
+                // Compare with menu item (may be truncated)
+                char truncated[35];
+                if (strlen(title) > 30) {
+                    strncpy(truncated, title, 27);
+                    truncated[27] = '.';
+                    truncated[28] = '.';
+                    truncated[29] = '.';
+                    truncated[30] = '\0';
+                } else {
+                    strcpy(truncated, title);
+                }
+                
+                if (strcmp(item, truncated) == 0) {
+                    // Find the index in canvas_array
+                    for (int j = 0; j < canvas_count; j++) {
+                        if (canvas_array[j] == c) {
+                            activate_window_by_index(j);
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Close the menu
+        if (active_menu && active_menu->canvas) {
+            RenderContext *ctx = get_render_context();
+            if (ctx) {
+                XSync(ctx->dpy, False);
+                if (active_menu->canvas->win != None) {
+                    clear_press_target_if_matches(active_menu->canvas->win);
+                    XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                    XSync(ctx->dpy, False);
+                }
+                destroy_canvas(active_menu->canvas);
+                
+                // Free the temporary window menu
+                if (active_menu->items) {
+                    for (int i = 0; i < active_menu->item_count; i++) {
+                        if (active_menu->items[i]) free(active_menu->items[i]);
+                    }
+                    free(active_menu->items);
+                }
+                if (active_menu->shortcuts) {
+                    for (int i = 0; i < active_menu->item_count; i++) {
+                        if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+                    }
+                    free(active_menu->shortcuts);
+                }
+                if (active_menu->enabled) free(active_menu->enabled);
+                free(active_menu);
+                
+                active_menu = NULL;
+            }
+        }
+        return;
+    }
+    
     // Handle app menu selections
     if (app_menu_active && current_app_window != None) {
         // Send selection to app via client message
@@ -1116,48 +1453,48 @@ void handle_menu_selection(Menu *menu, int item_index) {
         return;
     }
     
-    // If this is a nested submenu under Window, handle here
+    // If this is a nested submenu under Windows, handle here
     if (menu->parent_menu && menu->parent_menu->parent_menu == menubar && 
         menu->parent_menu->parent_index == 1) {
-        // Determine which child: by parent_index in Window submenu
-        if (menu->parent_index == 5) { // Show Hidden
+        // Determine which child: by parent_index in Windows submenu
+        if (menu->parent_index == 5) { // View Modes
             Canvas *target = get_active_window();
             if (!target) {
                 // No active window - use desktop
                 target = get_desktop_canvas();
             }
             if (target) {
-                if (strcmp(item, "Yes") == 0) {
-                    target->show_hidden = true;
-                } else if (strcmp(item, "No") == 0) {
-                    target->show_hidden = false;
-                }
-                // Refresh directory view to apply hidden filter
-                if (target->path) {
-                    refresh_canvas_from_directory(target, target->path);
-                } else if (target->type == DESKTOP) {
-                    // Desktop uses ~/Desktop as its path
-                    const char *home = getenv("HOME");
-                    if (home) {
-                        char desktop_path[PATH_SIZE];
-                        snprintf(desktop_path, sizeof(desktop_path), "%s/Desktop", home);
-                        refresh_canvas_from_directory(target, desktop_path);
+                if (strcmp(item, "Icons") == 0) {
+                    set_canvas_view_mode(target, VIEW_ICONS);
+                } else if (strcmp(item, "Names") == 0) {
+                    set_canvas_view_mode(target, VIEW_NAMES);
+                } else if (strcmp(item, "Hidden") == 0) {
+                    // Toggle hidden files
+                    target->show_hidden = !target->show_hidden;
+                    // Refresh directory view to apply hidden filter
+                    if (target->path) {
+                        refresh_canvas_from_directory(target, target->path);
+                    } else if (target->type == DESKTOP) {
+                        // Desktop uses ~/Desktop as its path
+                        const char *home = getenv("HOME");
+                        if (home) {
+                            char desktop_path[PATH_SIZE];
+                            snprintf(desktop_path, sizeof(desktop_path), "%s/Desktop", home);
+                            refresh_canvas_from_directory(target, desktop_path);
+                        }
                     }
+                    // Layout only applies to workbench windows, not desktop
+                    if (target->type == WINDOW) {
+                        apply_view_layout(target);
+                        compute_max_scroll(target);
+                    }
+                    redraw_canvas(target);
+                } else if (strcmp(item, "Spatial") == 0) {
+                    // Toggle spatial mode
+                    set_spatial_mode(!get_spatial_mode());
                 }
-                // Layout only applies to workbench windows, not desktop
-                if (target->type == WINDOW) {
-                    apply_view_layout(target);
-                    compute_max_scroll(target);
-                }
-                redraw_canvas(target);
             }
-        } else if (menu->parent_index == 6) { // View By ..
-            Canvas *aw = get_active_window();
-            if (aw) {
-                if (strcmp(item, "Icons") == 0) set_canvas_view_mode(aw, VIEW_ICONS);
-                else if (strcmp(item, "Names") == 0) set_canvas_view_mode(aw, VIEW_NAMES);
-            }
-        } else if (menu->parent_index == 7) { // Cycle
+        } else if (menu->parent_index == 6) { // Cycle
             if (strcmp(item, "Next") == 0) {
                 cycle_next_window();
             } else if (strcmp(item, "Previous") == 0) {
@@ -1407,22 +1744,45 @@ void trigger_parent_action(void) {
             return;
         }
         
-        // Check if window for parent path already exists
-        Canvas *existing = find_window_by_path(parent_path);
-        if (existing) {
-            set_active_window(existing);
-            XRaiseWindow(get_display(), existing->win);
-            redraw_canvas(existing);
+        // Non-spatial mode: reuse current window
+        if (!get_spatial_mode()) {
+            // Update the current window's path to parent
+            if (active_window->path) free(active_window->path);
+            active_window->path = strdup(parent_path);
+            
+            // Update window title
+            const char *dir_name = strrchr(parent_path, '/');
+            if (dir_name && *(dir_name + 1)) dir_name++; 
+            else dir_name = parent_path;
+            if (active_window->title_base) free(active_window->title_base);
+            active_window->title_base = strdup(dir_name);
+            
+            // Refresh with parent directory
+            refresh_canvas_from_directory(active_window, parent_path);
+            
+            // Reset scroll and organize icons
+            active_window->scroll_x = 0;
+            active_window->scroll_y = 0;
+            icon_cleanup(active_window);
+            redraw_canvas(active_window);
         } else {
-            // Create new window for parent directory
-            Canvas *parent_window = create_canvas(parent_path, 
-                active_window->x + 30, active_window->y + 30,
-                640, 480, WINDOW);
-            if (parent_window) {
-                refresh_canvas_from_directory(parent_window, parent_path);
-                apply_view_layout(parent_window);
-                compute_max_scroll(parent_window);
-                redraw_canvas(parent_window);
+            // Spatial mode: check if window for parent path already exists
+            Canvas *existing = find_window_by_path(parent_path);
+            if (existing) {
+                set_active_window(existing);
+                XRaiseWindow(get_display(), existing->win);
+                redraw_canvas(existing);
+            } else {
+                // Create new window for parent directory
+                Canvas *parent_window = create_canvas(parent_path, 
+                    active_window->x + 30, active_window->y + 30,
+                    640, 480, WINDOW);
+                if (parent_window) {
+                    refresh_canvas_from_directory(parent_window, parent_path);
+                    apply_view_layout(parent_window);
+                    compute_max_scroll(parent_window);
+                    redraw_canvas(parent_window);
+                }
             }
         }
     }
