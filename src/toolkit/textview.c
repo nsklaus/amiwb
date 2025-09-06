@@ -224,6 +224,64 @@ static int utf8_prev_char_offset(const char *str, int byte_offset) {
 }
 #endif
 
+// =============================================================================
+// WORD BOUNDARY DETECTION
+// =============================================================================
+
+// Check if character is a word separator
+static bool is_word_separator(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+           c == '.' || c == ',' || c == ';' || c == ':' ||
+           c == '!' || c == '?' || c == '"' || c == '\'' ||
+           c == '(' || c == ')' || c == '[' || c == ']' ||
+           c == '{' || c == '}' || c == '<' || c == '>' ||
+           c == '/' || c == '\\' || c == '|' || c == '-' ||
+           c == '+' || c == '=' || c == '*' || c == '&' ||
+           c == '%' || c == '#' || c == '@' || c == '~' ||
+           c == '`' || c == '^' || c == '$';
+}
+
+// Find word boundaries at given position
+// Returns word start and end character positions
+static void find_word_bounds(const char *line, int pos, int *word_start, int *word_end) {
+    if (!line || !word_start || !word_end) return;
+    
+    int line_len = utf8_strlen(line);
+    
+    // Handle empty line or position past end
+    if (line_len == 0 || pos >= line_len) {
+        *word_start = 0;
+        *word_end = line_len;
+        return;
+    }
+    
+    // Convert character position to byte offset
+    int byte_pos = utf8_char_index_to_byte_offset(line, pos);
+    
+    // If we're on a separator, select just that separator
+    if (is_word_separator(line[byte_pos])) {
+        *word_start = pos;
+        *word_end = pos + 1;
+        return;
+    }
+    
+    // Find start of word (go back while not separator)
+    *word_start = pos;
+    while (*word_start > 0) {
+        int prev_byte = utf8_char_index_to_byte_offset(line, *word_start - 1);
+        if (is_word_separator(line[prev_byte])) break;
+        (*word_start)--;
+    }
+    
+    // Find end of word (go forward while not separator)
+    *word_end = pos;
+    while (*word_end < line_len) {
+        int curr_byte = utf8_char_index_to_byte_offset(line, *word_end);
+        if (is_word_separator(line[curr_byte])) break;
+        (*word_end)++;
+    }
+}
+
 // Create a new TextView widget
 TextView* textview_create(Display *display, Window parent, int x, int y, 
                          int width, int height) {
@@ -270,6 +328,12 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     
     // No selection initially
     tv->has_selection = false;
+    
+    // Initialize multi-click detection
+    tv->last_click_time = 0;
+    tv->click_count = 0;
+    tv->last_click_line = -1;
+    tv->last_click_col = -1;
     
     // Initialize vertical scrollbar state
     tv->scrollbar_visible = false;
@@ -1550,11 +1614,20 @@ void textview_draw(TextView *tv) {
     // This prevents ghost cursors when viewport scrolls
     tv->prev_cursor_line = tv->cursor_line;
     tv->prev_cursor_col = tv->cursor_col;
+    
+    // Force X11 to complete all drawing operations before returning
+    XSync(tv->display, False);
 }
 
 // Update only the cursor position (optimized drawing)
 void textview_update_cursor(TextView *tv) {
     if (!tv || !tv->xft_draw || !tv->font || !tv->colors_allocated) return;
+    
+    // If we have a selection, use full redraw instead to preserve it
+    if (tv->has_selection) {
+        textview_draw(tv);
+        return;
+    }
     
     // Calculate line height for drawing
     int line_height = tv->line_height;
@@ -1779,39 +1852,170 @@ bool textview_handle_key_press(TextView *tv, XKeyEvent *event) {
         }
     }
     
+    // Check if Shift is held for selection
+    bool shift_held = (event->state & ShiftMask) != 0;
+    
     // Handle Page Up/Down
     if (keysym == XK_Page_Up) {
-        textview_move_cursor_page_up(tv);
+        if (shift_held) {
+            // Extend selection with Shift+PageUp
+            if (!tv->has_selection) {
+                // Start selection from current cursor position
+                tv->sel_start_line = tv->cursor_line;
+                tv->sel_start_col = tv->cursor_col;
+                tv->has_selection = true;
+            }
+            textview_move_cursor_page_up(tv);
+            tv->sel_end_line = tv->cursor_line;
+            tv->sel_end_col = tv->cursor_col;
+            textview_draw(tv);
+        } else {
+            // Clear selection and move cursor
+            tv->has_selection = false;
+            textview_move_cursor_page_up(tv);
+        }
         return true;
     } else if (keysym == XK_Page_Down) {
-        textview_move_cursor_page_down(tv);
+        if (shift_held) {
+            // Extend selection with Shift+PageDown
+            if (!tv->has_selection) {
+                // Start selection from current cursor position
+                tv->sel_start_line = tv->cursor_line;
+                tv->sel_start_col = tv->cursor_col;
+                tv->has_selection = true;
+            }
+            textview_move_cursor_page_down(tv);
+            tv->sel_end_line = tv->cursor_line;
+            tv->sel_end_col = tv->cursor_col;
+            textview_draw(tv);
+        } else {
+            // Clear selection and move cursor
+            tv->has_selection = false;
+            textview_move_cursor_page_down(tv);
+        }
         return true;
     }
     
     // Handle special keys
     switch (keysym) {
         case XK_Left:
-            textview_move_cursor_left(tv);
+            if (shift_held) {
+                // Extend selection with Shift+Left
+                if (!tv->has_selection) {
+                    // Start selection from current cursor position
+                    tv->sel_start_line = tv->cursor_line;
+                    tv->sel_start_col = tv->cursor_col;
+                    tv->has_selection = true;
+                }
+                textview_move_cursor_left(tv);
+                tv->sel_end_line = tv->cursor_line;
+                tv->sel_end_col = tv->cursor_col;
+                textview_draw(tv);
+            } else {
+                // Clear selection and move cursor
+                tv->has_selection = false;
+                textview_move_cursor_left(tv);
+            }
             return true;
             
         case XK_Right:
-            textview_move_cursor_right(tv);
+            if (shift_held) {
+                // Extend selection with Shift+Right
+                if (!tv->has_selection) {
+                    // Start selection from current cursor position
+                    tv->sel_start_line = tv->cursor_line;
+                    tv->sel_start_col = tv->cursor_col;
+                    tv->has_selection = true;
+                }
+                textview_move_cursor_right(tv);
+                tv->sel_end_line = tv->cursor_line;
+                tv->sel_end_col = tv->cursor_col;
+                textview_draw(tv);
+            } else {
+                // Clear selection and move cursor
+                tv->has_selection = false;
+                textview_move_cursor_right(tv);
+            }
             return true;
             
         case XK_Up:
-            textview_move_cursor_up(tv);
+            if (shift_held) {
+                // Extend selection with Shift+Up
+                if (!tv->has_selection) {
+                    // Start selection from current cursor position
+                    tv->sel_start_line = tv->cursor_line;
+                    tv->sel_start_col = tv->cursor_col;
+                    tv->has_selection = true;
+                }
+                textview_move_cursor_up(tv);
+                tv->sel_end_line = tv->cursor_line;
+                tv->sel_end_col = tv->cursor_col;
+                textview_draw(tv);
+            } else {
+                // Clear selection and move cursor
+                tv->has_selection = false;
+                textview_move_cursor_up(tv);
+            }
             return true;
             
         case XK_Down:
-            textview_move_cursor_down(tv);
+            if (shift_held) {
+                // Extend selection with Shift+Down
+                if (!tv->has_selection) {
+                    // Start selection from current cursor position
+                    tv->sel_start_line = tv->cursor_line;
+                    tv->sel_start_col = tv->cursor_col;
+                    tv->has_selection = true;
+                }
+                textview_move_cursor_down(tv);
+                tv->sel_end_line = tv->cursor_line;
+                tv->sel_end_col = tv->cursor_col;
+                textview_draw(tv);
+            } else {
+                // Clear selection and move cursor
+                tv->has_selection = false;
+                textview_move_cursor_down(tv);
+            }
             return true;
             
         case XK_Home:
-            textview_move_cursor_home(tv);
+            if (shift_held) {
+                // Extend selection with Shift+Home
+                if (!tv->has_selection) {
+                    // Start selection from current cursor position
+                    tv->sel_start_line = tv->cursor_line;
+                    tv->sel_start_col = tv->cursor_col;
+                    tv->has_selection = true;
+                }
+                textview_move_cursor_home(tv);
+                tv->sel_end_line = tv->cursor_line;
+                tv->sel_end_col = tv->cursor_col;
+                textview_draw(tv);
+            } else {
+                // Clear selection and move cursor
+                tv->has_selection = false;
+                textview_move_cursor_home(tv);
+            }
             return true;
             
         case XK_End:
-            textview_move_cursor_end(tv);
+            if (shift_held) {
+                // Extend selection with Shift+End
+                if (!tv->has_selection) {
+                    // Start selection from current cursor position
+                    tv->sel_start_line = tv->cursor_line;
+                    tv->sel_start_col = tv->cursor_col;
+                    tv->has_selection = true;
+                }
+                textview_move_cursor_end(tv);
+                tv->sel_end_line = tv->cursor_line;
+                tv->sel_end_col = tv->cursor_col;
+                textview_draw(tv);
+            } else {
+                // Clear selection and move cursor
+                tv->has_selection = false;
+                textview_move_cursor_end(tv);
+            }
             return true;
             
         case XK_Return:
@@ -2065,26 +2269,80 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
         clicked_col = 0;
     }
     
-    // Clear any existing selection on click
+    // Track if we had a selection before
     bool had_selection = tv->has_selection;
-    tv->has_selection = false;
     
-    // Set cursor position
-    tv->cursor_line = clicked_line;
-    tv->cursor_col = clicked_col;
+    // Multi-click detection
+    Time double_click_time = 500;  // 500ms for double-click
+    bool is_same_position = (clicked_line == tv->last_click_line && 
+                            clicked_col == tv->last_click_col);
     
-    // Start selection from this point (for drag)
-    tv->sel_start_line = clicked_line;
-    tv->sel_start_col = clicked_col;
-    tv->sel_end_line = clicked_line;
-    tv->sel_end_col = clicked_col;
+    if (is_same_position && event->time - tv->last_click_time < double_click_time) {
+        // Consecutive click at same position within time limit
+        tv->click_count++;
+        if (tv->click_count > 3) tv->click_count = 1;  // Reset after triple-click
+    } else {
+        // New click position or timeout - reset to single click
+        tv->click_count = 1;
+    }
+    
+    // Update click tracking
+    tv->last_click_time = event->time;
+    tv->last_click_line = clicked_line;
+    tv->last_click_col = clicked_col;
+    
+    // Handle based on click count
+    if (tv->click_count == 1) {
+        // Single click - place cursor, clear selection
+        tv->has_selection = false;
+        tv->cursor_line = clicked_line;
+        tv->cursor_col = clicked_col;
+        
+        // Start selection from this point (for drag)
+        tv->sel_start_line = clicked_line;
+        tv->sel_start_col = clicked_col;
+        tv->sel_end_line = clicked_line;
+        tv->sel_end_col = clicked_col;
+    }
+    else if (tv->click_count == 2) {
+        // Double click - select word
+        const char *line = tv->lines[clicked_line];
+        int word_start, word_end;
+        find_word_bounds(line, clicked_col, &word_start, &word_end);
+        
+        // Set selection
+        tv->sel_start_line = clicked_line;
+        tv->sel_start_col = word_start;
+        tv->sel_end_line = clicked_line;
+        tv->sel_end_col = word_end;
+        tv->has_selection = true;
+        
+        // Move cursor to end of word
+        tv->cursor_line = clicked_line;
+        tv->cursor_col = word_end;
+    }
+    else if (tv->click_count == 3) {
+        // Triple click - select entire line
+        tv->sel_start_line = clicked_line;
+        tv->sel_start_col = 0;
+        tv->sel_end_line = clicked_line;
+        tv->sel_end_col = utf8_strlen(tv->lines[clicked_line]);
+        tv->has_selection = true;
+        
+        // Move cursor to end of line
+        tv->cursor_line = clicked_line;
+        tv->cursor_col = tv->sel_end_col;
+    }
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     
-    // If we had a selection, need to redraw to clear it visually
-    if (had_selection) {
+    // Always do full redraw when selection state changes or for multi-clicks
+    // Never use textview_update_cursor when we have a selection as it doesn't preserve it
+    if (tv->click_count > 1 || had_selection || tv->has_selection) {
         textview_draw(tv);
+        XSync(tv->display, False);  // Force synchronous X11 update
     } else {
+        // Only use optimized cursor update if there's no selection
         textview_update_cursor(tv);
     }
     

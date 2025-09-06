@@ -98,6 +98,12 @@ typedef struct TextView {
     bool modified;
     bool read_only;
     
+    // Multi-click detection
+    Time last_click_time;    // Time of last mouse click
+    int click_count;         // Number of consecutive clicks (1=single, 2=double, 3=triple)
+    int last_click_line;     // Line of last click (to detect same position)
+    int last_click_col;      // Column of last click
+    
     // Clipboard support
     char *clipboard_buffer;  // Internal clipboard buffer
     Atom clipboard_atom;     // CLIPBOARD atom
