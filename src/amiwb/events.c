@@ -15,6 +15,7 @@
 #include <X11/XF86keysym.h> // media keys
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>  // For XGetWMName
+#include <X11/Xatom.h>  // For XA_STRING
 #include <X11/keysym.h>
 #include <stdio.h> // For fprintf
 #include <sys/stat.h>
@@ -893,7 +894,37 @@ void handle_configure_request(XConfigureRequestEvent *event) {
 // WM hints, protocols, and netwm properties changes.
 // Also handles dynamic title updates via _AMIWB_TITLE_CHANGE property
 void handle_property_notify(XPropertyEvent *event) {
-    // We're only interested in client windows
+    if (!event) return;
+    
+    Display *dpy = get_display();
+    
+    // First check for AMIWB_OPEN_DIRECTORY property on root window (from ReqASL)
+    if (event->window == DefaultRootWindow(dpy)) {
+        Atom amiwb_open_dir = XInternAtom(dpy, "AMIWB_OPEN_DIRECTORY", False);
+        
+        if (event->atom == amiwb_open_dir && event->state == PropertyNewValue) {
+            // Read the directory path from the property
+            Atom actual_type;
+            int actual_format;
+            unsigned long nitems, bytes_after;
+            unsigned char *prop_data = NULL;
+            
+            if (XGetWindowProperty(dpy, event->window, amiwb_open_dir,
+                                 0, PATH_SIZE, True, // Delete property after reading
+                                 XA_STRING, &actual_type, &actual_format,
+                                 &nitems, &bytes_after, &prop_data) == Success) {
+                
+                if (prop_data && nitems > 0) {
+                    // Open the directory in a new workbench window
+                    workbench_open_directory((char *)prop_data);
+                    XFree(prop_data);
+                }
+            }
+            return;
+        }
+    }
+    
+    // Now check for properties on client windows
     Canvas *canvas = find_canvas_by_client(event->window);
     if (!canvas) {
         // Try to find by main window too
@@ -904,7 +935,6 @@ void handle_property_notify(XPropertyEvent *event) {
     }
     
     // Check if this is our custom title change property
-    Display *dpy = get_display();
     Atom amiwb_title_change = XInternAtom(dpy, "_AMIWB_TITLE_CHANGE", False);
     Atom amiwb_menu_states = XInternAtom(dpy, "_AMIWB_MENU_STATES", False);
     
