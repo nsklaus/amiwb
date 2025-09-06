@@ -77,6 +77,12 @@ typedef struct ReqASL {
     // Window title
     char window_title[256];
     
+    // Dialog mode
+    bool is_save_mode;  // true for save, false for open
+    
+    // Multi-selection support
+    bool multi_select_enabled;
+    
 } ReqASL;
 
 // Public API
@@ -94,6 +100,7 @@ void reqasl_navigate_to(ReqASL *req, const char *path);
 void reqasl_navigate_parent(ReqASL *req);
 void reqasl_set_pattern(ReqASL *req, const char *extensions);
 void reqasl_set_title(ReqASL *req, const char *title);
+void reqasl_set_mode(ReqASL *req, bool is_save_mode);
 
 // Error logging function - defined in reqasl.c
 void log_error(const char *format, ...);

@@ -6,13 +6,15 @@
 #include <X11/Xlib.h>
 #include "reqasl.h"
 
+static bool files_selected = false;
+
 static void on_file_open(const char *path) {
     printf("%s\n", path);  // Output selected path to stdout
-    exit(0);
+    files_selected = true;  // Mark that we got at least one file
 }
 
 static void on_cancel(void) {
-    exit(1);  // Exit with error code on cancel
+    // Don't need to do anything - main will exit with code 1
 }
 
 int main(int argc, char *argv[]) {
@@ -73,13 +75,16 @@ int main(int argc, char *argv[]) {
         reqasl_set_pattern(req, pattern);
     }
     
+    // Set mode (this also configures multi-selection)
+    reqasl_set_mode(req, (strcmp(mode, "save") == 0));
+    
     // Set window title based on arguments
     if (title) {
         // Use provided title
         reqasl_set_title(req, title);
     } else if (called_by_app || pattern) {
         // Called by app or with pattern filter - implies file selection
-        if (strcmp(mode, "save") == 0) {
+        if (req->is_save_mode) {
             reqasl_set_title(req, "Save File");
         } else {
             reqasl_set_title(req, "Open File");
@@ -103,5 +108,6 @@ int main(int argc, char *argv[]) {
     reqasl_destroy(req);
     XCloseDisplay(display);
     
-    return 0;
+    // Return 0 if files were selected, 1 if cancelled
+    return files_selected ? 0 : 1;
 }

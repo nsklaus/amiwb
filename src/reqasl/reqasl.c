@@ -156,6 +156,7 @@ ReqASL* reqasl_create(Display *display) {
                              listview_select_callback,
                              listview_double_click_callback,
                              req);
+        // Multi-selection will be enabled later based on mode
     }
     
     // Create InputField widgets for text editing
@@ -375,7 +376,13 @@ void reqasl_navigate_to(ReqASL *req, const char *path) {
         scan_directory(req, req->current_path);  // Use copied path, not original which may be freed
         // Scanned directory
         if (req->listview) {
-            // ListView updated
+            // Reset double-click tracking to prevent leaking clicks into new directory
+            req->listview->last_click_time = 0;
+            req->listview->last_click_index = -1;
+            // Clear any multi-selection
+            if (req->multi_select_enabled) {
+                listview_clear_selection(req->listview);
+            }
         }
         draw_window(req);
     } else {
@@ -744,7 +751,7 @@ static void draw_window(ReqASL *req) {
     Button open_btn = {
         .x = open_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
-        .label = "Open",
+        .label = req->is_save_mode ? "Save" : "Open",
         .pressed = req->open_button_pressed
     };
     button_draw(&open_btn, dest, req->display, temp_xft_draw, req->font);
@@ -978,7 +985,12 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 
                 // Handle ListView click if available
                 if (req->listview) {
-                    if (listview_handle_click(req->listview, x, y)) {
+                    // Use the time-aware click handler for proper double-click detection
+                    if (listview_handle_click_with_time(req->listview, x, y, 
+                                                       event->xbutton.state, 
+                                                       event->xbutton.time,
+                                                       req->display,
+                                                       req->font)) {
                         draw_window(req);
                         return true;
                     }
@@ -1079,10 +1091,146 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     if (x >= open_x && x < open_x + BUTTON_WIDTH &&
                         y >= button_y && y < button_y + BUTTON_HEIGHT) {
                         
-                        // Check if something is selected in the listview
-                        if (req->listview && req->listview->selected_index >= 0 && 
-                            req->listview->selected_index < req->entry_count) {
+                        // Check for multi-selection or single selection
+                        if (req->listview && req->multi_select_enabled && req->listview->selection_count > 0) {
+                            // Multi-selection mode - get all selected items
+                            int selected_indices[LISTVIEW_MAX_ITEMS];
+                            int count = listview_get_selected_items(req->listview, selected_indices, LISTVIEW_MAX_ITEMS);
                             
+                            if (count > 0) {
+                                // Check if all selected items are files (not directories)
+                                bool all_files = true;
+                                for (int i = 0; i < count; i++) {
+                                    if (req->entries[selected_indices[i]]->type == TYPE_DRAWER) {
+                                        all_files = false;
+                                        break;
+                                    }
+                                }
+                                
+                                if (all_files) {
+                                    if (req->on_open) {
+                                        // Callback mode - return each path to caller
+                                        for (int i = 0; i < count; i++) {
+                                            FileEntry *entry = req->entries[selected_indices[i]];
+                                            req->on_open(entry->path);
+                                        }
+                                    } else {
+                                        // Standalone mode - check if all files use the same application
+                                        char *app_name = NULL;
+                                        bool same_app = true;
+                                        
+                                        // Get the default app for each file and check if they're all the same
+                                        for (int i = 0; i < count && same_app; i++) {
+                                            FileEntry *entry = req->entries[selected_indices[i]];
+                                            
+                                            // Get MIME type for the file
+                                            char mime_cmd[PATH_SIZE];
+                                            snprintf(mime_cmd, sizeof(mime_cmd), "xdg-mime query filetype '%s' 2>/dev/null", entry->path);
+                                            
+                                            FILE *mime_pipe = popen(mime_cmd, "r");
+                                            if (mime_pipe) {
+                                                char mime_type[NAME_SIZE] = {0};
+                                                if (fgets(mime_type, sizeof(mime_type), mime_pipe)) {
+                                                    // Remove newline
+                                                    char *nl = strchr(mime_type, '\n');
+                                                    if (nl) *nl = '\0';
+                                                    
+                                                    // Get default app for this MIME type
+                                                    char app_cmd[PATH_SIZE];
+                                                    snprintf(app_cmd, sizeof(app_cmd), "xdg-mime query default '%s' 2>/dev/null", mime_type);
+                                                    
+                                                    FILE *app_pipe = popen(app_cmd, "r");
+                                                    if (app_pipe) {
+                                                        char desktop_file[NAME_SIZE] = {0};
+                                                        if (fgets(desktop_file, sizeof(desktop_file), app_pipe)) {
+                                                            // Remove newline
+                                                            nl = strchr(desktop_file, '\n');
+                                                            if (nl) *nl = '\0';
+                                                            
+                                                            if (i == 0) {
+                                                                // First file - store the app name
+                                                                app_name = strdup(desktop_file);
+                                                            } else {
+                                                                // Compare with first file's app
+                                                                if (!app_name || strcmp(app_name, desktop_file) != 0) {
+                                                                    same_app = false;
+                                                                }
+                                                            }
+                                                        }
+                                                        pclose(app_pipe);
+                                                    }
+                                                }
+                                                pclose(mime_pipe);
+                                            }
+                                        }
+                                        
+                                        if (same_app && app_name && count > 1) {
+                                            // All files use the same app - extract the executable name from desktop file
+                                            // Desktop files are like "imv.desktop", "mpv.desktop", etc.
+                                            char *exe_name = strdup(app_name);
+                                            char *dot = strrchr(exe_name, '.');
+                                            if (dot && strcmp(dot, ".desktop") == 0) {
+                                                *dot = '\0';
+                                            }
+                                            
+                                            // Try to open all files with the same application
+                                            pid_t pid = fork();
+                                            if (pid == 0) {
+                                                // Build argument array
+                                                char *args[count + 2];
+                                                args[0] = exe_name;
+                                                for (int i = 0; i < count; i++) {
+                                                    args[i + 1] = req->entries[selected_indices[i]]->path;
+                                                }
+                                                args[count + 1] = NULL;
+                                                
+                                                // Try to execute the app directly
+                                                execvp(exe_name, args);
+                                                
+                                                // If direct execution fails, fall back to xdg-open for each file
+                                                for (int i = 0; i < count; i++) {
+                                                    if (fork() == 0) {
+                                                        execlp("xdg-open", "xdg-open", req->entries[selected_indices[i]]->path, (char *)NULL);
+                                                        _exit(EXIT_FAILURE);
+                                                    }
+                                                }
+                                                _exit(EXIT_FAILURE);
+                                            }
+                                            free(exe_name);
+                                        } else {
+                                            // Different apps or single file - use xdg-open for each
+                                            for (int i = 0; i < count; i++) {
+                                                FileEntry *entry = req->entries[selected_indices[i]];
+                                                pid_t pid = fork();
+                                                if (pid == 0) {
+                                                    execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
+                                                    _exit(EXIT_FAILURE);
+                                                }
+                                            }
+                                        }
+                                        
+                                        if (app_name) free(app_name);
+                                    }
+                                    reqasl_hide(req);
+                                } else if (count == 1 && req->entries[selected_indices[0]]->type == TYPE_DRAWER) {
+                                    // Single directory selected - navigate into it
+                                    FileEntry *entry = req->entries[selected_indices[0]];
+                                    Atom amiwb_open_dir = XInternAtom(req->display, 
+                                                                     "AMIWB_OPEN_DIRECTORY", False);
+                                    Window root = DefaultRootWindow(req->display);
+                                    
+                                    XChangeProperty(req->display, root, amiwb_open_dir,
+                                                  XA_STRING, 8, PropModeReplace,
+                                                  (unsigned char *)entry->path, 
+                                                  strlen(entry->path));
+                                    XFlush(req->display);
+                                    reqasl_hide(req);
+                                }
+                                // Else: mixed selection or multiple directories - do nothing
+                            }
+                        } else if (req->listview && req->listview->selected_index >= 0 && 
+                                 req->listview->selected_index < req->entry_count) {
+                            // Single selection mode (save mode or single item selected)
                             FileEntry *entry = req->entries[req->listview->selected_index];
                             
                             if (entry->type == TYPE_DRAWER) {
@@ -1232,9 +1380,25 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 
                 // Handle Escape key - clear selection first, then quit
                 if (keysym == XK_Escape) {
-                    // If something is selected, clear the selection
-                    if (req->listview && req->listview->selected_index >= 0) {
-                        req->listview->selected_index = -1;
+                    // Check if there's any selection (multi or single)
+                    bool has_selection = false;
+                    if (req->listview) {
+                        if (req->multi_select_enabled && req->listview->selection_count > 0) {
+                            has_selection = true;
+                        } else if (!req->multi_select_enabled && req->listview->selected_index >= 0) {
+                            has_selection = true;
+                        }
+                    }
+                    
+                    if (has_selection) {
+                        // Clear the selection
+                        if (req->listview) {
+                            if (req->multi_select_enabled) {
+                                listview_clear_selection(req->listview);
+                            } else {
+                                req->listview->selected_index = -1;
+                            }
+                        }
                         // Clear file text field when deselecting
                         req->file_text[0] = '\0';
                         if (req->file_field) {
@@ -1596,36 +1760,34 @@ void reqasl_set_pattern(ReqASL *req, const char *extensions) {
 void reqasl_set_title(ReqASL *req, const char *title) {
     if (!req || !title) return;
     
-    // Setting title
-    
     strncpy(req->window_title, title, sizeof(req->window_title) - 1);
     req->window_title[sizeof(req->window_title) - 1] = '\0';
     
-    // Update the window title if window already exists
+    // Update the window title using AmiWB's property system
     if (req->window && req->display) {
-        // Update window properties
-        XStoreName(req->display, req->window, req->window_title);
+        // Use the _AMIWB_TITLE_CHANGE property that AmiWB monitors
+        Atom amiwb_title_change = XInternAtom(req->display, "_AMIWB_TITLE_CHANGE", False);
         
-        // Set WM_NAME property
-        XTextProperty window_name;
-        char *title_ptr = req->window_title;
-        XStringListToTextProperty(&title_ptr, 1, &window_name);
-        XSetWMName(req->display, req->window, &window_name);
-        XFree(window_name.value);
-        
-        // Also set _NET_WM_NAME for modern window managers
-        Atom net_wm_name = XInternAtom(req->display, "_NET_WM_NAME", False);
-        Atom utf8_string = XInternAtom(req->display, "UTF8_STRING", False);
-        XChangeProperty(req->display, req->window, net_wm_name, utf8_string, 8,
-                        PropModeReplace, (unsigned char *)req->window_title, 
-                        strlen(req->window_title));
-        
-        // Set a custom property for AmiWB to detect title changes
-        Atom amiwb_title_change = XInternAtom(req->display, "AMIWB_TITLE_CHANGE", False);
-        XChangeProperty(req->display, req->window, amiwb_title_change, utf8_string, 8,
-                        PropModeReplace, (unsigned char *)req->window_title,
-                        strlen(req->window_title));
+        // Set the property on our window
+        XChangeProperty(req->display, req->window,
+                       amiwb_title_change,
+                       XA_STRING, 8,
+                       PropModeReplace,
+                       (unsigned char *)req->window_title,
+                       strlen(req->window_title));
         
         XFlush(req->display);
+    }
+}
+
+void reqasl_set_mode(ReqASL *req, bool is_save_mode) {
+    if (!req) return;
+    
+    req->is_save_mode = is_save_mode;
+    req->multi_select_enabled = !is_save_mode;  // Enable multi-select for open mode
+    
+    // Update ListView multi-selection if it exists
+    if (req->listview) {
+        listview_set_multi_select(req->listview, req->multi_select_enabled);
     }
 }

@@ -31,6 +31,11 @@ typedef struct ListView {
     int scroll_offset;  // First visible item index
     int visible_items;  // Number of items that fit in view
     
+    // Multi-selection support
+    bool multi_select_enabled;
+    bool selected[LISTVIEW_MAX_ITEMS];  // Selection state for each item
+    int selection_count;
+    
     // Scrollbar state
     int scrollbar_knob_y;
     int scrollbar_knob_height;
@@ -41,6 +46,10 @@ typedef struct ListView {
     void (*on_select)(int index, const char *text, void *user_data);
     void (*on_double_click)(int index, const char *text, void *user_data);
     void *callback_data;
+    
+    // Double-click detection
+    unsigned long last_click_time;
+    int last_click_index;
     
     // Internal state
     bool needs_redraw;
@@ -60,8 +69,16 @@ void listview_set_selected(ListView *lv, int index);
 void listview_scroll_to(ListView *lv, int index);
 void listview_ensure_visible(ListView *lv, int index);
 
+// Multi-selection support
+void listview_set_multi_select(ListView *lv, bool enabled);
+void listview_toggle_selection(ListView *lv, int index);
+void listview_clear_selection(ListView *lv);
+int listview_get_selected_items(ListView *lv, int *indices, int max_items);
+
 // Event handling
-bool listview_handle_click(ListView *lv, int x, int y);
+bool listview_handle_click(ListView *lv, int x, int y, Display *dpy, XftFont *font);
+bool listview_handle_click_with_modifiers(ListView *lv, int x, int y, unsigned int state, Display *dpy, XftFont *font);
+bool listview_handle_click_with_time(ListView *lv, int x, int y, unsigned int state, unsigned long time, Display *dpy, XftFont *font);
 bool listview_handle_motion(ListView *lv, int x, int y);
 bool listview_handle_release(ListView *lv);
 bool listview_handle_scroll(ListView *lv, int direction); // +1 down, -1 up

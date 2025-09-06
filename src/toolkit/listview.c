@@ -51,6 +51,11 @@ ListView* listview_create(int x, int y, int width, int height) {
     lv->scroll_offset = 0;
     lv->visible_items = 0;
     
+    // Multi-selection support
+    lv->multi_select_enabled = false;
+    lv->selection_count = 0;
+    memset(lv->selected, 0, sizeof(lv->selected));
+    
     lv->scrollbar_knob_y = 0;
     lv->scrollbar_knob_height = 0;
     lv->scrollbar_dragging = false;
@@ -59,6 +64,10 @@ ListView* listview_create(int x, int y, int width, int height) {
     lv->on_select = NULL;
     lv->on_double_click = NULL;
     lv->callback_data = NULL;
+    
+    // Double-click detection
+    lv->last_click_time = 0;
+    lv->last_click_index = -1;
     
     lv->needs_redraw = true;
     
@@ -138,8 +147,60 @@ void listview_ensure_visible(ListView *lv, int index) {
     }
 }
 
-bool listview_handle_click(ListView *lv, int x, int y) {
-    if (!lv) return false;
+// Multi-selection support functions
+void listview_set_multi_select(ListView *lv, bool enabled) {
+    if (!lv) return;
+    lv->multi_select_enabled = enabled;
+    if (!enabled) {
+        // Clear multi-selection when disabled
+        listview_clear_selection(lv);
+    }
+}
+
+void listview_toggle_selection(ListView *lv, int index) {
+    if (!lv || index < 0 || index >= lv->item_count) return;
+    
+    if (lv->selected[index]) {
+        lv->selected[index] = false;
+        lv->selection_count--;
+    } else {
+        lv->selected[index] = true;
+        lv->selection_count++;
+    }
+    lv->needs_redraw = true;
+}
+
+void listview_clear_selection(ListView *lv) {
+    if (!lv) return;
+    memset(lv->selected, 0, sizeof(lv->selected));
+    lv->selection_count = 0;
+    lv->needs_redraw = true;
+}
+
+int listview_get_selected_items(ListView *lv, int *indices, int max_items) {
+    if (!lv || !indices || max_items <= 0) return 0;
+    
+    int count = 0;
+    for (int i = 0; i < lv->item_count && count < max_items; i++) {
+        if (lv->selected[i]) {
+            indices[count++] = i;
+        }
+    }
+    return count;
+}
+
+bool listview_handle_click(ListView *lv, int x, int y, Display *dpy, XftFont *font) {
+    // Call the new function with no modifiers and no time for backwards compatibility
+    return listview_handle_click_with_time(lv, x, y, 0, 0, dpy, font);
+}
+
+bool listview_handle_click_with_modifiers(ListView *lv, int x, int y, unsigned int state, Display *dpy, XftFont *font) {
+    // Call the new function with no time for backwards compatibility
+    return listview_handle_click_with_time(lv, x, y, state, 0, dpy, font);
+}
+
+bool listview_handle_click_with_time(ListView *lv, int x, int y, unsigned int state, unsigned long time, Display *dpy, XftFont *font) {
+    if (!lv || !dpy || !font) return false;
     
     // Check if click is within listview bounds
     if (x < lv->x || x >= lv->x + lv->width ||
@@ -189,18 +250,143 @@ bool listview_handle_click(ListView *lv, int x, int y) {
         return true;
     }
     
-    // Click on item
+    // Click on item area
     int item_y = y - lv->y - 2; // Account for border
     int item_index = lv->scroll_offset + (item_y / LISTVIEW_ITEM_HEIGHT);
     
-    if (item_index >= 0 && item_index < lv->item_count) {
-        // Check for double-click (simplified - would need time tracking for real implementation)
-        if (item_index == lv->selected_index && lv->on_double_click) {
-            lv->on_double_click(item_index, lv->items[item_index].text, lv->callback_data);
+    // Check if click is on a valid item or blank area
+    if (item_index >= lv->item_count) {
+        // Clicked on blank area below items - clear selection
+        if (lv->multi_select_enabled) {
+            listview_clear_selection(lv);
         } else {
-            lv->selected_index = item_index;
-            if (lv->on_select) {
-                lv->on_select(item_index, lv->items[item_index].text, lv->callback_data);
+            lv->selected_index = -1;
+        }
+        lv->needs_redraw = true;
+        return true;
+    }
+    
+    if (item_index >= 0 && item_index < lv->item_count) {
+        // Check if click is on the actual text, not blank space
+        int text_start_x = lv->x + 6;  // Text starts at x+6 (same as in draw function)
+        int content_end_x = lv->x + lv->width - LISTVIEW_SCROLLBAR_WIDTH - 2;
+        
+        // Check if click is in the margins (not on text area)
+        if (x < text_start_x || x >= content_end_x) {
+            // Clicked on margin - clear selection
+            if (lv->multi_select_enabled) {
+                listview_clear_selection(lv);
+            } else {
+                lv->selected_index = -1;
+            }
+            lv->needs_redraw = true;
+            return true;
+        }
+        
+        // Measure the actual text width to check if click is on text
+        const char *text = lv->items[item_index].text;
+        int text_len = strlen(text);
+        XGlyphInfo text_extents;
+        XftTextExtentsUtf8(dpy, font, (FcChar8*)text, text_len, &text_extents);
+        
+        // Check if click is past the end of the actual text
+        int text_end_x = text_start_x + text_extents.width;
+        if (x > text_end_x) {
+            // Clicked past the end of text - clear selection
+            if (lv->multi_select_enabled) {
+                listview_clear_selection(lv);
+            } else {
+                lv->selected_index = -1;
+            }
+            lv->needs_redraw = true;
+            return true;
+        }
+        
+        // Handle multi-selection with modifiers
+        if (lv->multi_select_enabled) {
+            // Check for Ctrl (ControlMask = 0x04)
+            if (state & 0x04) {  // ControlMask
+                // Ctrl+click: toggle individual selection
+                listview_toggle_selection(lv, item_index);
+                lv->selected_index = item_index;  // Keep track of last clicked
+            }
+            // Check for Shift (ShiftMask = 0x01)
+            else if (state & 0x01) {  // ShiftMask
+                // Shift+click: select range from last selected to current
+                if (lv->selected_index >= 0) {
+                    // Clear previous selections
+                    listview_clear_selection(lv);
+                    // Select range
+                    int start = (lv->selected_index < item_index) ? lv->selected_index : item_index;
+                    int end = (lv->selected_index < item_index) ? item_index : lv->selected_index;
+                    for (int i = start; i <= end; i++) {
+                        lv->selected[i] = true;
+                        lv->selection_count++;
+                    }
+                    lv->needs_redraw = true;
+                } else {
+                    // No previous selection, just select this one
+                    listview_clear_selection(lv);
+                    lv->selected[item_index] = true;
+                    lv->selection_count = 1;
+                    lv->selected_index = item_index;
+                }
+            }
+            else {
+                // Regular click: clear others and select only this one
+                // Check for double-click with proper timing
+                bool is_double_click = false;
+                if (time > 0) {  // Only check if we have time info
+                    if (item_index == lv->last_click_index && 
+                        (time - lv->last_click_time) < 500) {  // 500ms double-click threshold
+                        is_double_click = true;
+                    }
+                    lv->last_click_time = time;
+                    lv->last_click_index = item_index;
+                } else {
+                    // Fallback for no time info - simple check
+                    is_double_click = (item_index == lv->selected_index);
+                }
+                
+                if (is_double_click && lv->on_double_click) {
+                    lv->on_double_click(item_index, lv->items[item_index].text, lv->callback_data);
+                    // Reset double-click tracking after successful double-click
+                    lv->last_click_index = -1;
+                } else {
+                    listview_clear_selection(lv);
+                    lv->selected[item_index] = true;
+                    lv->selection_count = 1;
+                    lv->selected_index = item_index;
+                    if (lv->on_select) {
+                        lv->on_select(item_index, lv->items[item_index].text, lv->callback_data);
+                    }
+                }
+            }
+        } else {
+            // Single selection mode (original behavior)
+            // Check for double-click with proper timing
+            bool is_double_click = false;
+            if (time > 0) {  // Only check if we have time info
+                if (item_index == lv->last_click_index && 
+                    (time - lv->last_click_time) < 500) {  // 500ms double-click threshold
+                    is_double_click = true;
+                }
+                lv->last_click_time = time;
+                lv->last_click_index = item_index;
+            } else {
+                // Fallback for no time info - simple check
+                is_double_click = (item_index == lv->selected_index);
+            }
+            
+            if (is_double_click && lv->on_double_click) {
+                lv->on_double_click(item_index, lv->items[item_index].text, lv->callback_data);
+                // Reset double-click tracking after successful double-click
+                lv->last_click_index = -1;
+            } else {
+                lv->selected_index = item_index;
+                if (lv->on_select) {
+                    lv->on_select(item_index, lv->items[item_index].text, lv->callback_data);
+                }
             }
         }
         lv->needs_redraw = true;
@@ -289,7 +475,14 @@ void listview_draw(ListView *lv, Display *dpy, Picture dest, XftDraw *xft_draw, 
             int item_y = y + 2 + i * LISTVIEW_ITEM_HEIGHT;
             
             // Draw selection background
-            if (item_index == lv->selected_index) {
+            bool is_selected = false;
+            if (lv->multi_select_enabled && lv->selected[item_index]) {
+                is_selected = true;
+            } else if (!lv->multi_select_enabled && item_index == lv->selected_index) {
+                is_selected = true;
+            }
+            
+            if (is_selected) {
                 XRenderFillRectangle(dpy, PictOpSrc, dest, &blue, 
                                    x+2, item_y, content_width, LISTVIEW_ITEM_HEIGHT);
             }
