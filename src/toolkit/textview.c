@@ -95,6 +95,135 @@ static UndoEntry* create_undo_entry(UndoType type, int line, int col,
                                    const char *text, int text_len);
 static void free_undo_entry(UndoEntry *entry);
 
+// =============================================================================
+// UTF-8 HELPER FUNCTIONS
+// =============================================================================
+
+// Get the number of bytes in a UTF-8 character starting at the given byte
+static int utf8_char_bytes(unsigned char c) {
+    if ((c & 0x80) == 0) return 1;      // 0xxxxxxx - ASCII
+    if ((c & 0xE0) == 0xC0) return 2;   // 110xxxxx - 2 byte char
+    if ((c & 0xF0) == 0xE0) return 3;   // 1110xxxx - 3 byte char
+    if ((c & 0xF8) == 0xF0) return 4;   // 11110xxx - 4 byte char
+    return 1; // Invalid UTF-8, treat as single byte
+}
+
+// Check if byte is a UTF-8 continuation byte (10xxxxxx)
+static bool is_utf8_continuation(unsigned char c) {
+    return (c & 0xC0) == 0x80;
+}
+
+// Count the number of UTF-8 characters in a string
+static int utf8_strlen(const char *str) {
+    if (!str) return 0;
+    int count = 0;
+    const unsigned char *s = (const unsigned char *)str;
+    while (*s) {
+        if (!is_utf8_continuation(*s)) {
+            count++;
+        }
+        s++;
+    }
+    return count;
+}
+
+// Convert character index to byte offset in string
+// Returns byte offset, or strlen(str) if char_index is beyond end
+static int utf8_char_index_to_byte_offset(const char *str, int char_index) {
+    if (!str || char_index <= 0) return 0;
+    
+    const unsigned char *s = (const unsigned char *)str;
+    int chars = 0;
+    int bytes = 0;
+    
+    while (*s && chars < char_index) {
+        // Get the number of bytes in this character
+        int char_bytes = utf8_char_bytes(*s);
+        if (char_bytes <= 0) char_bytes = 1; // Safety fallback
+        
+        // Move past this entire character
+        for (int i = 0; i < char_bytes && *s; i++) {
+            s++;
+            bytes++;
+        }
+        chars++;
+    }
+    
+    return bytes;
+}
+
+// Convert byte offset to character index in string
+// Currently unused but kept for potential future use
+#if 0
+static int utf8_byte_offset_to_char_index(const char *str, int byte_offset) {
+    if (!str || byte_offset <= 0) return 0;
+    
+    const unsigned char *s = (const unsigned char *)str;
+    int chars = 0;
+    int bytes = 0;
+    
+    while (*s && bytes < byte_offset) {
+        if (!is_utf8_continuation(*s)) {
+            chars++;
+        }
+        s++;
+        bytes++;
+    }
+    
+    return chars;
+}
+#endif
+
+// Get byte offset of next character from given byte offset
+// Returns same offset if at end of string
+// Currently unused but kept for potential future use
+#if 0
+static int utf8_next_char_offset(const char *str, int byte_offset) {
+    if (!str) return byte_offset;
+    
+    const unsigned char *s = (const unsigned char *)str + byte_offset;
+    if (!*s) return byte_offset; // Already at end
+    
+    // Move to next byte
+    s++;
+    byte_offset++;
+    
+    // Skip continuation bytes
+    while (*s && is_utf8_continuation(*s)) {
+        s++;
+        byte_offset++;
+    }
+    
+    return byte_offset;
+}
+#endif
+
+// Get byte offset of previous character from given byte offset
+// Returns 0 if at beginning
+// Currently unused but kept for potential future use
+#if 0
+static int utf8_prev_char_offset(const char *str, int byte_offset) {
+    if (!str || byte_offset <= 0) return 0;
+    
+    const unsigned char *s = (const unsigned char *)str + byte_offset;
+    const unsigned char *start = (const unsigned char *)str;
+    
+    // Move back one byte
+    if (s > start) {
+        s--;
+        byte_offset--;
+        
+        // Keep moving back while we're on continuation bytes
+        while (s > start && is_utf8_continuation(*s)) {
+            s--;
+            byte_offset--;
+        }
+    }
+    
+    return byte_offset;
+}
+#endif
+
 // Create a new TextView widget
 TextView* textview_create(Display *display, Window parent, int x, int y, 
                          int width, int height) {
@@ -475,16 +604,20 @@ void textview_insert_char(TextView *tv, char c) {
     char *line = tv->lines[tv->cursor_line];
     int len = strlen(line);
     
+    // Convert character position to byte offset for insertion
+    int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+    if (byte_offset > len) byte_offset = len;
+    
     // Grow line buffer
     char *new_line = malloc(len + 2);
-    if (tv->cursor_col > 0) {
-        strncpy(new_line, line, tv->cursor_col);
+    if (byte_offset > 0) {
+        strncpy(new_line, line, byte_offset);
     }
-    new_line[tv->cursor_col] = c;
-    if (tv->cursor_col < len) {
-        strcpy(new_line + tv->cursor_col + 1, line + tv->cursor_col);
+    new_line[byte_offset] = c;
+    if (byte_offset < len) {
+        strcpy(new_line + byte_offset + 1, line + byte_offset);
     } else {
-        new_line[tv->cursor_col + 1] = '\0';
+        new_line[byte_offset + 1] = '\0';
     }
     
     free(tv->lines[tv->cursor_line]);
@@ -539,11 +672,15 @@ void textview_new_line(TextView *tv) {
     char *current = tv->lines[tv->cursor_line];
     int len = strlen(current);
     
+    // Convert character position to byte offset for splitting
+    int byte_offset = utf8_char_index_to_byte_offset(current, tv->cursor_col);
+    if (byte_offset > len) byte_offset = len;
+    
     // Create new line with text after cursor
     char *new_line;
-    if (tv->cursor_col < len) {
-        new_line = strdup(current + tv->cursor_col);
-        current[tv->cursor_col] = '\0';  // Truncate current line
+    if (byte_offset < len) {
+        new_line = strdup(current + byte_offset);
+        current[byte_offset] = '\0';  // Truncate current line
     } else {
         new_line = strdup("");
     }
@@ -597,13 +734,21 @@ void textview_backspace(TextView *tv) {
         char *line = tv->lines[tv->cursor_line];
         int len = strlen(line);
         
+        // Convert character positions to byte offsets
+        int byte_offset_after = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+        int byte_offset_before = utf8_char_index_to_byte_offset(line, tv->cursor_col - 1);
+        
         // Save the character being deleted for undo
-        char deleted_char[2] = {line[tv->cursor_col - 1], '\0'};
-        record_undo(tv, UNDO_DELETE_CHAR, tv->cursor_line, tv->cursor_col - 1, deleted_char, 1);
+        int char_bytes = byte_offset_after - byte_offset_before;
+        char *deleted_char = malloc(char_bytes + 1);
+        strncpy(deleted_char, line + byte_offset_before, char_bytes);
+        deleted_char[char_bytes] = '\0';
+        record_undo(tv, UNDO_DELETE_CHAR, tv->cursor_line, tv->cursor_col - 1, deleted_char, char_bytes);
+        free(deleted_char);
         
         // Shift characters left
-        memmove(line + tv->cursor_col - 1, line + tv->cursor_col, 
-                len - tv->cursor_col + 1);
+        memmove(line + byte_offset_before, line + byte_offset_after, 
+                len - byte_offset_after + 1);
         
         tv->cursor_col--;
     } else if (tv->cursor_line > 0) {
@@ -667,10 +812,17 @@ void textview_delete_key(TextView *tv) {
     char *line = tv->lines[tv->cursor_line];
     int len = strlen(line);
     
-    if (tv->cursor_col < len) {
+    // Get line length in characters
+    int line_len_chars = utf8_strlen(line);
+    
+    if (tv->cursor_col < line_len_chars) {
+        // Convert character position to byte offset
+        int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+        int next_byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col + 1);
+        
         // Delete character at cursor
-        memmove(line + tv->cursor_col, line + tv->cursor_col + 1, 
-                len - tv->cursor_col);
+        memmove(line + byte_offset, line + next_byte_offset, 
+                len - next_byte_offset + 1);
     } else if (tv->cursor_line < tv->line_count - 1) {
         // Join with next line
         char *next_line = tv->lines[tv->cursor_line + 1];
@@ -705,6 +857,7 @@ void textview_delete_key(TextView *tv) {
 }
 
 // Basic cursor movement functions
+// NOTE: cursor_col now represents CHARACTER position, not byte position
 void textview_move_cursor_left(TextView *tv) {
     if (!tv) return;
     
@@ -712,10 +865,11 @@ void textview_move_cursor_left(TextView *tv) {
     int old_scroll_y = tv->scroll_y;
     
     if (tv->cursor_col > 0) {
-        tv->cursor_col--;
+        tv->cursor_col--;  // Move back one character
     } else if (tv->cursor_line > 0) {
         tv->cursor_line--;
-        tv->cursor_col = strlen(tv->lines[tv->cursor_line]);
+        // Set cursor to end of line (in characters, not bytes)
+        tv->cursor_col = utf8_strlen(tv->lines[tv->cursor_line]);
     }
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
@@ -735,9 +889,10 @@ void textview_move_cursor_right(TextView *tv) {
     int old_scroll_x = tv->scroll_x;
     int old_scroll_y = tv->scroll_y;
     
-    int line_len = strlen(tv->lines[tv->cursor_line]);
-    if (tv->cursor_col < line_len) {
-        tv->cursor_col++;
+    // Get line length in characters, not bytes
+    int line_len_chars = utf8_strlen(tv->lines[tv->cursor_line]);
+    if (tv->cursor_col < line_len_chars) {
+        tv->cursor_col++;  // Move forward one character
     } else if (tv->cursor_line < tv->line_count - 1) {
         tv->cursor_line++;
         tv->cursor_col = 0;
@@ -759,9 +914,10 @@ void textview_move_cursor_up(TextView *tv) {
     
     int old_scroll_y = tv->scroll_y;
     tv->cursor_line--;
-    int line_len = strlen(tv->lines[tv->cursor_line]);
-    if (tv->cursor_col > line_len) {
-        tv->cursor_col = line_len;
+    // Get line length in characters, not bytes
+    int line_len_chars = utf8_strlen(tv->lines[tv->cursor_line]);
+    if (tv->cursor_col > line_len_chars) {
+        tv->cursor_col = line_len_chars;
     }
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
@@ -780,9 +936,10 @@ void textview_move_cursor_down(TextView *tv) {
     
     int old_scroll_y = tv->scroll_y;
     tv->cursor_line++;
-    int line_len = strlen(tv->lines[tv->cursor_line]);
-    if (tv->cursor_col > line_len) {
-        tv->cursor_col = line_len;
+    // Get line length in characters, not bytes
+    int line_len_chars = utf8_strlen(tv->lines[tv->cursor_line]);
+    if (tv->cursor_col > line_len_chars) {
+        tv->cursor_col = line_len_chars;
     }
     
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
@@ -798,18 +955,35 @@ void textview_move_cursor_down(TextView *tv) {
 
 void textview_move_cursor_home(TextView *tv) {
     if (!tv) return;
+    
+    int old_scroll_x = tv->scroll_x;
     tv->cursor_col = 0;
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_update_cursor(tv);
+    
+    // If horizontal scrolling occurred, need full redraw
+    if (tv->scroll_x != old_scroll_x) {
+        textview_draw(tv);
+    } else {
+        textview_update_cursor(tv);
+    }
 }
 
 void textview_move_cursor_end(TextView *tv) {
     if (!tv) return;
-    tv->cursor_col = strlen(tv->lines[tv->cursor_line]);
+    
+    int old_scroll_x = tv->scroll_x;
+    // Set cursor to end of line in characters, not bytes
+    tv->cursor_col = utf8_strlen(tv->lines[tv->cursor_line]);
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_update_cursor(tv);
+    
+    // If horizontal scrolling occurred, need full redraw
+    if (tv->scroll_x != old_scroll_x) {
+        textview_draw(tv);
+    } else {
+        textview_update_cursor(tv);
+    }
 }
 
 // Ensure cursor is visible in viewport
@@ -831,11 +1005,15 @@ void textview_ensure_cursor_visible(TextView *tv) {
     if (tv->cursor_line < tv->line_count && tv->lines[tv->cursor_line]) {
         const char *line = tv->lines[tv->cursor_line];
         if (tv->cursor_col > 0) {
-            int chars_to_measure = (tv->cursor_col > strlen(line)) ? strlen(line) : tv->cursor_col;
-            if (chars_to_measure > 0) {
+            // Convert character position to byte offset for measuring
+            int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+            int line_len_bytes = strlen(line);
+            if (byte_offset > line_len_bytes) byte_offset = line_len_bytes;
+            
+            if (byte_offset > 0) {
                 XGlyphInfo extents;
                 XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line,
-                               chars_to_measure, &extents);
+                               byte_offset, &extents);
                 cursor_x += extents.xOff;
             }
         }
@@ -1039,13 +1217,25 @@ void textview_draw(TextView *tv) {
             
             // Check if current line is in selection
             if (i >= sel_start_line && i <= sel_end_line) {
-                int draw_start = 0;
-                int draw_end = line_len;
+                // Selection columns are in character positions, need to convert to byte offsets
+                int line_len_chars = utf8_strlen(line);
+                int draw_start_char = 0;
+                int draw_end_char = line_len_chars;
                 
-                if (i == sel_start_line) draw_start = sel_start_col;
-                if (i == sel_end_line) draw_end = sel_end_col;
+                if (i == sel_start_line) draw_start_char = sel_start_col;
+                if (i == sel_end_line) draw_end_char = sel_end_col;
                 
-                if (draw_start < line_len && draw_end > 0 && draw_start < draw_end) {
+                // Clamp to valid range
+                if (draw_start_char < 0) draw_start_char = 0;
+                if (draw_start_char > line_len_chars) draw_start_char = line_len_chars;
+                if (draw_end_char < 0) draw_end_char = 0;
+                if (draw_end_char > line_len_chars) draw_end_char = line_len_chars;
+                
+                // Convert character positions to byte offsets
+                int draw_start_byte = utf8_char_index_to_byte_offset(line, draw_start_char);
+                int draw_end_byte = utf8_char_index_to_byte_offset(line, draw_end_char);
+                
+                if (draw_start_byte < line_len && draw_end_byte > 0 && draw_start_byte < draw_end_byte) {
                     // Draw selection background using XRender
                     Picture dest = XRenderCreatePicture(tv->display, tv->window,
                         XRenderFindVisualFormat(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display))),
@@ -1053,17 +1243,17 @@ void textview_draw(TextView *tv) {
                     
                     // Calculate selection rectangle position with horizontal scroll
                     int sel_x = x_start - tv->scroll_x;
-                    if (draw_start > 0) {
+                    if (draw_start_byte > 0) {
                         XGlyphInfo extents;
-                        XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line, draw_start, &extents);
+                        XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line, draw_start_byte, &extents);
                         sel_x += extents.xOff;
                     }
                     
                     int sel_width = 0;
-                    if (draw_end > draw_start) {
+                    if (draw_end_byte > draw_start_byte) {
                         XGlyphInfo extents;
-                        XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[draw_start], 
-                                      draw_end - draw_start, &extents);
+                        XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[draw_start_byte], 
+                                      draw_end_byte - draw_start_byte, &extents);
                         sel_width = extents.xOff;
                     }
                     
@@ -1118,13 +1308,18 @@ void textview_draw(TextView *tv) {
         if (tv->has_focus && i == tv->cursor_line) {
             int cursor_x = x_start - tv->scroll_x;  // Apply horizontal scroll
             
-            // Calculate cursor position
+            // Calculate cursor position - convert character position to byte offset
             if (tv->cursor_col > 0) {
-                int chars_to_measure = (tv->cursor_col > strlen(line)) ? strlen(line) : tv->cursor_col;
-                if (chars_to_measure > 0) {
+                // Convert character index to byte offset for measuring
+                int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                int line_len_bytes = strlen(line);
+                if (byte_offset > line_len_bytes) {
+                    byte_offset = line_len_bytes;
+                }
+                if (byte_offset > 0) {
                     XGlyphInfo extents;
                     XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line,
-                                   chars_to_measure, &extents);
+                                   byte_offset, &extents);
                     cursor_x += extents.xOff;
                 }
             }
@@ -1172,21 +1367,25 @@ void textview_draw(TextView *tv) {
                 }
                 
                 // If cursor is on a character, redraw that character in white
-                if (tv->cursor_col < strlen(line)) {
-                    // Handle UTF-8 multi-byte characters
-                    unsigned char c = (unsigned char)line[tv->cursor_col];
-                    int char_len = 1;
-                    if (c >= 0xC0 && c <= 0xDF) char_len = 2;
-                    else if (c >= 0xE0 && c <= 0xEF) char_len = 3;
-                    else if (c >= 0xF0 && c <= 0xF7) char_len = 4;
+                int line_len_chars = utf8_strlen(line);
+                if (tv->cursor_col < line_len_chars) {
+                    // Convert character position to byte offset
+                    int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                    int line_len_bytes = strlen(line);
                     
-                    // Make sure we don't read past the end of the line
-                    if (tv->cursor_col + char_len > strlen(line)) {
-                        char_len = strlen(line) - tv->cursor_col;
+                    if (byte_offset < line_len_bytes) {
+                        // Get the number of bytes in this UTF-8 character
+                        unsigned char c = (unsigned char)line[byte_offset];
+                        int char_len = utf8_char_bytes(c);
+                        
+                        // Make sure we don't read past the end of the line
+                        if (byte_offset + char_len > line_len_bytes) {
+                            char_len = line_len_bytes - byte_offset;
+                        }
+                        
+                        XftDrawStringUtf8(tv->xft_draw, &tv->xft_sel_color, tv->font,
+                                 cursor_x, y - 2, (FcChar8*)&line[byte_offset], char_len);
                     }
-                    
-                    XftDrawStringUtf8(tv->xft_draw, &tv->xft_sel_color, tv->font,
-                                 cursor_x, y - 2, (FcChar8*)&line[tv->cursor_col], char_len);
                 }
             }
         }
@@ -1347,6 +1546,10 @@ void textview_draw(TextView *tv) {
         XRenderFreePicture(tv->display, dest);
     }
     
+    // Update previous cursor position after full redraw
+    // This prevents ghost cursors when viewport scrolls
+    tv->prev_cursor_line = tv->cursor_line;
+    tv->prev_cursor_col = tv->cursor_col;
 }
 
 // Update only the cursor position (optimized drawing)
@@ -1375,13 +1578,18 @@ void textview_update_cursor(TextView *tv) {
         // Clear just this line's area (cursor is drawn from y - line_height + 2 to y + 2)
         // Don't clear the line number area - start after it
         int clear_x = tv->line_numbers ? tv->line_number_width : 0;
-        // Fill with gray background (can't use XClearArea since we disabled auto-background)
-        XSetForeground(tv->display, DefaultGC(tv->display, DefaultScreen(tv->display)), 0xa2a2a0);
-        XFillRectangle(tv->display, tv->window,
-                      DefaultGC(tv->display, DefaultScreen(tv->display)),
-                      clear_x, y - line_height + 2,  // Start where cursor starts
-                      viewport_width - clear_x,
-                      line_height);  // Clear exactly line_height pixels (cursor height)
+        // Clear using XRender to match cursor drawing (avoids sync issues)
+        Picture dest = XRenderCreatePicture(tv->display, tv->window,
+            XRenderFindVisualFormat(tv->display, DefaultVisual(tv->display, DefaultScreen(tv->display))),
+            0, NULL);
+        
+        XRenderColor gray_bg = {0xa2a2, 0xa2a2, 0xa0a0, 0xFFFF};
+        XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray_bg,
+                           clear_x, y - line_height + 2,
+                           viewport_width - clear_x,
+                           line_height);
+        
+        XRenderFreePicture(tv->display, dest);
         
         // Set clipping to prevent drawing into scrollbar area and line numbers
         XRectangle clip_rect;
@@ -1438,11 +1646,15 @@ void textview_update_cursor(TextView *tv) {
             
             // Calculate cursor position based on column
             if (tv->cursor_col > 0 && line) {
-                int chars_to_measure = (tv->cursor_col > strlen(line)) ? strlen(line) : tv->cursor_col;
-                if (chars_to_measure > 0) {
+                // Convert character position to byte offset for measuring
+                int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                int line_len_bytes = strlen(line);
+                if (byte_offset > line_len_bytes) byte_offset = line_len_bytes;
+                
+                if (byte_offset > 0) {
                     XGlyphInfo extents;
                     XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)line,
-                                     chars_to_measure, &extents);
+                                     byte_offset, &extents);
                     cursor_actual_x += extents.xOff;
                 }
             }
@@ -1478,19 +1690,25 @@ void textview_update_cursor(TextView *tv) {
                 XRenderFreePicture(tv->display, dest);
                 
                 // Redraw character under cursor in white
-                if (tv->cursor_col < strlen(line)) {
-                    unsigned char c = (unsigned char)line[tv->cursor_col];
-                    int char_len = 1;
-                    if (c >= 0xC0 && c <= 0xDF) char_len = 2;
-                    else if (c >= 0xE0 && c <= 0xEF) char_len = 3;
-                    else if (c >= 0xF0 && c <= 0xF7) char_len = 4;
+                int line_len_chars = utf8_strlen(line);
+                if (tv->cursor_col < line_len_chars) {
+                    // Convert character position to byte offset
+                    int byte_offset = utf8_char_index_to_byte_offset(line, tv->cursor_col);
+                    int line_len_bytes = strlen(line);
                     
-                    if (tv->cursor_col + char_len > strlen(line)) {
-                        char_len = strlen(line) - tv->cursor_col;
+                    if (byte_offset < line_len_bytes) {
+                        // Get the number of bytes in this UTF-8 character
+                        unsigned char c = (unsigned char)line[byte_offset];
+                        int char_len = utf8_char_bytes(c);
+                        
+                        // Make sure we don't read past the end of the line
+                        if (byte_offset + char_len > line_len_bytes) {
+                            char_len = line_len_bytes - byte_offset;
+                        }
+                        
+                        XftDrawStringUtf8(tv->xft_draw, &tv->xft_sel_color, tv->font,
+                                        cursor_draw_x, y - 2, (FcChar8*)&line[byte_offset], char_len);
                     }
-                    
-                    XftDrawStringUtf8(tv->xft_draw, &tv->xft_sel_color, tv->font,
-                                    cursor_draw_x, y - 2, (FcChar8*)&line[tv->cursor_col], char_len);
                 }
             }
         }
@@ -1504,9 +1722,12 @@ void textview_update_cursor(TextView *tv) {
     if (tv->prev_cursor_line != tv->cursor_line) {
         draw_line_at(tv->prev_cursor_line, false);  // Clear old cursor
         draw_line_at(tv->cursor_line, true);        // Draw new cursor
+    } else if (tv->prev_cursor_col != tv->cursor_col) {
+        // Same line but different column - need to clear old cursor first
+        draw_line_at(tv->cursor_line, false);  // Clear old cursor
+        draw_line_at(tv->cursor_line, true);   // Draw new cursor
     } else {
-        // Same line - always redraw to ensure cursor is visible
-        // This handles both column changes and clicking on same position
+        // Same position - just redraw with cursor
         draw_line_at(tv->cursor_line, true);
     }
     
@@ -1802,27 +2023,42 @@ bool textview_handle_button_press(TextView *tv, XButtonEvent *event) {
         int line_len = strlen(line);
         int x_pos = x_start;
         
-        // Find which character was clicked
+        // Find which character was clicked - iterate through UTF-8 characters
         bool found = false;
-        for (int i = 0; i < line_len; i++) {
+        int char_index = 0;
+        int byte_offset = 0;
+        
+        while (byte_offset < line_len) {
+            // Get the number of bytes in this UTF-8 character
+            int char_bytes = utf8_char_bytes((unsigned char)line[byte_offset]);
+            if (char_bytes <= 0) char_bytes = 1;  // Safety fallback
+            
+            // Make sure we don't read past the end of the line
+            if (byte_offset + char_bytes > line_len) {
+                char_bytes = line_len - byte_offset;
+            }
+            
+            // Measure this character's width
             XGlyphInfo extents;
-            XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
+            XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[byte_offset], char_bytes, &extents);
             int char_width = extents.xOff;
             
             // If click is anywhere within this character, place cursor before it
-            // This allows clicking on a character to position cursor for deletion
             if (adjusted_x < x_pos + char_width) {
                 // Click is on this character - place cursor before it
-                clicked_col = i;
+                clicked_col = char_index;
                 found = true;
                 break;
             }
+            
             x_pos += char_width;
+            byte_offset += char_bytes;
+            char_index++;
         }
         
         // If we didn't find a character (click is past end of line)
         if (!found) {
-            clicked_col = line_len;
+            clicked_col = char_index;  // Set to character count, not byte count
         }
     } else if (adjusted_x <= x_start) {
         // Click before text starts - cursor at beginning
@@ -2032,17 +2268,33 @@ bool textview_handle_motion(TextView *tv, XMotionEvent *event) {
             int line_len = strlen(line);
             int x_pos = x_start;
             
-            for (int i = 0; i < line_len; i++) {
+            // Iterate through UTF-8 characters for drag selection
+            int char_index = 0;
+            int byte_offset = 0;
+            
+            while (byte_offset < line_len) {
+                // Get the number of bytes in this UTF-8 character
+                int char_bytes = utf8_char_bytes((unsigned char)line[byte_offset]);
+                if (char_bytes <= 0) char_bytes = 1;  // Safety fallback
+                
+                // Make sure we don't read past the end of the line
+                if (byte_offset + char_bytes > line_len) {
+                    char_bytes = line_len - byte_offset;
+                }
+                
+                // Measure this character's width
                 XGlyphInfo extents;
-                XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[i], 1, &extents);
+                XftTextExtentsUtf8(tv->display, tv->font, (FcChar8*)&line[byte_offset], char_bytes, &extents);
                 int char_width = extents.xOff;
                 
                 if (adjusted_x < x_pos + char_width / 2) {
-                    motion_col = i;
+                    motion_col = char_index;
                     break;
                 }
                 x_pos += char_width;
-                motion_col = i + 1;
+                byte_offset += char_bytes;
+                char_index++;
+                motion_col = char_index;
             }
         }
         
@@ -2085,8 +2337,8 @@ void textview_move_cursor(TextView *tv, int line, int col) {
     if (!tv) return;
     if (line >= 0 && line < tv->line_count) {
         tv->cursor_line = line;
-        int line_len = strlen(tv->lines[line]);
-        tv->cursor_col = (col < 0) ? 0 : (col > line_len) ? line_len : col;
+        int line_len_chars = utf8_strlen(tv->lines[line]);
+        tv->cursor_col = (col < 0) ? 0 : (col > line_len_chars) ? line_len_chars : col;
         if (tv->on_cursor_move) tv->on_cursor_move(tv);
         textview_ensure_cursor_visible(tv);
         textview_draw(tv);
@@ -2095,24 +2347,40 @@ void textview_move_cursor(TextView *tv, int line, int col) {
 
 void textview_move_cursor_page_up(TextView *tv) {
     if (!tv) return;
+    
+    int old_scroll_y = tv->scroll_y;
     tv->cursor_line -= tv->visible_lines;
     if (tv->cursor_line < 0) tv->cursor_line = 0;
-    int line_len = strlen(tv->lines[tv->cursor_line]);
-    if (tv->cursor_col > line_len) tv->cursor_col = line_len;
+    int line_len_chars = utf8_strlen(tv->lines[tv->cursor_line]);
+    if (tv->cursor_col > line_len_chars) tv->cursor_col = line_len_chars;
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_update_cursor(tv);
+    
+    // If vertical scrolling occurred, need full redraw
+    if (tv->scroll_y != old_scroll_y) {
+        textview_draw(tv);
+    } else {
+        textview_update_cursor(tv);
+    }
 }
 
 void textview_move_cursor_page_down(TextView *tv) {
     if (!tv) return;
+    
+    int old_scroll_y = tv->scroll_y;
     tv->cursor_line += tv->visible_lines;
     if (tv->cursor_line >= tv->line_count) tv->cursor_line = tv->line_count - 1;
-    int line_len = strlen(tv->lines[tv->cursor_line]);
-    if (tv->cursor_col > line_len) tv->cursor_col = line_len;
+    int line_len_chars = utf8_strlen(tv->lines[tv->cursor_line]);
+    if (tv->cursor_col > line_len_chars) tv->cursor_col = line_len_chars;
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
-    textview_update_cursor(tv);
+    
+    // If vertical scrolling occurred, need full redraw
+    if (tv->scroll_y != old_scroll_y) {
+        textview_draw(tv);
+    } else {
+        textview_update_cursor(tv);
+    }
 }
 
 void textview_set_selection(TextView *tv, int start_line, int start_col,
@@ -2158,20 +2426,34 @@ char* textview_get_selection(TextView *tv) {
         return NULL;
     }
     
+    // Convert character positions to byte offsets
     // Calculate total size needed
     int total_size = 0;
     if (start_line == end_line) {
         // Single line selection
-        int len = strlen(tv->lines[start_line]);
-        if (start_col > len) start_col = len;
-        if (end_col > len) end_col = len;
-        total_size = end_col - start_col + 1;
+        const char *line = tv->lines[start_line];
+        int line_len_chars = utf8_strlen(line);
+        
+        // Clamp character positions
+        if (start_col > line_len_chars) start_col = line_len_chars;
+        if (end_col > line_len_chars) end_col = line_len_chars;
+        
+        // Convert to byte offsets
+        int start_byte = utf8_char_index_to_byte_offset(line, start_col);
+        int end_byte = utf8_char_index_to_byte_offset(line, end_col);
+        
+        total_size = end_byte - start_byte + 1;
     } else {
         // Multi-line selection
         // First line
-        int first_len = strlen(tv->lines[start_line]);
-        if (start_col > first_len) start_col = first_len;
-        total_size += first_len - start_col + 1; // +1 for newline
+        const char *first_line = tv->lines[start_line];
+        int first_len_chars = utf8_strlen(first_line);
+        int first_len_bytes = strlen(first_line);
+        
+        if (start_col > first_len_chars) start_col = first_len_chars;
+        int start_byte = utf8_char_index_to_byte_offset(first_line, start_col);
+        
+        total_size += first_len_bytes - start_byte + 1; // +1 for newline
         
         // Middle lines
         for (int i = start_line + 1; i < end_line; i++) {
@@ -2179,9 +2461,13 @@ char* textview_get_selection(TextView *tv) {
         }
         
         // Last line
-        int last_len = strlen(tv->lines[end_line]);
-        if (end_col > last_len) end_col = last_len;
-        total_size += end_col + 1; // +1 for null terminator
+        const char *last_line = tv->lines[end_line];
+        int last_len_chars = utf8_strlen(last_line);
+        
+        if (end_col > last_len_chars) end_col = last_len_chars;
+        int end_byte = utf8_char_index_to_byte_offset(last_line, end_col);
+        
+        total_size += end_byte + 1; // +1 for null terminator
     }
     
     // Allocate buffer
@@ -2192,16 +2478,32 @@ char* textview_get_selection(TextView *tv) {
     
     if (start_line == end_line) {
         // Single line selection
-        int len = end_col - start_col;
+        const char *line = tv->lines[start_line];
+        int line_len_chars = utf8_strlen(line);
+        
+        // Clamp and convert positions
+        if (start_col > line_len_chars) start_col = line_len_chars;
+        if (end_col > line_len_chars) end_col = line_len_chars;
+        
+        int start_byte = utf8_char_index_to_byte_offset(line, start_col);
+        int end_byte = utf8_char_index_to_byte_offset(line, end_col);
+        
+        int len = end_byte - start_byte;
         if (len > 0) {
-            memcpy(p, tv->lines[start_line] + start_col, len);
+            memcpy(p, line + start_byte, len);
             p += len;
         }
     } else {
         // Multi-line selection
         // First line
-        strcpy(p, tv->lines[start_line] + start_col);
-        p += strlen(tv->lines[start_line] + start_col);
+        const char *first_line = tv->lines[start_line];
+        int first_len_chars = utf8_strlen(first_line);
+        
+        if (start_col > first_len_chars) start_col = first_len_chars;
+        int start_byte = utf8_char_index_to_byte_offset(first_line, start_col);
+        
+        strcpy(p, first_line + start_byte);
+        p += strlen(first_line + start_byte);
         *p++ = '\n';
         
         // Middle lines
@@ -2212,8 +2514,14 @@ char* textview_get_selection(TextView *tv) {
         }
         
         // Last line
-        memcpy(p, tv->lines[end_line], end_col);
-        p += end_col;
+        const char *last_line = tv->lines[end_line];
+        int last_len_chars = utf8_strlen(last_line);
+        
+        if (end_col > last_len_chars) end_col = last_len_chars;
+        int end_byte = utf8_char_index_to_byte_offset(last_line, end_col);
+        
+        memcpy(p, last_line, end_byte);
+        p += end_byte;
     }
     
     *p = '\0';
@@ -2248,16 +2556,29 @@ void textview_delete_selection(TextView *tv) {
     if (start_line == end_line) {
         // Single line deletion
         char *line = tv->lines[start_line];
-        int len = strlen(line);
-        if (start_col > len) start_col = len;
-        if (end_col > len) end_col = len;
+        int line_len_bytes = strlen(line);
+        int line_len_chars = utf8_strlen(line);
+        
+        // Clamp character positions
+        if (start_col > line_len_chars) start_col = line_len_chars;
+        if (end_col > line_len_chars) end_col = line_len_chars;
+        
+        // Convert to byte offsets
+        int start_byte = utf8_char_index_to_byte_offset(line, start_col);
+        int end_byte = utf8_char_index_to_byte_offset(line, end_col);
         
         // Create new line with deleted portion removed
-        int new_len = len - (end_col - start_col);
+        int new_len = line_len_bytes - (end_byte - start_byte);
         char *new_line = malloc(new_len + 1);
         if (new_line) {
-            strncpy(new_line, line, start_col);
-            strcpy(new_line + start_col, line + end_col);
+            if (start_byte > 0) {
+                strncpy(new_line, line, start_byte);
+            }
+            if (end_byte < line_len_bytes) {
+                strcpy(new_line + start_byte, line + end_byte);
+            } else {
+                new_line[start_byte] = '\0';
+            }
             free(tv->lines[start_line]);
             tv->lines[start_line] = new_line;
         }
@@ -2266,17 +2587,28 @@ void textview_delete_selection(TextView *tv) {
         // Combine first and last line
         char *first_line = tv->lines[start_line];
         char *last_line = tv->lines[end_line];
-        int first_len = strlen(first_line);
-        int last_len = strlen(last_line);
+        int last_len_bytes = strlen(last_line);
+        int first_len_chars = utf8_strlen(first_line);
+        int last_len_chars = utf8_strlen(last_line);
         
-        if (start_col > first_len) start_col = first_len;
-        if (end_col > last_len) end_col = last_len;
+        // Clamp and convert character positions to byte offsets
+        if (start_col > first_len_chars) start_col = first_len_chars;
+        if (end_col > last_len_chars) end_col = last_len_chars;
         
-        int new_len = start_col + (last_len - end_col);
+        int start_byte = utf8_char_index_to_byte_offset(first_line, start_col);
+        int end_byte = utf8_char_index_to_byte_offset(last_line, end_col);
+        
+        int new_len = start_byte + (last_len_bytes - end_byte);
         char *new_line = malloc(new_len + 1);
         if (new_line) {
-            strncpy(new_line, first_line, start_col);
-            strcpy(new_line + start_col, last_line + end_col);
+            if (start_byte > 0) {
+                strncpy(new_line, first_line, start_byte);
+            }
+            if (end_byte < last_len_bytes) {
+                strcpy(new_line + start_byte, last_line + end_byte);
+            } else {
+                new_line[start_byte] = '\0';
+            }
             free(tv->lines[start_line]);
             tv->lines[start_line] = new_line;
             
@@ -2471,12 +2803,12 @@ void textview_update_scrollbar(TextView *tv) {
 void textview_select_all(TextView *tv) {
     if (!tv || tv->line_count == 0) return;
     
-    // Find the length of the last line
+    // Find the length of the last line in characters
     int last_line_index = tv->line_count - 1;
-    int last_line_len = strlen(tv->lines[last_line_index]);
+    int last_line_len_chars = utf8_strlen(tv->lines[last_line_index]);
     
     // Select from beginning to end
-    textview_set_selection(tv, 0, 0, last_line_index, last_line_len);
+    textview_set_selection(tv, 0, 0, last_line_index, last_line_len_chars);
 }
 
 // Copy selected text to clipboard
