@@ -1243,149 +1243,26 @@ void intuition_handle_client_message(XClientMessageEvent *event) {
 }
 
 
-static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy) {
-    if (!desk || !ox || !oy) return;
-    const int sx = 20, step_x = 110;
-    // sy and label_space may be used in future for vertical layout
-    // const int sy = 40;
-    // const int label_space = 20;
-    
-    FileIcon **arr = get_icon_array(); 
-    int n = get_icon_count();
-    
-    // Calculate proper start position: Home icon top + 80px gap
-    int first_iconified_y = 120 + 80;  // Home icon y + 80px gap (same as System->Home)
-    
-    // Find next slot starting from the correct position
-    for (int x = sx; x < desk->width - 64; x += step_x) {
-        int y = first_iconified_y;
-        
-        // Keep checking for collisions until we find a free slot
-        bool collision_found;
-        do {
-            collision_found = false;
-            for (int i = 0; i < n; i++) {
-                FileIcon *ic = arr[i];
-                if (ic->display_window != desk->win) continue;
-                // Check collision with ANY icon type (file, drawer, or iconified)
-                // Check if icons would overlap in the same column slot
-                // Icons in same column if their x positions are within the column range
-                bool same_column = (ic->x >= x && ic->x < x + step_x) || 
-                                  (x >= ic->x && x < ic->x + ic->width);
-                if (same_column && ic->y == y) {
-                    y += 80;  // Move down and check again
-                    collision_found = true;
-                    break;  // Start collision check over from beginning
-                }
-            }
-        } while (collision_found && y + 64 < desk->height);
-        
-        if (y + 64 < desk->height) { 
-            *ox = x; *oy = y; return; 
-        }
-    }
-    *ox = sx; *oy = first_iconified_y;
-}
 
 void iconify_canvas(Canvas *c) {
     if (!c || (c->type != WINDOW && c->type != DIALOG)) return;
-    Canvas *desk = get_desktop_canvas(); if (!desk) return;
-    int nx = 20, ny = 40; find_next_desktop_slot(desk, &nx, &ny);
-    const char *icon_path = NULL; char *label = NULL;
-    const char *def_foo_path = "/usr/local/share/amiwb/icons/def_icons/def_foo.info";
     
-    // Use the Canvas's title_base which was already set correctly when the window was created
-    label = c->title_base ? strdup(c->title_base) : strdup("Untitled");
-    
-    if (c->client_win == None) { 
-        // For workbench windows and dialogs without client
-        if (c->type == DIALOG) {
-            // Use specific icons for different dialog types based on title
-            if (c->title_base) {
-                if (strstr(c->title_base, "Rename")) {
-                    icon_path = "/usr/local/share/amiwb/icons/rename.info";
-                } else if (strstr(c->title_base, "Delete")) {
-                    icon_path = "/usr/local/share/amiwb/icons/delete.info";
-                } else if (strstr(c->title_base, "Execute")) {
-                    icon_path = "/usr/local/share/amiwb/icons/execute.info";
-                } else if (strstr(c->title_base, "Progress") || strstr(c->title_base, "Copying") || strstr(c->title_base, "Moving")) {
-                    icon_path = "/usr/local/share/amiwb/icons/progress.info";
-                } else if (strstr(c->title_base, "Information")) {
-                    icon_path = "/usr/local/share/amiwb/icons/iconinfo.info";
-                } else {
-                    icon_path = "/usr/local/share/amiwb/icons/dialog.info";  // Generic dialog icon
-                }
-            } else {
-                icon_path = "/usr/local/share/amiwb/icons/dialog.info";
-            }
-            
-            // Check if dialog-specific icon exists, fall back to generic dialog icon or filer
-            struct stat st;
-            if (stat(icon_path, &st) != 0) {
-                // Try generic dialog icon
-                icon_path = "/usr/local/share/amiwb/icons/dialog.info";
-                if (stat(icon_path, &st) != 0) {
-                    // Fall back to filer icon as last resort
-                    icon_path = "/usr/local/share/amiwb/icons/filer.info";
-                }
-            }
-        } else {
-            // Regular workbench window
-            icon_path = "/usr/local/share/amiwb/icons/filer.info";
-        }
-    } else {
-        // Try to find a specific icon for this app using the title_base
-        char icon_full[256]; 
-        snprintf(icon_full, sizeof(icon_full), "/usr/local/share/amiwb/icons/%s.info", c->title_base);
-        struct stat st; 
-        if (stat(icon_full, &st) == 0) {
-            icon_path = icon_full;
-        } else {
-            log_error("[ICON] Couldn't find %s.info at %s, using def_foo.info", c->title_base, icon_full);
-            icon_path = def_foo_path;
-        }
+    // Create the iconified icon (all icon logic is now in workbench.c)
+    FileIcon *icon = create_iconified_icon(c);
+    if (!icon) {
+        log_error("[ERROR] Failed to create iconified icon - cannot iconify window");
+        return;
     }
     
-    // Verify the icon path exists, use def_foo as ultimate fallback
-    struct stat st;
-    if (stat(icon_path, &st) != 0) {
-        log_error("[WARNING] Icon file not found: %s, using def_foo.info", icon_path);
-        icon_path = def_foo_path;
+    // Hide the window (this is the window management part that stays in intuition.c)
+    XUnmapWindow(display, c->win);
+    if (active_window == c) active_window = NULL;
+    
+    // Refresh the desktop to show the new icon
+    Canvas *desk = get_desktop_canvas();
+    if (desk) {
+        redraw_canvas(desk);
     }
-    
-    create_icon(icon_path, desk, nx, ny);
-    FileIcon **ia = get_icon_array(); 
-    FileIcon *ni = ia[get_icon_count() - 1];
-    
-    // Ensure we actually got an icon, this is critical
-    if (!ni) {
-        log_error("[ERROR] Failed to create iconified icon for window, using emergency fallback");
-        // Try one more time with def_foo
-        create_icon(def_foo_path, desk, nx, ny);
-        ia = get_icon_array();
-        ni = ia[get_icon_count() - 1];
-        if (!ni) {
-            log_error("[ERROR] CRITICAL: Cannot create iconified icon - window will be lost!");
-            free(label);
-            return;
-        }
-    }
-    
-    ni->type = TYPE_ICONIFIED; 
-    free(ni->label); 
-    ni->label = label; 
-    free(ni->path); 
-    ni->path = NULL; 
-    ni->iconified_canvas = c;
-    
-    // Center the iconified icon within its column slot (same as cleanup does)
-    const int step_x = 110;  // Column width
-    int column_center_offset = (step_x - ni->width) / 2;
-    if (column_center_offset < 0) column_center_offset = 0;
-    ni->x = nx + column_center_offset;
-    XUnmapWindow(display, c->win); 
-    if (active_window == c) active_window = NULL; 
-    redraw_canvas(desk); 
     send_x_command_and_sync();
 }
 

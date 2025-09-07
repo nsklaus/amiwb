@@ -143,25 +143,20 @@ static Colormap target_colormap = 0;
 // a consistent icon even without custom sidecars.
 // ========================
 static const char *deficons_dir = "/usr/local/share/amiwb/icons/def_icons";
-static char *def_txt_info  = NULL;
-static char *def_jpg_info  = NULL;
-static char *def_png_info  = NULL;
-static char *def_gif_info  = NULL;
-static char *def_pdf_info  = NULL;
-static char *def_avi_info  = NULL;
-static char *def_mp4_info  = NULL;
-static char *def_mkv_info  = NULL;
-static char *def_html_info = NULL;
-static char *def_webp_info = NULL;
-static char *def_zip_info  = NULL;
-static char *def_lha_info  = NULL;
-static char *def_mp3_info  = NULL;
-static char *def_m4a_info  = NULL;
-static char *def_webm_info = NULL;
-static char *def_rar_info  = NULL;
-static char *def_epub_info = NULL;
-static char *def_dir_info  = NULL;   // for directories
-static char *def_foo_info  = NULL;   // generic fallback for unknown filetypes
+
+// Dynamic def_icons system - automatically scans directory for def_*.info files
+typedef struct DefIconEntry {
+    char *extension;   // File extension (without dot): "txt", "jpg", etc.
+    char *icon_path;   // Full path to the .info file
+} DefIconEntry;
+
+static DefIconEntry *def_icons_array = NULL;
+static int def_icons_count = 0;
+static int def_icons_capacity = 0;
+
+// Special cases that don't follow the pattern
+static char *def_dir_info  = NULL;   // for directories (def_dir.info)
+static char *def_foo_info  = NULL;   // generic fallback (def_foo.info)
 
 // Spatial mode control (true = new window per directory, false = reuse window)
 static bool spatial_mode = true;  // Default to spatial (AmigaOS style)
@@ -185,47 +180,137 @@ void set_global_show_hidden_state(bool show) {
     global_show_hidden = show;
 }
 
-// Resolve and cache a deficon path if present on disk; keeps runtime lookups cheap.
-static void load_one_deficon(const char *basename, char **out_storage) {
-    if (!basename || !out_storage) return;
-    char path[512];
-    snprintf(path, sizeof(path), "%s/%s", deficons_dir, basename);
-    struct stat st;
-    if (stat(path, &st) == 0) {
-        if (*out_storage) free(*out_storage);
-        *out_storage = strdup(path);
-        if (!*out_storage) {
-            log_error("[ERROR] strdup failed for path: %s", path);
+// Add or update a def_icon in the dynamic array (silent - no logging)
+static void add_or_update_deficon_entry(const char *extension, const char *full_path, bool is_user) {
+    if (!extension || !full_path) return;
+    
+    // Check if this extension already exists (user icons override system icons)
+    for (int i = 0; i < def_icons_count; i++) {
+        if (strcasecmp(def_icons_array[i].extension, extension) == 0) {
+            // Found existing entry - update it silently
+            free(def_icons_array[i].icon_path);
+            def_icons_array[i].icon_path = strdup(full_path);
+            if (!def_icons_array[i].icon_path) {
+                log_error("[ERROR] strdup failed for deficon path update");
+                return;
+            }
             return;
         }
-        log_error("[ICON] deficons present: %s -> %s", basename, path);
-    } else {
-        log_error("[WARNING] deficons missing: %s -> %s/?!)", basename, deficons_dir);
     }
+    
+    // Not found - add new entry
+    // Grow array if needed
+    if (def_icons_count >= def_icons_capacity) {
+        int new_capacity = def_icons_capacity == 0 ? 16 : def_icons_capacity * 2;
+        DefIconEntry *new_array = realloc(def_icons_array, new_capacity * sizeof(DefIconEntry));
+        if (!new_array) {
+            log_error("[ERROR] Failed to allocate memory for def_icons array");
+            return;
+        }
+        def_icons_array = new_array;
+        def_icons_capacity = new_capacity;
+    }
+    
+    // Add the new entry silently
+    def_icons_array[def_icons_count].extension = strdup(extension);
+    def_icons_array[def_icons_count].icon_path = strdup(full_path);
+    if (!def_icons_array[def_icons_count].extension || !def_icons_array[def_icons_count].icon_path) {
+        log_error("[ERROR] strdup failed for deficon entry");
+        if (def_icons_array[def_icons_count].extension) free(def_icons_array[def_icons_count].extension);
+        if (def_icons_array[def_icons_count].icon_path) free(def_icons_array[def_icons_count].icon_path);
+        return;
+    }
+    def_icons_count++;
 }
 
-// Preload common deficons so refresh can pick the right fallback instantly.
+// Forward declaration for ends_with function
+static bool ends_with(const char *s, const char *suffix);
+
+// Scan a directory for def_*.info files and load them
+static void scan_deficons_directory(const char *dir_path, bool is_user) {
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        // Only warn for system directory, user directory is optional
+        if (!is_user) {
+            log_error("[WARNING] Cannot open deficons directory: %s", dir_path);
+        }
+        return;
+    }
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir))) {
+        // Check if filename matches pattern: def_*.info
+        if (strncmp(entry->d_name, "def_", 4) != 0) continue;
+        if (!ends_with(entry->d_name, ".info")) continue;
+        
+        // Build full path
+        char full_path[PATH_SIZE];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+        
+        // Verify it's a regular file
+        struct stat st;
+        if (stat(full_path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        
+        // Extract the extension part from def_XXX.info
+        // Skip "def_" (4 chars), take until ".info" (strlen - 4 - 5)
+        size_t name_len = strlen(entry->d_name);
+        if (name_len <= 9) continue; // Too short to be valid def_X.info
+        
+        size_t ext_len = name_len - 4 - 5; // Remove "def_" and ".info"
+        char extension[NAME_SIZE];
+        strncpy(extension, entry->d_name + 4, ext_len);
+        extension[ext_len] = '\0';
+        
+        // Handle special cases (silently)
+        if (strcmp(extension, "dir") == 0) {
+            if (def_dir_info) free(def_dir_info);
+            def_dir_info = strdup(full_path);
+            if (!def_dir_info) {
+                log_error("[ERROR] strdup failed for def_dir.info");
+            }
+        } else if (strcmp(extension, "foo") == 0) {
+            if (def_foo_info) free(def_foo_info);
+            def_foo_info = strdup(full_path);
+            if (!def_foo_info) {
+                log_error("[ERROR] strdup failed for def_foo.info");
+            }
+        } else {
+            // Regular extension - add or update in array
+            add_or_update_deficon_entry(extension, full_path, is_user);
+        }
+    }
+    
+    closedir(dir);
+}
+
+// Automatically scan and load all def_*.info files from both system and user directories
 static void load_deficons(void) {
-    // Map common extensions to specific deficon .info files
-    load_one_deficon("def_txt.info",  &def_txt_info);
-    load_one_deficon("def_jpg.info",  &def_jpg_info);
-    load_one_deficon("def_png.info",  &def_png_info);
-    load_one_deficon("def_gif.info",  &def_gif_info);
-    load_one_deficon("def_pdf.info",  &def_pdf_info);
-    load_one_deficon("def_avi.info",  &def_avi_info);
-    load_one_deficon("def_mp4.info",  &def_mp4_info);
-    load_one_deficon("def_mkv.info",  &def_mkv_info);
-    load_one_deficon("def_html.info", &def_html_info);
-    load_one_deficon("def_webp.info", &def_webp_info);
-    load_one_deficon("def_zip.info",  &def_zip_info);
-    load_one_deficon("def_lha.info",  &def_lha_info);
-    load_one_deficon("def_mp3.info",  &def_mp3_info);
-    load_one_deficon("def_m4a.info",  &def_m4a_info);
-    load_one_deficon("def_webm.info", &def_webm_info);
-    load_one_deficon("def_rar.info",  &def_rar_info);
-    load_one_deficon("def_epub.info", &def_epub_info);
-    load_one_deficon("def_dir.info",  &def_dir_info);
-    load_one_deficon("def_foo.info",  &def_foo_info);
+    // First load system def_icons (silently)
+    scan_deficons_directory(deficons_dir, false);
+    
+    // Then load user def_icons (these override system ones, also silently)
+    const char *home = getenv("HOME");
+    if (home) {
+        char user_deficons_dir[PATH_SIZE];
+        snprintf(user_deficons_dir, sizeof(user_deficons_dir), 
+                "%s/.config/amiwb/icons/def_icons", home);
+        scan_deficons_directory(user_deficons_dir, true);
+    }
+    
+    // Now log the final active icons (only what will actually be used)
+    // Log special icons
+    if (def_dir_info) {
+        log_error("[ICON] def_dir.info -> %s", def_dir_info);
+    }
+    if (def_foo_info) {
+        log_error("[ICON] def_foo.info -> %s", def_foo_info);
+    }
+    
+    // Log regular extension icons
+    for (int i = 0; i < def_icons_count; i++) {
+        log_error("[ICON] def_%s.info -> %s", 
+                 def_icons_array[i].extension, def_icons_array[i].icon_path);
+    }
 }
 
 // Forward declaration of helper function
@@ -251,34 +336,33 @@ FileIcon* create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x
 const char *definfo_for_file(const char *name, bool is_dir) {
     if (!name) return NULL;
     if (is_dir) return def_dir_info; // default drawer icon if present
+    
     const char *dot = strrchr(name, '.');
-    if (!dot || !dot[1]) return NULL;  // Use array indexing instead of pointer arithmetic
+    if (!dot || !dot[1]) {
+        // No extension - return generic fallback if available
+        return def_foo_info;
+    }
     const char *ext = dot + 1;
-
-    if ((strcasecmp(ext, "jpg") == 0  || 
-        strcasecmp(ext, "jpeg") == 0) && def_jpg_info)  return def_jpg_info;
     
-    if ((strcasecmp(ext, "htm") == 0  ||
-        strcasecmp(ext, "html") == 0) && def_html_info) return def_html_info;
+    // Search the dynamic array for matching extension
+    for (int i = 0; i < def_icons_count; i++) {
+        if (strcasecmp(ext, def_icons_array[i].extension) == 0) {
+            return def_icons_array[i].icon_path;
+        }
+        
+        // Special handling for common multi-extension mappings
+        // jpg/jpeg -> jpg
+        if (strcasecmp(ext, "jpeg") == 0 && strcasecmp(def_icons_array[i].extension, "jpg") == 0) {
+            return def_icons_array[i].icon_path;
+        }
+        // htm/html -> html
+        if (strcasecmp(ext, "htm") == 0 && strcasecmp(def_icons_array[i].extension, "html") == 0) {
+            return def_icons_array[i].icon_path;
+        }
+    }
     
-    if (strcasecmp(ext, "webp") == 0  && def_webp_info) return def_webp_info;
-    if (strcasecmp(ext, "zip")  == 0  && def_zip_info)  return def_zip_info;
-    if (strcasecmp(ext, "lha")  == 0  && def_lha_info)  return def_lha_info;
-    if (strcasecmp(ext, "mp3")  == 0  && def_mp3_info)  return def_mp3_info;
-    if (strcasecmp(ext, "m4a")  == 0  && def_m4a_info)  return def_m4a_info;
-    if (strcasecmp(ext, "txt")  == 0  && def_txt_info)  return def_txt_info;
-    if (strcasecmp(ext, "png")  == 0  && def_png_info)  return def_png_info;
-    if (strcasecmp(ext, "gif")  == 0  && def_gif_info)  return def_gif_info;
-    if (strcasecmp(ext, "pdf")  == 0  && def_pdf_info)  return def_pdf_info;
-    if (strcasecmp(ext, "avi")  == 0  && def_avi_info)  return def_avi_info;
-    if (strcasecmp(ext, "mp4")  == 0  && def_mp4_info)  return def_mp4_info;
-    if (strcasecmp(ext, "mkv")  == 0  && def_mkv_info)  return def_mkv_info;
-    if (strcasecmp(ext, "webm") == 0  && def_webm_info) return def_webm_info;
-    if (strcasecmp(ext, "rar")  == 0  && def_rar_info)  return def_rar_info;
-    if (strcasecmp(ext, "epub") == 0  && def_epub_info) return def_epub_info;
     // Unknown or unmapped extension -> generic tool icon if available
-    if (def_foo_info) return def_foo_info;
-    return NULL;
+    return def_foo_info;
 }
 
 // Case-insensitive label comparator for FileIcon** (used in list view)
@@ -2651,6 +2735,188 @@ void open_file(FileIcon *icon) {
     launch_with_hook(command);
 }
 
+// Find the next available desktop slot for iconified windows
+static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy) {
+    if (!desk || !ox || !oy) return;
+    const int sx = 20, step_x = 110;
+    
+    FileIcon **arr = get_icon_array(); 
+    int n = get_icon_count();
+    
+    // Calculate proper start position: Home icon top + 80px gap
+    int first_iconified_y = 120 + 80;  // Home icon y + 80px gap (same as System->Home)
+    
+    // Find next slot starting from the correct position
+    for (int x = sx; x < desk->width - 64; x += step_x) {
+        int y = first_iconified_y;
+        
+        // Keep checking for collisions until we find a free slot
+        bool collision_found;
+        do {
+            collision_found = false;
+            for (int i = 0; i < n; i++) {
+                FileIcon *ic = arr[i];
+                if (ic->display_window != desk->win) continue;
+                // Check collision with ANY icon type (file, drawer, or iconified)
+                // Check if icons would overlap in the same column slot
+                // Icons in same column if their x positions are within the column range
+                bool same_column = (ic->x >= x && ic->x < x + step_x) || 
+                                  (x >= ic->x && x < ic->x + ic->width);
+                if (same_column && ic->y == y) {
+                    y += 80;  // Move down and check again
+                    collision_found = true;
+                    break;  // Start collision check over from beginning
+                }
+            }
+        } while (collision_found && y + 64 < desk->height);
+        
+        if (y + 64 < desk->height) { 
+            *ox = x; *oy = y; return; 
+        }
+    }
+    *ox = sx; *oy = first_iconified_y;
+}
+
+// Helper function to find an icon file, checking user directory first, then system
+static const char* find_icon_with_user_override(const char *icon_name, char *buffer, size_t buffer_size) {
+    struct stat st;
+    
+    // First check user directory (~/.config/amiwb/icons/)
+    const char *home = getenv("HOME");
+    if (home) {
+        snprintf(buffer, buffer_size, "%s/.config/amiwb/icons/%s", home, icon_name);
+        if (stat(buffer, &st) == 0) {
+            log_error("[ICON] Using user icon: %s", buffer);
+            return buffer;
+        }
+    }
+    
+    // Then check system directory (/usr/local/share/amiwb/icons/)
+    snprintf(buffer, buffer_size, "/usr/local/share/amiwb/icons/%s", icon_name);
+    if (stat(buffer, &st) == 0) {
+        return buffer;
+    }
+    
+    return NULL;
+}
+
+// Create an iconified icon for a canvas window
+// This handles all the icon path selection logic and icon creation
+FileIcon* create_iconified_icon(Canvas *c) {
+    if (!c || (c->type != WINDOW && c->type != DIALOG)) return NULL;
+    
+    Canvas *desk = get_desktop_canvas();
+    if (!desk) return NULL;
+    
+    // Find next available desktop slot
+    int nx = 20, ny = 40;
+    find_next_desktop_slot(desk, &nx, &ny);
+    
+    const char *icon_path = NULL;
+    char *label = NULL;
+    const char *def_foo_path = "/usr/local/share/amiwb/icons/def_icons/def_foo.info";
+    
+    // Use the Canvas's title_base which was already set correctly when the window was created
+    label = c->title_base ? strdup(c->title_base) : strdup("Untitled");
+    
+    // Buffer for icon path searches
+    char icon_buffer[512];
+    
+    if (c->client_win == None) { 
+        // For workbench windows and dialogs without client
+        if (c->type == DIALOG) {
+            // Use specific icons for different dialog types based on title
+            const char *dialog_icon_name = NULL;
+            if (c->title_base) {
+                if (strstr(c->title_base, "Rename")) {
+                    dialog_icon_name = "rename.info";
+                } else if (strstr(c->title_base, "Delete")) {
+                    dialog_icon_name = "delete.info";
+                } else if (strstr(c->title_base, "Execute")) {
+                    dialog_icon_name = "execute.info";
+                } else if (strstr(c->title_base, "Progress") || strstr(c->title_base, "Copying") || strstr(c->title_base, "Moving")) {
+                    dialog_icon_name = "progress.info";
+                } else if (strstr(c->title_base, "Information")) {
+                    dialog_icon_name = "iconinfo.info";
+                } else {
+                    dialog_icon_name = "dialog.info";  // Generic dialog icon
+                }
+            } else {
+                dialog_icon_name = "dialog.info";
+            }
+            
+            // Try to find the dialog icon with user override support
+            icon_path = find_icon_with_user_override(dialog_icon_name, icon_buffer, sizeof(icon_buffer));
+            
+            // If not found, try generic dialog icon
+            if (!icon_path) {
+                icon_path = find_icon_with_user_override("dialog.info", icon_buffer, sizeof(icon_buffer));
+            }
+            
+            // If still not found, fall back to filer icon
+            if (!icon_path) {
+                icon_path = find_icon_with_user_override("filer.info", icon_buffer, sizeof(icon_buffer));
+            }
+        } else {
+            // Regular workbench window
+            icon_path = find_icon_with_user_override("filer.info", icon_buffer, sizeof(icon_buffer));
+        }
+    } else {
+        // Try to find a specific icon for this app using the title_base
+        char app_icon_name[256];
+        snprintf(app_icon_name, sizeof(app_icon_name), "%s.info", c->title_base);
+        
+        icon_path = find_icon_with_user_override(app_icon_name, icon_buffer, sizeof(icon_buffer));
+        
+        if (!icon_path) {
+            log_error("[ICON] Couldn't find %s in user or system directories, using def_foo.info", app_icon_name);
+            icon_path = def_foo_path;
+        }
+    }
+    
+    // Verify the icon path exists, use def_foo as ultimate fallback
+    struct stat st;
+    if (stat(icon_path, &st) != 0) {
+        log_error("[WARNING] Icon file not found: %s, using def_foo.info", icon_path);
+        icon_path = def_foo_path;
+    }
+    
+    // Create the icon
+    create_icon(icon_path, desk, nx, ny);
+    FileIcon **ia = get_icon_array();
+    FileIcon *ni = ia[get_icon_count() - 1];
+    
+    // Ensure we actually got an icon, this is critical
+    if (!ni) {
+        log_error("[ERROR] Failed to create iconified icon for window, using emergency fallback");
+        // Try one more time with def_foo
+        create_icon(def_foo_path, desk, nx, ny);
+        ia = get_icon_array();
+        ni = ia[get_icon_count() - 1];
+        if (!ni) {
+            log_error("[ERROR] CRITICAL: Cannot create iconified icon - window will be lost!");
+            free(label);
+            return NULL;
+        }
+    }
+    
+    // Set up the iconified icon
+    ni->type = TYPE_ICONIFIED;
+    free(ni->label);
+    ni->label = label;
+    free(ni->path);
+    ni->path = NULL;
+    ni->iconified_canvas = c;
+    
+    // Center the iconified icon within its column slot (same as cleanup does)
+    const int step_x = 110;  // Column width
+    int column_center_offset = (step_x - ni->width) / 2;
+    if (column_center_offset < 0) column_center_offset = 0;
+    ni->x = nx + column_center_offset;
+    
+    return ni;
+}
+
 void restore_iconified(FileIcon *icon) {
     if (!icon || icon->type != TYPE_ICONIFIED) {
         return;
@@ -2811,24 +3077,20 @@ void cleanup_workbench(void) {
     for (int i = icon_count - 1; i >= 0; i--) destroy_icon(icon_array[i]);
     if (icon_array) { free(icon_array); icon_array = NULL; }
     icon_count = 0; icon_array_size = 0;
-    // Free deficon paths
-    if (def_txt_info)  { free(def_txt_info);  def_txt_info  = NULL; }
-    if (def_jpg_info)  { free(def_jpg_info);  def_jpg_info  = NULL; }
-    if (def_png_info)  { free(def_png_info);  def_png_info  = NULL; }
-    if (def_webp_info) { free(def_webp_info); def_webp_info = NULL; }
-    if (def_gif_info)  { free(def_gif_info);  def_gif_info  = NULL; }
-    if (def_pdf_info)  { free(def_pdf_info);  def_pdf_info  = NULL; }
-    if (def_avi_info)  { free(def_avi_info);  def_avi_info  = NULL; }
-    if (def_mp4_info)  { free(def_mp4_info);  def_mp4_info  = NULL; }
-    if (def_mkv_info)  { free(def_mkv_info);  def_mkv_info  = NULL; }
-    if (def_webm_info) { free(def_webm_info); def_webm_info = NULL; }
-    if (def_m4a_info)  { free(def_m4a_info);  def_m4a_info =  NULL; }
-    if (def_mp3_info)  { free(def_mp3_info);  def_mp3_info  = NULL; }
-    if (def_html_info) { free(def_html_info); def_html_info = NULL; }
-    if (def_zip_info)  { free(def_zip_info);  def_zip_info  = NULL; }
-    if (def_rar_info)  { free(def_rar_info);  def_rar_info  = NULL; }
-    if (def_lha_info)  { free(def_lha_info);  def_lha_info  = NULL; }
-    if (def_epub_info) { free(def_epub_info); def_epub_info = NULL; }
+    
+    // Free dynamic deficon array
+    for (int i = 0; i < def_icons_count; i++) {
+        if (def_icons_array[i].extension) free(def_icons_array[i].extension);
+        if (def_icons_array[i].icon_path) free(def_icons_array[i].icon_path);
+    }
+    if (def_icons_array) {
+        free(def_icons_array);
+        def_icons_array = NULL;
+    }
+    def_icons_count = 0;
+    def_icons_capacity = 0;
+    
+    // Free special case deficons
     if (def_dir_info)  { free(def_dir_info);  def_dir_info  = NULL; }
     if (def_foo_info)  { free(def_foo_info);  def_foo_info  = NULL; }
 }
