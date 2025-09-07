@@ -18,12 +18,14 @@ InputField* inputfield_create(int x, int y, int width, int height) {
     field->width = width;
     field->height = height;
     field->text[0] = '\0';
+    field->name[0] = '\0';  // Initialize name as empty
     field->cursor_pos = 0;
     field->selection_start = -1;
     field->selection_end = -1;
     field->visible_start = 0;
     field->has_focus = false;
     field->disabled = false;  // Initialize disabled state
+    field->readonly = false;  // Initialize readonly state
     field->on_enter = NULL;
     field->on_change = NULL;
     field->user_data = NULL;
@@ -122,7 +124,7 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
     XRenderFillRectangle(dpy, PictOpSrc, dest, &black, x+w-1, y, 1, h);     // Right black
     XRenderFillRectangle(dpy, PictOpSrc, dest, &black, x, y+h-1, w, 1);     // Bottom black
     
-    // Fill input area - checker pattern if disabled, solid gray if enabled
+    // Fill input area - checker pattern if disabled, solid gray if enabled or readonly
     if (field->disabled) {
         // First fill the 2-pixel padding area with gray
         XRenderFillRectangle(dpy, PictOpSrc, dest, &gray, x+2, y+2, w-4, h-4);
@@ -148,7 +150,7 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
             }
         }
     } else {
-        // Normal gray fill for enabled field
+        // Normal gray fill for enabled or readonly field
         XRenderFillRectangle(dpy, PictOpSrc, dest, &gray, x+2, y+2, w-4, h-4);
     }
     
@@ -356,8 +358,8 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
     
     KeySym keysym = XLookupKeysym(event, 0);
     
-    // Handle Ctrl+C for copy
-    if ((event->state & ControlMask) && (keysym == XK_c || keysym == XK_C)) {
+    // Handle Super+C for copy (Amiga style)
+    if ((event->state & Mod4Mask) && (keysym == XK_c || keysym == XK_C)) {
         // Copy entire field content to clipboard
         Display *dpy = event->display;
         Window root = DefaultRootWindow(dpy);
@@ -384,8 +386,12 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
         return true;
     }
     
-    // Handle Ctrl+V for paste
-    if ((event->state & ControlMask) && (keysym == XK_v || keysym == XK_V)) {
+    // Handle Super+V for paste (Amiga style)
+    if ((event->state & Mod4Mask) && (keysym == XK_v || keysym == XK_V)) {
+        // Block paste if readonly
+        if (field->readonly) {
+            return true;  // Consume event but don't paste
+        }
         Display *dpy = event->display;
         Window root = DefaultRootWindow(dpy);
         
@@ -462,12 +468,16 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
             return true;
             
         case XK_BackSpace:
-            inputfield_backspace(field);
+            if (!field->readonly) {
+                inputfield_backspace(field);
+            }
             return true;
             
         case XK_Delete:
         case XK_KP_Delete:
-            inputfield_delete_char(field);
+            if (!field->readonly) {
+                inputfield_delete_char(field);
+            }
             return true;
             
         case XK_Left:
@@ -491,19 +501,21 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
             return true;
     }
     
-    // Handle regular text input
-    char buffer[32];
-    KeySym keysym_ignored;
-    int char_count = XLookupString(event, buffer, sizeof(buffer)-1, &keysym_ignored, NULL);
-    
-    if (char_count > 0) {
-        buffer[char_count] = '\0';
-        for (int i = 0; i < char_count; i++) {
-            if (buffer[i] >= 32 && buffer[i] < 127) {  // Printable ASCII
-                inputfield_insert_char(field, buffer[i]);
+    // Handle regular text input (blocked if readonly)
+    if (!field->readonly) {
+        char buffer[32];
+        KeySym keysym_ignored;
+        int char_count = XLookupString(event, buffer, sizeof(buffer)-1, &keysym_ignored, NULL);
+        
+        if (char_count > 0) {
+            buffer[char_count] = '\0';
+            for (int i = 0; i < char_count; i++) {
+                if (buffer[i] >= 32 && buffer[i] < 127) {  // Printable ASCII
+                    inputfield_insert_char(field, buffer[i]);
+                }
             }
+            return true;
         }
-        return true;
     }
     
     return false;
@@ -632,4 +644,12 @@ void inputfield_set_disabled(InputField *field, bool disabled) {
     if (disabled) {
         field->has_focus = false;
     }
+}
+
+void inputfield_set_readonly(InputField *field, bool readonly) {
+    if (!field) {
+        return;
+    }
+    
+    field->readonly = readonly;
 }

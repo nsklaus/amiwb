@@ -39,7 +39,7 @@ typedef struct IconInfoDialog {
     InputField *comment_field;   // File comment via xattr (editable)
     ListView *comment_list;      // List of comment lines
     InputField *app_field;       // Default application (editable)
-    // Path is now displayed as plain text, not an InputField
+    InputField *path_field;      // Directory path (read-only, for copying)
     
     // Read-only display strings
     char size_text[64];          // File/dir size display

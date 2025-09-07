@@ -97,6 +97,7 @@ void show_icon_info_dialog(FileIcon *icon) {
     // Name field (editable)
     dialog->name_field = inputfield_create(field_x, y_pos, field_width, 20);
     if (dialog->name_field) {
+        strcpy(dialog->name_field->name, "Filename");
         inputfield_set_text(dialog->name_field, icon->label);
     } else {
         log_error("[WARNING] Failed to create name field");
@@ -110,6 +111,7 @@ void show_icon_info_dialog(FileIcon *icon) {
                                             field_width,  // Same width as name field
                                             20);
     if (dialog->comment_field) {
+        strcpy(dialog->comment_field->name, "Comment");
         inputfield_set_text(dialog->comment_field, "");  // Empty by default
     }
     
@@ -121,16 +123,38 @@ void show_icon_info_dialog(FileIcon *icon) {
         listview_set_callbacks(dialog->comment_list, NULL, NULL, dialog);
     }
     
-    // Path is now rendered as plain text, not an input field
-    // (Path is not editable through the iconinfo dialog)
+    // Path field (read-only, for copying) - shows directory only
+    // THIS IS WRONG - let's position it properly later in render
+    // For now, use the same positioning as name field
+    dialog->path_field = inputfield_create(field_x,
+                                          y_pos + 200,  // Temporary - will be repositioned in render
+                                          field_width,
+                                          20);
+    if (dialog->path_field) {
+        strcpy(dialog->path_field->name, "Filepath");
+        // Extract directory path (without filename)
+        char dir_path[PATH_SIZE];
+        strncpy(dir_path, icon->path, sizeof(dir_path) - 1);
+        dir_path[sizeof(dir_path) - 1] = '\0';
+        char *last_slash = strrchr(dir_path, '/');
+        if (last_slash && last_slash != dir_path) {
+            *(last_slash + 1) = '\0';  // Keep the trailing slash
+        }
+        inputfield_set_text(dialog->path_field, dir_path);
+        // Set as readonly - can select/copy but not edit
+        inputfield_set_readonly(dialog->path_field, true);
+    }
     
-    y_pos = 395 + 85;  // Moved down to account for listview (was 395, now +85 for input+listview)
+    y_pos += 25;  // Move down for next field (consistent 25px gap)
     
     // Opens with field (editable) - same alignment as above fields
     dialog->app_field = inputfield_create(field_x,
                                          y_pos,
                                          field_width,
                                          20);
+    if (dialog->app_field) {
+        strcpy(dialog->app_field->name, "Run with");
+    }
     
     // Load file information
     load_file_info(dialog);
@@ -485,6 +509,8 @@ bool iconinfo_handle_key_press(XKeyEvent *event) {
         } else {
             handled = inputfield_handle_key(dialog->comment_field, event);
         }
+    } else if (dialog->path_field && dialog->path_field->has_focus) {
+        handled = inputfield_handle_key(dialog->path_field, event);
     } else if (dialog->app_field && dialog->app_field->has_focus) {
         handled = inputfield_handle_key(dialog->app_field, event);
     }
@@ -547,6 +573,7 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
     IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
     if (!dialog) return false;
     
+    
     // Check for "Get Size" button if this is a directory
     if (dialog->get_size_button && dialog->is_directory && 
         !dialog->calculating_size && dialog->size_calc_pid <= 0) {
@@ -579,6 +606,7 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
     if (dialog->name_field && inputfield_handle_click(dialog->name_field, event->x, event->y)) {
         // Remove focus from other fields
         if (dialog->comment_field) dialog->comment_field->has_focus = false;
+        if (dialog->path_field) dialog->path_field->has_focus = false;
         if (dialog->app_field) dialog->app_field->has_focus = false;
         field_clicked = true;
     }
@@ -586,42 +614,49 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
     else if (dialog->comment_field && inputfield_handle_click(dialog->comment_field, event->x, event->y)) {
         // Remove focus from other fields
         if (dialog->name_field) dialog->name_field->has_focus = false;
+        if (dialog->path_field) dialog->path_field->has_focus = false;
         if (dialog->app_field) dialog->app_field->has_focus = false;
         field_clicked = true;
     }
     // Check comment listview for clicks
-    else if (dialog->comment_list) {
-        Display *dpy = get_display();
-        XftFont *font = get_font();
-        if (listview_handle_click(dialog->comment_list, event->x, event->y, dpy, font)) {
-            // Get selected item and put it in the comment field for editing
-            int selected = dialog->comment_list->selected_index;
-            if (selected >= 0 && selected < dialog->comment_list->item_count) {
-                inputfield_set_text(dialog->comment_field, dialog->comment_list->items[selected].text);
-                // Remove the item from the list since we're editing it
-                for (int i = selected; i < dialog->comment_list->item_count - 1; i++) {
-                    dialog->comment_list->items[i] = dialog->comment_list->items[i + 1];
-                }
-                dialog->comment_list->item_count--;
-                dialog->comment_list->selected_index = -1;
-                // Give focus to comment field
-                dialog->comment_field->has_focus = true;
-                dialog->comment_field->cursor_pos = strlen(dialog->comment_field->text);
+    else if (dialog->comment_list && listview_handle_click(dialog->comment_list, event->x, event->y, get_display(), get_font())) {
+        // Get selected item and put it in the comment field for editing
+        int selected = dialog->comment_list->selected_index;
+        if (selected >= 0 && selected < dialog->comment_list->item_count) {
+            inputfield_set_text(dialog->comment_field, dialog->comment_list->items[selected].text);
+            // Remove the item from the list since we're editing it
+            for (int i = selected; i < dialog->comment_list->item_count - 1; i++) {
+                dialog->comment_list->items[i] = dialog->comment_list->items[i + 1];
             }
-            field_clicked = true;
+            dialog->comment_list->item_count--;
+            dialog->comment_list->selected_index = -1;
+            // Give focus to comment field
+            dialog->comment_field->has_focus = true;
+            dialog->comment_field->cursor_pos = strlen(dialog->comment_field->text);
         }
+        field_clicked = true;
+    }
+    // Check path field (readonly but can be selected for copying)
+    else if (dialog->path_field && inputfield_handle_click(dialog->path_field, event->x, event->y)) {
+        // Remove focus from other fields
+        if (dialog->name_field) dialog->name_field->has_focus = false;
+        if (dialog->comment_field) dialog->comment_field->has_focus = false;
+        if (dialog->app_field) dialog->app_field->has_focus = false;
+        field_clicked = true;
     }
     // Check app field
     else if (dialog->app_field && inputfield_handle_click(dialog->app_field, event->x, event->y)) {
         // Remove focus from other fields
         if (dialog->name_field) dialog->name_field->has_focus = false;
         if (dialog->comment_field) dialog->comment_field->has_focus = false;
+        if (dialog->path_field) dialog->path_field->has_focus = false;
         field_clicked = true;
     }
     // Click outside all fields - remove focus from all
     else {
         if (dialog->name_field) dialog->name_field->has_focus = false;
         if (dialog->comment_field) dialog->comment_field->has_focus = false;
+        if (dialog->path_field) dialog->path_field->has_focus = false;
         if (dialog->app_field) dialog->app_field->has_focus = false;
     }
     
@@ -754,6 +789,7 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
     // Destroy input fields
     if (dialog->name_field) inputfield_destroy(dialog->name_field);
     if (dialog->comment_field) inputfield_destroy(dialog->comment_field);
+    if (dialog->path_field) inputfield_destroy(dialog->path_field);
     if (dialog->app_field) inputfield_destroy(dialog->app_field);
     
     // Destroy buttons
@@ -794,6 +830,7 @@ void close_icon_info_dialog_by_canvas(Canvas *canvas) {
         // Destroy input fields
         if (dialog->name_field) inputfield_destroy(dialog->name_field);
         if (dialog->comment_field) inputfield_destroy(dialog->comment_field);
+        if (dialog->path_field) inputfield_destroy(dialog->path_field);
         if (dialog->app_field) inputfield_destroy(dialog->app_field);
         
         // Don't destroy canvas here - intuition.c will do it
@@ -1011,6 +1048,7 @@ void render_iconinfo_content(Canvas *canvas) {
         if (dialog->comment_list) {
             dialog->comment_list->x = x + ICONINFO_LABEL_WIDTH;
             dialog->comment_list->y = y;
+            dialog->comment_list->width = field_width - ICONINFO_LABEL_WIDTH;  // Same width as comment field
             listview_draw(dialog->comment_list, dpy, dest, xft, font);
             y += 85;  // Move past the listview (80px height + 5px spacing)
         }
@@ -1027,18 +1065,26 @@ void render_iconinfo_content(Canvas *canvas) {
         if (font) {
             // Permissions
             y += ICONINFO_SPACING;
+            // Access (permissions)
             char perm_label[128];
-            snprintf(perm_label, sizeof(perm_label), "Permissions: %s", dialog->perms_text);
+            snprintf(perm_label, sizeof(perm_label), "Access   : %s", dialog->perms_text);
             XftDrawStringUtf8(xft, &color, font, x, y + 15,
                              (XftChar8 *)perm_label, strlen(perm_label));
+            y += 25;
             
-            // Owner and Group on same line
+            // Owner
             char owner_label[128];
-            snprintf(owner_label, sizeof(owner_label), "    Owner: %s  Group: %s", 
-                    dialog->owner_text, dialog->group_text);
-            XftDrawStringUtf8(xft, &color, font, x, y + 35,
+            snprintf(owner_label, sizeof(owner_label), "Owner    : %s", dialog->owner_text);
+            XftDrawStringUtf8(xft, &color, font, x, y + 15,
                              (XftChar8 *)owner_label, strlen(owner_label));
-            y += 50;
+            y += 25;
+            
+            // Group
+            char group_label[128];
+            snprintf(group_label, sizeof(group_label), "Group    : %s", dialog->group_text);
+            XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                             (XftChar8 *)group_label, strlen(group_label));
+            y += 25;
             
             // Created date
             char created_label[128];
@@ -1052,14 +1098,14 @@ void render_iconinfo_content(Canvas *canvas) {
             snprintf(modified_label, sizeof(modified_label), "Modified : %s", dialog->modified_text);
             XftDrawStringUtf8(xft, &color, font, x, y + 15,
                              (XftChar8 *)modified_label, strlen(modified_label));
-            y += 35;
+            y += 25;
         }
         XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
                     DefaultColormap(dpy, DefaultScreen(dpy)), &color);
     }
     
-    // Path (read-only text, not an input field)
-    if (dialog->icon && dialog->icon->path) {
+    // Filepath (as input field showing directory only)
+    if (dialog->path_field) {
         if (xft) {
             XftColor color;
             XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
@@ -1068,51 +1114,23 @@ void render_iconinfo_content(Canvas *canvas) {
             
             XftFont *font = get_font();
             if (font) {
-                // Draw "Path:" label
                 XftDrawStringUtf8(xft, &color, font, x, y + 15,
-                                 (XftChar8 *)"Path:", 5);
-                
-                // Draw the path as plain text (not editable)
-                int path_x = x + ICONINFO_LABEL_WIDTH;
-                int path_width = field_width - ICONINFO_LABEL_WIDTH;
-                
-                // Truncate path if too long (show end of path with "...")
-                const char *path = dialog->icon->path;
-                char display_path[256];
-                XGlyphInfo extents;
-                XftTextExtentsUtf8(dpy, font, (FcChar8 *)path, strlen(path), &extents);
-                
-                if (extents.width > path_width) {
-                    // Path is too long, show "..." and the end part
-                    int path_len = strlen(path);
-                    int chars_to_show = path_len;
-                    
-                    // Find how many characters from the end fit
-                    while (chars_to_show > 0) {
-                        const char *end_part = path + (path_len - chars_to_show);
-                        snprintf(display_path, sizeof(display_path), "...%s", end_part);
-                        XftTextExtentsUtf8(dpy, font, (FcChar8 *)display_path, strlen(display_path), &extents);
-                        if (extents.width <= path_width) {
-                            break;
-                        }
-                        chars_to_show--;
-                    }
-                } else {
-                    // Path fits, show it as-is
-                    snprintf(display_path, sizeof(display_path), "%s", path);
-                }
-                
-                // Draw the path text
-                XftDrawStringUtf8(xft, &color, font, path_x, y + 15,
-                                 (XftChar8 *)display_path, strlen(display_path));
+                                 (XftChar8 *)"Filepath", 8);
             }
             XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
                         DefaultColormap(dpy, DefaultScreen(dpy)), &color);
         }
-        y += 35;
+        
+        // Position field at same X as Filename field, Y aligned with label
+        dialog->path_field->x = x + ICONINFO_LABEL_WIDTH;
+        dialog->path_field->y = y;
+        dialog->path_field->width = field_width - ICONINFO_LABEL_WIDTH;
+        XftFont *font = get_font();
+        inputfield_draw(dialog->path_field, dest, dpy, xft, font);
+        y += 25;
     }
     
-    // App field
+    // App field (Run with)
     if (dialog->app_field) {
         if (xft) {
             XftColor color;
@@ -1123,18 +1141,19 @@ void render_iconinfo_content(Canvas *canvas) {
             XftFont *font = get_font();
             if (font) {
                 XftDrawStringUtf8(xft, &color, font, x, y + 15,
-                                 (XftChar8 *)"Opens with:", 11);
+                                 (XftChar8 *)"Run with", 8);
             }
             XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
                         DefaultColormap(dpy, DefaultScreen(dpy)), &color);
         }
         
+        // Position field at same X as Filename field, Y aligned with label
         dialog->app_field->x = x + ICONINFO_LABEL_WIDTH;
         dialog->app_field->y = y;
         dialog->app_field->width = field_width - ICONINFO_LABEL_WIDTH;
         XftFont *font = get_font();
         inputfield_draw(dialog->app_field, dest, dpy, xft, font);
-        y += 40;
+        y += 25;
     }
     
     // Draw OK and Cancel buttons at bottom

@@ -12,12 +12,14 @@ typedef struct InputField {
     int x, y;
     int width, height;
     char text[INPUTFIELD_MAX_LENGTH + 1];
+    char name[64];  // Debug name for the field
     int cursor_pos;
     int selection_start;
     int selection_end;
     int visible_start;
     bool has_focus;
-    bool disabled;  // New field for disabled state
+    bool disabled;  // Checker pattern, completely unavailable
+    bool readonly;  // Can select/copy but not edit
     void (*on_enter)(const char *text, void *user_data);
     void (*on_change)(const char *text, void *user_data);
     void *user_data;
@@ -42,5 +44,6 @@ void inputfield_move_cursor(InputField *field, int delta);
 void inputfield_scroll_to_end(InputField *field);
 void inputfield_update_size(InputField *field, int new_width);
 void inputfield_set_disabled(InputField *field, bool disabled);
+void inputfield_set_readonly(InputField *field, bool readonly);
 
 #endif
