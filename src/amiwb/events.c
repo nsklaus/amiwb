@@ -895,10 +895,9 @@ void handle_configure_request(XConfigureRequestEvent *event) {
 
     Canvas *canvas = find_canvas_by_client(event->window);
     if (canvas) {
-        // ConfigureRequest trace removed
         intuition_handle_configure_request(event);
     } else {
-        // ConfigureRequest trace removed
+        // Unmanaged window
         XWindowChanges changes;
         changes.x = event->x;
         changes.y = event->y;
@@ -1056,9 +1055,37 @@ void handle_motion_notify(XMotionEvent *event) {
 
 // Geometry of a managed frame changed; update caches.
 void handle_configure_notify(XConfigureEvent *event) {
+    // First check if this is a frame window
     Canvas *canvas = find_canvas(event->window);
     if (canvas && canvas->type == WINDOW) {
         intuition_handle_configure_notify(event);
+        return;
+    }
+    
+    // Check if this is a client window that has resized itself
+    canvas = find_canvas_by_client(event->window);
+    if (canvas) {
+        // When a client resizes itself, update our frame to match
+        // This handles apps like GIMP that resize their dialogs without sending ConfigureRequest
+        int frame_width, frame_height;
+        calculate_frame_size_from_client_size(event->width, event->height, 
+                                             &frame_width, &frame_height);
+        
+        // Check if frame needs to change size
+        if (frame_width != canvas->width || frame_height != canvas->height) {
+            // Resize the frame window to accommodate the client
+            XResizeWindow(get_display(), canvas->win, frame_width, frame_height);
+            
+            // Update canvas dimensions
+            canvas->width = frame_width;
+            canvas->height = frame_height;
+            
+            // Recreate render surfaces for the new size
+            render_recreate_canvas_surfaces(canvas);
+            
+            // Redraw the frame decorations
+            redraw_canvas(canvas);
+        }
     }
 }
 

@@ -188,6 +188,10 @@ void intuition_handle_configure_notify(XConfigureEvent *event);   // for resizin
 void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event);
 void intuition_handle_client_message(XClientMessageEvent *event);
 
+// Resize helper functions (also used by events.c)
+void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height);
+void apply_resize_and_redraw(Canvas *canvas, int width, int height);
+
 
 // Fullscreen helpers
 void intuition_enter_fullscreen(Canvas *c);

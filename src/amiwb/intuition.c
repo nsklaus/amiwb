@@ -29,7 +29,8 @@ static bool should_skip_framing(Window win, XWindowAttributes *attrs);
 static bool is_window_valid(Display *dpy, Window win);
 static bool get_window_attributes_safely(Window win, XWindowAttributes *attrs);
 static void calculate_content_area_inside_frame(const Canvas *canvas, int *content_width, int *content_height);
-static void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height);
+// Forward declaration - now public
+void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height);
 static inline void move_and_resize_frame(Canvas *c, int x, int y, int w, int h);
 static void remove_canvas_from_array(Canvas *target_canvas);
 
@@ -178,7 +179,8 @@ static void send_x_command_and_sync(void) {
 }
 
 
-static void apply_resize_and_redraw(Canvas *canvas, int new_w, int new_h);
+// Forward declaration - now public, defined later
+void apply_resize_and_redraw(Canvas *canvas, int new_w, int new_h);
 
 // Move/resize a frame and update its cached geometry, then schedule
 // a redraw so borders and scrollbars stay in sync.
@@ -190,7 +192,7 @@ static inline void move_and_resize_frame(Canvas *c, int x, int y, int w, int h) 
 }
 
 // Calculate frame window size needed to contain client area with borders
-static inline void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height) {
+void calculate_frame_size_from_client_size(int client_width, int client_height, int *frame_width, int *frame_height) {
     // Client windows use 8px left, 8px right, 20px top, 20px bottom
     if (frame_width) *frame_width = max(1, client_width) + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT_CLIENT;  // 8+8=16px horizontal
     if (frame_height) *frame_height = max(1, client_height) + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;  // 20+20=40px vertical
@@ -481,7 +483,7 @@ static bool init_render_context(void) {
     return true;
 }
 
-static void apply_resize_and_redraw(Canvas *c, int nw, int nh) {
+void apply_resize_and_redraw(Canvas *c, int nw, int nh) {
     if (!c) return;
     if (c->width == nw && c->height == nh) return;
     c->width = nw;
@@ -2236,6 +2238,7 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
     if (event->value_mask & (CWWidth | CWHeight)) {
         calculate_frame_size_from_client_size(event->width, event->height, &frame_changes.width, &frame_changes.height);
         
+        
         frame_mask |= (event->value_mask & CWWidth) ? CWWidth : 0;
         frame_mask |= (event->value_mask & CWHeight) ? CWHeight : 0;
     }
@@ -2257,19 +2260,34 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
     }
     if (frame_mask) {
         XConfigureWindow(display, canvas->win, frame_mask, &frame_changes);
-        // Update canvas position if we moved the frame
+        // Update canvas position AND SIZE if we changed the frame
         if (frame_mask & CWX) canvas->x = frame_changes.x;
         if (frame_mask & CWY) canvas->y = frame_changes.y;
+        if (frame_mask & CWWidth) canvas->width = frame_changes.width;
+        if (frame_mask & CWHeight) canvas->height = frame_changes.height;
     }
 
     // Configure client window within frame borders
+    // IMPORTANT: Must constrain client to fit within frame borders!
+    int max_client_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
+    int max_client_height = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+    
     XWindowChanges client_changes = { .x = BORDER_WIDTH_LEFT, .y = BORDER_HEIGHT_TOP };
     unsigned long client_mask = CWX | CWY;
-    if (event->value_mask & CWWidth) { client_changes.width = max(1, event->width); client_mask |= CWWidth; }
-    if (event->value_mask & CWHeight) { client_changes.height = max(1, event->height); client_mask |= CWHeight; }
+    
+    if (event->value_mask & CWWidth) { 
+        // Constrain width to fit within frame
+        client_changes.width = min(max(1, event->width), max_client_width);
+        client_mask |= CWWidth;
+    }
+    if (event->value_mask & CWHeight) { 
+        // Constrain height to fit within frame
+        client_changes.height = min(max(1, event->height), max_client_height);
+        client_mask |= CWHeight;
+    }
     if (event->value_mask & CWBorderWidth) { client_changes.border_width = 0; client_mask |= CWBorderWidth; }
     XConfigureWindow(display, event->window, client_mask, &client_changes);
-    send_x_command_and_sync();
+    // Don't sync here - it causes major delays during app startup (especially GIMP)
 }
 
 void intuition_handle_configure_request(XConfigureRequestEvent *event) {
@@ -2277,7 +2295,13 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
     if (!canvas) { handle_configure_unmanaged(event); return; }
     
     handle_configure_managed(canvas, event);
-    apply_resize_and_redraw(canvas, event->width, event->height);
+    
+    // Calculate the FRAME dimensions from the requested CLIENT dimensions
+    int frame_width, frame_height;
+    calculate_frame_size_from_client_size(event->width, event->height, &frame_width, &frame_height);
+    
+    // Apply resize with FRAME dimensions, not client dimensions!
+    apply_resize_and_redraw(canvas, frame_width, frame_height);
     // allow natural batching; no XSync here
 }
 
