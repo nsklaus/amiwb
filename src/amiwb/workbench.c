@@ -28,6 +28,7 @@
 #include <stdarg.h>  // For va_list
 #include <stdbool.h>  // For bool type
 #include <libgen.h>  // For basename, dirname
+#include <sys/xattr.h>  // For extended attributes (file comments)
 
 // ============================================================================
 // Type Definitions for Progress Dialog System
@@ -1061,8 +1062,42 @@ static int copy_file(const char *src, const char *dst) {
     // Preserve permissions (ignore ownership and times for simplicity)
     fchmod(out_fd, st.st_mode & 0777);
     
-    // Clean up and return success
+    // Clean up file descriptors
     cleanup_file_descriptors(in_fd, out_fd);
+    
+    // Preserve extended attributes (file comments, etc.)
+    // This must be done after closing files since xattr functions use paths
+    ssize_t buflen = listxattr(src, NULL, 0);
+    if (buflen > 0) {
+        char *buf = malloc(buflen);
+        if (buf) {
+            buflen = listxattr(src, buf, buflen);
+            if (buflen > 0) {
+                // Copy each xattr
+                char *p = buf;
+                while (p < buf + buflen) {
+                    // Get value size
+                    ssize_t vallen = getxattr(src, p, NULL, 0);
+                    if (vallen > 0) {
+                        char *val = malloc(vallen);
+                        if (val) {
+                            // Get value
+                            vallen = getxattr(src, p, val, vallen);
+                            if (vallen > 0) {
+                                // Set on destination
+                                setxattr(dst, p, val, vallen, 0);
+                            }
+                            free(val);
+                        }
+                    }
+                    // Move to next attribute name
+                    p += strlen(p) + 1;
+                }
+            }
+            free(buf);
+        }
+    }
+    
     return 0;
 }
 
@@ -1146,8 +1181,42 @@ static int copy_file_with_progress(const char *src, const char *dst, int pipe_fd
     // Preserve permissions (ignore ownership and times for simplicity)
     fchmod(out_fd, st.st_mode & 0777);
     
-    // Clean up and return success
+    // Clean up file descriptors
     cleanup_file_descriptors(in_fd, out_fd);
+    
+    // Preserve extended attributes (file comments, etc.)
+    // This must be done after closing files since xattr functions use paths
+    ssize_t buflen = listxattr(src, NULL, 0);
+    if (buflen > 0) {
+        char *buf = malloc(buflen);
+        if (buf) {
+            buflen = listxattr(src, buf, buflen);
+            if (buflen > 0) {
+                // Copy each xattr
+                char *p = buf;
+                while (p < buf + buflen) {
+                    // Get value size
+                    ssize_t vallen = getxattr(src, p, NULL, 0);
+                    if (vallen > 0) {
+                        char *val = malloc(vallen);
+                        if (val) {
+                            // Get value
+                            vallen = getxattr(src, p, val, vallen);
+                            if (vallen > 0) {
+                                // Set on destination
+                                setxattr(dst, p, val, vallen, 0);
+                            }
+                            free(val);
+                        }
+                    }
+                    // Move to next attribute name
+                    p += strlen(p) + 1;
+                }
+            }
+            free(buf);
+        }
+    }
+    
     return 0;
 }
 
