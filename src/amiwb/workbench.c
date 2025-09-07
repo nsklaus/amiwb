@@ -1283,6 +1283,38 @@ static int copy_directory_recursive(const char *src_dir, const char *dst_dir) {
         }
     }
     
+    // Preserve extended attributes (including comments) for the directory itself
+    ssize_t buflen = listxattr(src_dir, NULL, 0);
+    if (buflen > 0) {
+        char *buf = malloc(buflen);
+        if (buf) {
+            buflen = listxattr(src_dir, buf, buflen);
+            if (buflen > 0) {
+                // Copy each xattr
+                char *p = buf;
+                while (p < buf + buflen) {
+                    // Get value size
+                    ssize_t vallen = getxattr(src_dir, p, NULL, 0);
+                    if (vallen > 0) {
+                        char *val = malloc(vallen);
+                        if (val) {
+                            // Get value
+                            vallen = getxattr(src_dir, p, val, vallen);
+                            if (vallen > 0) {
+                                // Set on destination
+                                setxattr(dst_dir, p, val, vallen, 0);
+                            }
+                            free(val);
+                        }
+                    }
+                    // Move to next attribute name
+                    p += strlen(p) + 1;
+                }
+            }
+            free(buf);
+        }
+    }
+    
     // Open source directory
     DIR *dir = opendir(src_dir);
     if (!dir) {
@@ -1683,6 +1715,38 @@ static int copy_directory_recursive_with_progress(const char *src_dir, const cha
                 free(current_src);
                 free(current_dst);
                 break;
+            }
+        }
+        
+        // Preserve extended attributes (including comments) for the directory itself
+        ssize_t buflen = listxattr(current_src, NULL, 0);
+        if (buflen > 0) {
+            char *buf = malloc(buflen);
+            if (buf) {
+                buflen = listxattr(current_src, buf, buflen);
+                if (buflen > 0) {
+                    // Copy each xattr
+                    char *p = buf;
+                    while (p < buf + buflen) {
+                        // Get value size
+                        ssize_t vallen = getxattr(current_src, p, NULL, 0);
+                        if (vallen > 0) {
+                            char *val = malloc(vallen);
+                            if (val) {
+                                // Get value
+                                vallen = getxattr(current_src, p, val, vallen);
+                                if (vallen > 0) {
+                                    // Set on destination
+                                    setxattr(current_dst, p, val, vallen, 0);
+                                }
+                                free(val);
+                            }
+                        }
+                        // Move to next attribute name
+                        p += strlen(p) + 1;
+                    }
+                }
+                free(buf);
             }
         }
         
