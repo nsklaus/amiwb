@@ -31,6 +31,7 @@ extern void trigger_requester_action(void);
 extern void trigger_rename_action(void);
 extern void trigger_icon_info_action(void);
 extern void trigger_cleanup_action(void);
+extern void trigger_refresh_action(void);
 extern void trigger_close_action(void);
 extern void trigger_parent_action(void);
 extern void trigger_open_action(void);
@@ -775,6 +776,11 @@ void handle_key_press(XKeyEvent *event) {
                     return;
                 }
                 // Let client window handle it
+            }
+            // Super+H: Refresh active window or desktop
+            if (keysym == XK_h || keysym == XK_H) {
+                trigger_refresh_action();
+                return;
             }
             // Super+Q: Close active window
             if (keysym == XK_q || keysym == XK_Q) {

@@ -165,6 +165,7 @@ static char *def_foo_info  = NULL;   // generic fallback for unknown filetypes
 
 // Spatial mode control (true = new window per directory, false = reuse window)
 static bool spatial_mode = true;  // Default to spatial (AmigaOS style)
+static bool global_show_hidden = false;  // Default to not showing hidden files
 
 // Spatial mode getters/setters
 bool get_spatial_mode(void) {
@@ -173,6 +174,15 @@ bool get_spatial_mode(void) {
 
 void set_spatial_mode(bool mode) {
     spatial_mode = mode;
+}
+
+// Global show hidden state getters/setters
+bool get_global_show_hidden_state(void) {
+    return global_show_hidden;
+}
+
+void set_global_show_hidden_state(bool show) {
+    global_show_hidden = show;
 }
 
 // Resolve and cache a deficon path if present on disk; keeps runtime lookups cheap.
@@ -224,15 +234,6 @@ static inline void set_icon_meta(FileIcon *ic, const char *path, const char *lab
 // Get the most recently added icon from the global array
 static FileIcon* get_last_added_icon(void) {
     return (icon_count > 0) ? icon_array[icon_count - 1] : NULL;
-}
-
-// Advance icon position to next slot with wrapping
-static void advance_icon_position(int *x, int *y, Canvas *canvas, int x_offset) {
-    *x += x_offset;
-    if (*x + 64 > canvas->width) {
-        *x = 10;
-        *y += 80;
-    }
 }
 
 // Create icon and set its metadata in one call
@@ -2436,7 +2437,7 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
     if (canvas->type == DESKTOP) add_prime_desktop_icons(canvas);
     DIR *dirp = opendir(dir);
     if (dirp) {
-        int x = 20, y = 20; int x_offset = 100;
+        // Don't position icons - just create them at 0,0 and let icon_cleanup handle layout
         struct dirent *entry;
         while ((entry = readdir(dirp))) {
             // Skip current and parent directory entries always
@@ -2459,9 +2460,8 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
                     continue;
                 }
                 struct stat st; if (stat(base_path, &st) != 0) {
-                    // Orphan .info
-                    create_icon_with_metadata(full_path, canvas, x, y, full_path, entry->d_name, TYPE_FILE);
-                    advance_icon_position(&x, &y, canvas, x_offset);
+                    // Orphan .info - create at 0,0, icon_cleanup will position it
+                    create_icon_with_metadata(full_path, canvas, 0, 0, full_path, entry->d_name, TYPE_FILE);
                 }
             } else {
                     // Determine file type using helper function
@@ -2482,16 +2482,17 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
                        fallback_def ? fallback_def : "(none)",
                        icon_path);
                 */
-                create_icon_with_metadata(icon_path, canvas, x, y, full_path, entry->d_name, t);
-                advance_icon_position(&x, &y, canvas, x_offset);
+                // Create at 0,0 - icon_cleanup will position properly
+                create_icon_with_metadata(icon_path, canvas, 0, 0, full_path, entry->d_name, t);
             }
         }
         closedir(dirp);
     } else {
         log_error("[ERROR] Failed to open directory %s", dir);
     }
-    // Do not auto-reorganize icons; only menu > Window > Cleanup should do that
     canvas->scanning = false;
+    // Always call icon_cleanup to properly sort and layout all icons
+    icon_cleanup(canvas);
 }
 
 static void open_directory(FileIcon *icon, Canvas *current_canvas) {
@@ -2556,8 +2557,7 @@ static void open_directory(FileIcon *icon, Canvas *current_canvas) {
     Canvas *new_canvas = create_canvas(icon->path, 150, 100, 400, 300, WINDOW);
     if (new_canvas) {
         refresh_canvas_from_directory(new_canvas, icon->path);
-        // Initial placement for new window must use icon_cleanup
-        icon_cleanup(new_canvas);
+        // icon_cleanup now called inside refresh_canvas_from_directory
         redraw_canvas(new_canvas);
         // Make the newly created window active (raise on top)
         set_active_window(new_canvas);
@@ -2793,7 +2793,7 @@ void init_workbench(void) {
     // This will also add the prime desktop icons (System/Home)
     Canvas *desktop = get_desktop_canvas();
     refresh_canvas_from_directory(desktop, NULL); // NULL means use ~/Desktop
-    icon_cleanup(desktop); // Arrange all icons properly
+    // icon_cleanup now called inside refresh_canvas_from_directory
     redraw_canvas(desktop);
     wb_initialized = true;
 }

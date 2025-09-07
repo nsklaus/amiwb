@@ -259,14 +259,15 @@ void init_menus(void) {
     // Windows submenu (index 1)
     // Window management and content view controls.
     Menu *win_submenu = malloc(sizeof(Menu));
-    win_submenu->item_count = 6;  // Removed Cycle (now in button menu)
+    win_submenu->item_count = 7;  // Added Refresh
     win_submenu->items = malloc(win_submenu->item_count * sizeof(char*));
     win_submenu->items[0] = strdup("New Drawer");
     win_submenu->items[1] = strdup("Open Parent");
     win_submenu->items[2] = strdup("Close");
     win_submenu->items[3] = strdup("Select Contents");
     win_submenu->items[4] = strdup("Clean Up");
-    win_submenu->items[5] = strdup("View Modes");
+    win_submenu->items[5] = strdup("Refresh");
+    win_submenu->items[6] = strdup("View Modes");
     
     // Initialize shortcuts for Windows menu
     win_submenu->shortcuts = malloc(win_submenu->item_count * sizeof(char*));
@@ -275,14 +276,15 @@ void init_menus(void) {
     win_submenu->shortcuts[2] = strdup("Q");  // Close - Super+Q
     win_submenu->shortcuts[3] = strdup("A");  // Select Contents - Super+A
     win_submenu->shortcuts[4] = strdup(";");  // Clean Up - Super+;
-    win_submenu->shortcuts[5] = NULL;  // View Modes - no shortcut yet
+    win_submenu->shortcuts[5] = strdup("H");  // Refresh - Super+H
+    win_submenu->shortcuts[6] = NULL;  // View Modes - no shortcut yet
     init_menu_enabled(win_submenu);  // Initialize all items as enabled
     win_submenu->selected_item = -1;
     win_submenu->parent_menu = menubar;
     win_submenu->parent_index = 1;
     win_submenu->submenus = calloc(win_submenu->item_count, sizeof(Menu*));
     win_submenu->canvas = NULL;
-    // Create nested submenu for "View Modes" (index 5)
+    // Create nested submenu for "View Modes" (index 6)
     // Switch listing mode and toggle hidden files.
     Menu *view_by_sub = malloc(sizeof(Menu));
     view_by_sub->item_count = 4;  // Icons, Names, Hidden, Spatial
@@ -295,10 +297,10 @@ void init_menus(void) {
     init_menu_enabled(view_by_sub);  // Initialize all items as enabled
     view_by_sub->selected_item = -1;
     view_by_sub->parent_menu = win_submenu;
-    view_by_sub->parent_index = 5;  // Changed from 6 to 5
+    view_by_sub->parent_index = 6;  // Position within Windows submenu (View Modes is at index 6)
     view_by_sub->submenus = NULL;
     view_by_sub->canvas = NULL;
-    win_submenu->submenus[5] = view_by_sub;
+    win_submenu->submenus[6] = view_by_sub;
     menubar->submenus[1] = win_submenu;
 
     // Icons submenu (index 2)
@@ -1184,6 +1186,22 @@ static void maybe_open_nested_for_selection(void) {
         if (nested_menu->canvas) {
             nested_menu->canvas->bg_color = (XRenderColor){0xFFFF,0xFFFF,0xFFFF,0xFFFF};
             nested_menu->selected_item = -1;
+            
+            // Update enabled states for View Modes submenu
+            if (nested_menu->parent_menu && nested_menu->parent_menu->parent_index == 1 && 
+                nested_menu->parent_index == 6) { // View Modes submenu
+                Canvas *active = get_active_window();
+                bool desktop_focused = (!active || active->type == DESKTOP);
+                
+                // Enable/disable items based on context
+                if (nested_menu->enabled) {
+                    nested_menu->enabled[0] = true;  // Icons - always enabled
+                    nested_menu->enabled[1] = !desktop_focused;  // Names - disabled for desktop
+                    nested_menu->enabled[2] = true;  // Hidden - always enabled
+                    nested_menu->enabled[3] = true;  // Spatial - always enabled
+                }
+            }
+            
             XMapRaised(ctx->dpy, nested_menu->canvas->win);
             redraw_canvas(nested_menu->canvas);
         }
@@ -1346,7 +1364,8 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
             active_menu->enabled[2] = has_active_window;                      // Close - only if there's a window
             active_menu->enabled[3] = is_workbench_window || desktop_focused;  // Select Contents - workbench or desktop
             active_menu->enabled[4] = is_workbench_window || desktop_focused;  // Clean Up - workbench or desktop
-            active_menu->enabled[5] = is_workbench_window || desktop_focused;  // View Modes - workbench or desktop
+            active_menu->enabled[5] = is_workbench_window || desktop_focused;  // Refresh - workbench or desktop
+            active_menu->enabled[6] = is_workbench_window || desktop_focused;  // View Modes - workbench or desktop
         }
     }
     
@@ -1457,7 +1476,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
     if (menu->parent_menu && menu->parent_menu->parent_menu == menubar && 
         menu->parent_menu->parent_index == 1) {
         // Determine which child: by parent_index in Windows submenu
-        if (menu->parent_index == 5) { // View Modes
+        if (menu->parent_index == 6) { // View Modes (now at index 6)
             Canvas *target = get_active_window();
             if (!target) {
                 // No active window - use desktop
@@ -1469,8 +1488,13 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 } else if (strcmp(item, "Names") == 0) {
                     set_canvas_view_mode(target, VIEW_NAMES);
                 } else if (strcmp(item, "Hidden") == 0) {
-                    // Toggle hidden files
-                    target->show_hidden = !target->show_hidden;
+                    // Toggle global hidden files state
+                    bool new_state = !get_global_show_hidden_state();
+                    set_global_show_hidden_state(new_state);
+                    
+                    // Apply to current target window
+                    target->show_hidden = new_state;
+                    
                     // Refresh directory view to apply hidden filter
                     if (target->path) {
                         refresh_canvas_from_directory(target, target->path);
@@ -1540,6 +1564,8 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 trigger_select_contents_action();
             } else if (strcmp(item, "Clean Up") == 0) {
                 trigger_cleanup_action();
+            } else if (strcmp(item, "Refresh") == 0) {
+                trigger_refresh_action();
             } else if (strcmp(item, "Show") == 0) {
                 // TODO: toggle hidden items
             } else if (strcmp(item, "View Icons") == 0) {
@@ -1704,6 +1730,37 @@ void trigger_cleanup_action(void) {
     }
 }
 
+// Public function to trigger refresh action (called from menu or global shortcut)
+void trigger_refresh_action(void) {
+    Canvas *active_window = get_active_window();
+    Canvas *target = active_window;
+    
+    // If no active window, use desktop
+    if (!target || target->type != WINDOW) {
+        target = get_desktop_canvas();
+    }
+    
+    if (target) {
+        // Apply current global show_hidden state to the window
+        target->show_hidden = get_global_show_hidden_state();
+        
+        // Refresh the directory contents
+        if (target->path) {
+            refresh_canvas_from_directory(target, target->path);
+        } else if (target->type == DESKTOP) {
+            // Desktop uses ~/Desktop as its path
+            const char *home = getenv("HOME");
+            if (home) {
+                char desktop_path[PATH_SIZE];
+                snprintf(desktop_path, sizeof(desktop_path), "%s/Desktop", home);
+                refresh_canvas_from_directory(target, desktop_path);
+            }
+        }
+        
+        // icon_cleanup is now called inside refresh_canvas_from_directory
+    }
+}
+
 // Public function to trigger close window action (called from menu or global shortcut)
 void trigger_close_action(void) {
     Canvas *active_window = get_active_window();
@@ -1760,10 +1817,9 @@ void trigger_parent_action(void) {
             // Refresh with parent directory
             refresh_canvas_from_directory(active_window, parent_path);
             
-            // Reset scroll and organize icons
+            // Reset scroll (icon_cleanup now called inside refresh_canvas_from_directory)
             active_window->scroll_x = 0;
             active_window->scroll_y = 0;
-            icon_cleanup(active_window);
             redraw_canvas(active_window);
         } else {
             // Spatial mode: check if window for parent path already exists
@@ -2466,7 +2522,7 @@ void trigger_new_drawer_action(void) {
         // Refresh the target canvas to show the new drawer
         if (target_canvas) {
             refresh_canvas_from_directory(target_canvas, target_path);
-            icon_cleanup(target_canvas);  // Reorganize icons
+            // icon_cleanup now called inside refresh_canvas_from_directory
             redraw_canvas(target_canvas);
         }
     } else {

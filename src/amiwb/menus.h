@@ -59,6 +59,7 @@ int get_selected_item(void);                    // Get currently selected (highl
 void trigger_rename_action(void);               // Trigger rename for selected icon
 void trigger_icon_info_action(void);            // Trigger icon information for selected icon
 void trigger_cleanup_action(void);              // Trigger clean up for active window or desktop
+void trigger_refresh_action(void);              // Trigger refresh for active window or desktop
 void trigger_close_action(void);                // Trigger close for active window
 void trigger_parent_action(void);               // Trigger open parent for active window
 void trigger_open_action(void);                 // Trigger open for selected icon

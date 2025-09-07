@@ -70,4 +70,8 @@ void workbench_check_progress_dialogs(void);
 bool get_spatial_mode(void);
 void set_spatial_mode(bool mode);
 
+// Global show hidden state control
+bool get_global_show_hidden_state(void);
+void set_global_show_hidden_state(bool show);
+
 #endif

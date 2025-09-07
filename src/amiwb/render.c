@@ -766,7 +766,7 @@ void redraw_canvas(Canvas *canvas) {
                                      menu->parent_menu->parent_index == 1;  // Window menu is at index 1
             
             // For View Modes submenu, show checkmarks for active states
-            if (is_window_submenu && menu->parent_index == 5) {  // View Modes submenu
+            if (is_window_submenu && menu->parent_index == 6) {  // View Modes submenu (now at index 6)
                 bool show_checkmark = false;
                 bool is_icons_mode = get_active_view_is_icons();
                 
@@ -776,7 +776,7 @@ void redraw_canvas(Canvas *canvas) {
                 } else if (i == 1) {  // "Names" menu item
                     show_checkmark = !is_icons_mode;
                 } else if (i == 2) {  // "Hidden" menu item (independent toggle)
-                    show_checkmark = get_global_show_hidden();
+                    show_checkmark = get_global_show_hidden_state();
                 } else if (i == 3) {  // "Spatial" menu item (independent toggle)
                     show_checkmark = get_spatial_mode();
                 }

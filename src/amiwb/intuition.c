@@ -544,7 +544,8 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
     c->bg_color = GRAY;
     c->buffer_width = w; c->buffer_height = h;  // Initialize to canvas size, may be enlarged later
     c->resizing_interactive = false;
-    // show_hidden defaults to false via Canvas{0}
+    // Use global show_hidden state for new windows
+    c->show_hidden = get_global_show_hidden_state();
     // Initialize damage tracking - mark entire canvas as needing initial draw
     c->needs_redraw = true;
     c->dirty_x = 0;
