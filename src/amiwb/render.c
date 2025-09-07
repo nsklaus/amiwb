@@ -633,12 +633,25 @@ void redraw_canvas(Canvas *canvas) {
                 for (int i = 0; i < icon_count; i++) {
                     FileIcon *icon = icon_array[i];
                     if (icon->display_window == canvas->win) {
-                        // Check if icon and label height intersects viewport
-                        int icon_right = icon->x + icon->width;
-                        // +20 for label
-                        int icon_bottom = icon->y + icon->height + 20;  
-                        if (icon_right < view_left || icon->x > view_right ||
-                            icon_bottom < view_top || icon->y > view_bottom) {
+                        // Calculate actual label width for proper visibility check
+                        int label_width = 0;
+                        if (icon->label && font) {
+                            XGlyphInfo extents;
+                            XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)icon->label, 
+                                             strlen(icon->label), &extents);
+                            label_width = extents.xOff;
+                        }
+                        
+                        // Icon bounding box should include the label
+                        // Label can extend beyond icon width, especially for long filenames
+                        int icon_left = icon->x;
+                        int icon_right = icon->x + max(icon->width, label_width);
+                        int icon_top = icon->y;
+                        int icon_bottom = icon->y + icon->height + (font ? font->ascent + 4 : 20);
+                        
+                        // Check if icon+label bounding box intersects viewport
+                        if (icon_right < view_left || icon_left > view_right ||
+                            icon_bottom < view_top || icon_top > view_bottom) {
                             continue; // Skip off-screen icon to optimize rendering
                         }
                         render_icon(icon, canvas);

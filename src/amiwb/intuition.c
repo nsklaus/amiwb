@@ -19,6 +19,7 @@
 #include <strings.h>  // For strcasecmp
 #include <stdio.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include "resize.h"
 
 
@@ -295,6 +296,8 @@ static int scroll_start_pos = 0;
 static Canvas *arrow_scroll_canvas = NULL;
 static int arrow_scroll_direction = 0; // -1 for up/left, 1 for down/right, 0 for none
 static bool arrow_scroll_vertical = true;
+static struct timeval arrow_scroll_last_time = {0, 0};
+static struct timeval arrow_scroll_start_time = {0, 0};
 
 static bool g_debug_xerrors = false;
 
@@ -454,7 +457,9 @@ static long get_event_mask_for_canvas_type(CanvasType canvas_type) {
     if (canvas_type == DESKTOP) 
         return base_events | SubstructureRedirectMask | SubstructureNotifyMask;
     if (canvas_type == WINDOW)  
-        return base_events | StructureNotifyMask | SubstructureNotifyMask | EnterWindowMask | FocusChangeMask;
+        // Need SubstructureRedirectMask to intercept client resize attempts!
+        return base_events | StructureNotifyMask | SubstructureNotifyMask | 
+               SubstructureRedirectMask | EnterWindowMask | FocusChangeMask;
     if (canvas_type == MENU)    
         return base_events | PointerMotionMask | ButtonPressMask | ButtonReleaseMask;
     
@@ -1616,6 +1621,9 @@ static Bool handle_scrollbar_click(Canvas *canvas, XButtonEvent *event, bool is_
     return True;
 }
 
+// Forward declaration
+static Bool handle_arrow_scroll_repeat(void);
+
 // Check if click is on scroll arrow buttons
 static Bool handle_scroll_arrow_buttons(Canvas *canvas, XButtonEvent *event) {
     if (event->button != Button1) return False;
@@ -1635,6 +1643,10 @@ static Bool handle_scroll_arrow_buttons(Canvas *canvas, XButtonEvent *event) {
             arrow_scroll_canvas = canvas;
             arrow_scroll_direction = -1;
             arrow_scroll_vertical = true;
+            gettimeofday(&arrow_scroll_start_time, NULL);
+            arrow_scroll_last_time = arrow_scroll_start_time;
+            // Do first scroll immediately
+            handle_arrow_scroll_repeat();
             return True;
         }
         // Down arrow area (bottom part of right border)
@@ -1645,6 +1657,10 @@ static Bool handle_scroll_arrow_buttons(Canvas *canvas, XButtonEvent *event) {
             arrow_scroll_canvas = canvas;
             arrow_scroll_direction = 1;
             arrow_scroll_vertical = true;
+            gettimeofday(&arrow_scroll_start_time, NULL);
+            arrow_scroll_last_time = arrow_scroll_start_time;
+            // Do first scroll immediately
+            handle_arrow_scroll_repeat();
             return True;
         }
     }
@@ -1659,6 +1675,10 @@ static Bool handle_scroll_arrow_buttons(Canvas *canvas, XButtonEvent *event) {
             arrow_scroll_canvas = canvas;
             arrow_scroll_direction = -1;
             arrow_scroll_vertical = false;
+            gettimeofday(&arrow_scroll_start_time, NULL);
+            arrow_scroll_last_time = arrow_scroll_start_time;
+            // Do first scroll immediately
+            handle_arrow_scroll_repeat();
             return True;
         }
         // Right arrow area
@@ -1669,6 +1689,10 @@ static Bool handle_scroll_arrow_buttons(Canvas *canvas, XButtonEvent *event) {
             arrow_scroll_canvas = canvas;
             arrow_scroll_direction = 1;
             arrow_scroll_vertical = false;
+            gettimeofday(&arrow_scroll_start_time, NULL);
+            arrow_scroll_last_time = arrow_scroll_start_time;
+            // Do first scroll immediately
+            handle_arrow_scroll_repeat();
             return True;
         }
     }
@@ -1922,6 +1946,30 @@ static Bool handle_arrow_scroll_repeat(void) {
     return False;
 }
 
+// Check if enough time has passed for arrow scroll repeat
+void intuition_check_arrow_scroll_repeat(void) {
+    if (!arrow_scroll_canvas || arrow_scroll_direction == 0) return;
+    
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    
+    // Calculate time since last scroll
+    long elapsed_ms = (now.tv_sec - arrow_scroll_last_time.tv_sec) * 1000 +
+                      (now.tv_usec - arrow_scroll_last_time.tv_usec) / 1000;
+    
+    // Initial delay: 400ms, then repeat every 50ms
+    long delay_ms = 50;  // Fast repeat rate
+    if (now.tv_sec == arrow_scroll_start_time.tv_sec && 
+        (now.tv_usec - arrow_scroll_start_time.tv_usec) < 400000) {
+        delay_ms = 400;  // Initial delay before auto-repeat starts
+    }
+    
+    if (elapsed_ms >= delay_ms) {
+        handle_arrow_scroll_repeat();
+        arrow_scroll_last_time = now;
+    }
+}
+
 void intuition_handle_motion_notify(XMotionEvent *event) {
     if (handle_drag_motion(event)) return;
     if (handle_resize_motion(event)) return;
@@ -1964,10 +2012,7 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
         }
     }
     
-    // Handle arrow button auto-repeat
-    if (arrow_scroll_canvas) {
-        handle_arrow_scroll_repeat();
-    }
+    // Arrow auto-repeat is now handled by timer, not motion
 }
 
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
@@ -2263,53 +2308,84 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
         // Update canvas position AND SIZE if we changed the frame
         if (frame_mask & CWX) canvas->x = frame_changes.x;
         if (frame_mask & CWY) canvas->y = frame_changes.y;
-        if (frame_mask & CWWidth) canvas->width = frame_changes.width;
-        if (frame_mask & CWHeight) canvas->height = frame_changes.height;
+        
+        bool size_changed = false;
+        if (frame_mask & CWWidth) {
+            canvas->width = frame_changes.width;
+            size_changed = true;
+        }
+        if (frame_mask & CWHeight) {
+            canvas->height = frame_changes.height;
+            size_changed = true;
+        }
+        
+        // Recreate render surfaces once if size changed
+        if (size_changed) {
+            render_recreate_canvas_surfaces(canvas);
+        }
     }
 
     // Configure client window within frame borders
-    // IMPORTANT: Must constrain client to fit within frame borders!
-    int max_client_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
-    int max_client_height = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
-    
+    // TRUST THE CLIENT: Give it exactly what it requested (like dwm does)
+    // The frame has already been resized to accommodate the client's request
     XWindowChanges client_changes = { .x = BORDER_WIDTH_LEFT, .y = BORDER_HEIGHT_TOP };
     unsigned long client_mask = CWX | CWY;
     
     if (event->value_mask & CWWidth) { 
-        // Constrain width to fit within frame
-        client_changes.width = min(max(1, event->width), max_client_width);
+        // Give client exactly what it asked for
+        client_changes.width = event->width;
         client_mask |= CWWidth;
     }
     if (event->value_mask & CWHeight) { 
-        // Constrain height to fit within frame
-        client_changes.height = min(max(1, event->height), max_client_height);
+        // Give client exactly what it asked for
+        client_changes.height = event->height;
         client_mask |= CWHeight;
     }
     if (event->value_mask & CWBorderWidth) { client_changes.border_width = 0; client_mask |= CWBorderWidth; }
     XConfigureWindow(display, event->window, client_mask, &client_changes);
+    
+    // Send synthetic ConfigureNotify to client (like xfwm4 does)
+    // This tells the client its actual size and position
+    XConfigureEvent ce;
+    ce.type = ConfigureNotify;
+    ce.display = display;
+    ce.event = event->window;
+    ce.window = event->window;
+    ce.x = 0;  // Client coords relative to frame
+    ce.y = 0;
+    ce.width = event->width;
+    ce.height = event->height;
+    ce.border_width = 0;
+    ce.above = None;
+    ce.override_redirect = False;
+    XSendEvent(display, event->window, False, StructureNotifyMask, (XEvent *)&ce);
     // Don't sync here - it causes major delays during app startup (especially GIMP)
 }
 
+// Handle ConfigureRequest from client - the ONLY way clients should resize
 void intuition_handle_configure_request(XConfigureRequestEvent *event) {
     Canvas *canvas = find_canvas_by_client(event->window);
-    if (!canvas) { handle_configure_unmanaged(event); return; }
+    if (!canvas) { 
+        handle_configure_unmanaged(event); 
+        return; 
+    }
     
+    // Process the client's request
     handle_configure_managed(canvas, event);
     
-    // Calculate the FRAME dimensions from the requested CLIENT dimensions
-    int frame_width, frame_height;
-    calculate_frame_size_from_client_size(event->width, event->height, &frame_width, &frame_height);
-    
-    // Apply resize with FRAME dimensions, not client dimensions!
-    apply_resize_and_redraw(canvas, frame_width, frame_height);
-    // allow natural batching; no XSync here
+    // Redraw frame after resize
+    redraw_canvas(canvas);
 }
 
-// Handle ConfigureNotify (post-resize) to keep frame and client surfaces in sync
+// Handle ConfigureNotify for OUR frame windows only
 void intuition_handle_configure_notify(XConfigureEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (!canvas) return;
-    apply_resize_and_redraw(canvas, event->width, event->height);
+    
+    // Only process if this is our frame window
+    if (canvas->type == WINDOW || canvas->type == DIALOG) {
+        apply_resize_and_redraw(canvas, event->width, event->height);
+    }
 }
 
 // Handle XRandR screen size changes: resize desktop/menubar and reload wallpapers

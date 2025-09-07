@@ -79,9 +79,7 @@ void show_icon_info_dialog(FileIcon *icon) {
     }
     
     // Set window title
-    char title[256];
-    snprintf(title, sizeof(title), "%s Information", icon->label);
-    dialog->canvas->title_base = strdup(title);
+    dialog->canvas->title_base = strdup("Icon Info");
     dialog->canvas->title_change = NULL;
     dialog->canvas->bg_color = GRAY;
     dialog->canvas->disable_scrollbars = true;
@@ -112,13 +110,21 @@ void show_icon_info_dialog(FileIcon *icon) {
                                             field_width,  // Same width as name field
                                             20);
     if (dialog->comment_field) {
-        inputfield_set_text(dialog->comment_field, "comment");
+        inputfield_set_text(dialog->comment_field, "");  // Empty by default
+    }
+    
+    // Comment listview - below the comment input field
+    y_pos += 25;  // Move down past the input field
+    dialog->comment_list = listview_create(field_x, y_pos, field_width, 80);  // 4 lines * 20px each
+    if (dialog->comment_list) {
+        // Set up callback for when user clicks a comment line
+        listview_set_callbacks(dialog->comment_list, NULL, NULL, dialog);
     }
     
     // Path is now rendered as plain text, not an input field
     // (Path is not editable through the iconinfo dialog)
     
-    y_pos = 395;  // Align with "Opens with:" label baseline (408 - ~13 for ascent)
+    y_pos = 395 + 85;  // Moved down to account for listview (was 395, now +85 for input+listview)
     
     // Opens with field (editable) - same alignment as above fields
     dialog->app_field = inputfield_create(field_x,
@@ -202,13 +208,21 @@ static void load_file_info(IconInfoDialog *dialog) {
     // Path is now displayed as plain text, not an input field
     
     // Try to read comment from extended attributes
-    char comment[256] = {0};
+    char comment[1024] = {0};  // Larger buffer for multiple lines
     ssize_t len = getxattr(dialog->icon->path, "user.comment", comment, sizeof(comment) - 1);
     if (len > 0) {
         comment[len] = '\0';
-        if (dialog->comment_field) {
-            inputfield_set_text(dialog->comment_field, comment);
+        // Split comment by newlines and add to listview
+        if (dialog->comment_list) {
+            char *line = strtok(comment, "\n");
+            while (line) {
+                if (strlen(line) > 0) {
+                    listview_add_item(dialog->comment_list, line, false, NULL);
+                }
+                line = strtok(NULL, "\n");
+            }
         }
+        // Leave comment field empty as requested
     }
     
     // Get default application using xdg-mime for files (not directories)
@@ -291,21 +305,35 @@ static void save_file_changes(IconInfoDialog *dialog) {
         }
     }
     
-    // 2. Save comment to extended attributes
-    if (dialog->comment_field) {
-        const char *comment = inputfield_get_text(dialog->comment_field);
-        if (comment && *comment) {
-            // Set the comment xattr
-            if (setxattr(dialog->icon->path, "user.comment", comment, 
-                        strlen(comment), 0) == -1) {
-                log_error("[WARNING] Failed to set comment xattr: %s", strerror(errno));
-            } else {
-                log_error("[INFO] Set comment for '%s': %s", dialog->icon->path, comment);
+    // 2. Save comment to extended attributes (combine listview items)
+    if (dialog->comment_list && dialog->comment_list->item_count > 0) {
+        // Build multi-line comment from listview items
+        char combined_comment[1024] = {0};
+        size_t offset = 0;
+        
+        for (int i = 0; i < dialog->comment_list->item_count; i++) {
+            const char *line = dialog->comment_list->items[i].text;
+            size_t line_len = strlen(line);
+            
+            if (offset + line_len + 1 < sizeof(combined_comment)) {
+                if (offset > 0) {
+                    combined_comment[offset++] = '\n';
+                }
+                strcpy(combined_comment + offset, line);
+                offset += line_len;
             }
-        } else {
-            // Remove comment if empty
-            removexattr(dialog->icon->path, "user.comment");
         }
+        
+        // Set the comment xattr
+        if (offset > 0) {
+            if (setxattr(dialog->icon->path, "user.comment", combined_comment, 
+                        offset, 0) == -1) {
+                log_error("[WARNING] Failed to set comment xattr: %s", strerror(errno));
+            }
+        }
+    } else {
+        // Remove comment if no items in list
+        removexattr(dialog->icon->path, "user.comment");
     }
     
     // 3. Update default application (xdg-mime) for files only
@@ -445,7 +473,18 @@ bool iconinfo_handle_key_press(XKeyEvent *event) {
     if (dialog->name_field && dialog->name_field->has_focus) {
         handled = inputfield_handle_key(dialog->name_field, event);
     } else if (dialog->comment_field && dialog->comment_field->has_focus) {
-        handled = inputfield_handle_key(dialog->comment_field, event);
+        // Special handling for Enter key in comment field
+        KeySym keysym = XLookupKeysym(event, 0);
+        if (keysym == XK_Return || keysym == XK_KP_Enter) {
+            // Add comment to listview if not empty
+            if (dialog->comment_field->text[0] != '\0' && dialog->comment_list) {
+                listview_add_item(dialog->comment_list, dialog->comment_field->text, false, NULL);
+                inputfield_set_text(dialog->comment_field, "");  // Clear the field
+                handled = true;
+            }
+        } else {
+            handled = inputfield_handle_key(dialog->comment_field, event);
+        }
     } else if (dialog->app_field && dialog->app_field->has_focus) {
         handled = inputfield_handle_key(dialog->app_field, event);
     }
@@ -549,6 +588,28 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
         if (dialog->name_field) dialog->name_field->has_focus = false;
         if (dialog->app_field) dialog->app_field->has_focus = false;
         field_clicked = true;
+    }
+    // Check comment listview for clicks
+    else if (dialog->comment_list) {
+        Display *dpy = get_display();
+        XftFont *font = get_font();
+        if (listview_handle_click(dialog->comment_list, event->x, event->y, dpy, font)) {
+            // Get selected item and put it in the comment field for editing
+            int selected = dialog->comment_list->selected_index;
+            if (selected >= 0 && selected < dialog->comment_list->item_count) {
+                inputfield_set_text(dialog->comment_field, dialog->comment_list->items[selected].text);
+                // Remove the item from the list since we're editing it
+                for (int i = selected; i < dialog->comment_list->item_count - 1; i++) {
+                    dialog->comment_list->items[i] = dialog->comment_list->items[i + 1];
+                }
+                dialog->comment_list->item_count--;
+                dialog->comment_list->selected_index = -1;
+                // Give focus to comment field
+                dialog->comment_field->has_focus = true;
+                dialog->comment_field->cursor_pos = strlen(dialog->comment_field->text);
+            }
+            field_clicked = true;
+        }
     }
     // Check app field
     else if (dialog->app_field && inputfield_handle_click(dialog->app_field, event->x, event->y)) {
@@ -674,14 +735,12 @@ IconInfoDialog* get_iconinfo_for_canvas(Canvas *canvas) {
 void close_icon_info_dialog(IconInfoDialog *dialog) {
     if (!dialog) return;
     
-    log_error("[DEBUG] Closing iconinfo dialog, canvas=%p", dialog->canvas);
     
     // Remove from list
     IconInfoDialog **prev = &g_iconinfo_dialogs;
     while (*prev) {
         if (*prev == dialog) {
             *prev = dialog->next;
-            log_error("[DEBUG] Removed iconinfo dialog from list");
             break;
         }
         prev = &(*prev)->next;
@@ -716,15 +775,13 @@ void close_icon_info_dialog_by_canvas(Canvas *canvas) {
     
     IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
     if (dialog) {
-        log_error("[DEBUG] Closing iconinfo via window close button, canvas=%p", canvas);
         
         // Remove from list
         IconInfoDialog **prev = &g_iconinfo_dialogs;
         while (*prev) {
             if (*prev == dialog) {
                 *prev = dialog->next;
-                log_error("[DEBUG] Removed iconinfo dialog from list");
-                break;
+                    break;
             }
             prev = &(*prev)->next;
         }
@@ -949,6 +1006,14 @@ void render_iconinfo_content(Canvas *canvas) {
         XftFont *font = get_font();
         inputfield_draw(dialog->comment_field, dest, dpy, xft, font);
         y += 30;
+        
+        // Draw comment listview
+        if (dialog->comment_list) {
+            dialog->comment_list->x = x + ICONINFO_LABEL_WIDTH;
+            dialog->comment_list->y = y;
+            listview_draw(dialog->comment_list, dpy, dest, xft, font);
+            y += 85;  // Move past the listview (80px height + 5px spacing)
+        }
     }
     
     // Draw permissions, dates, etc.

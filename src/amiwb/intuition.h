@@ -183,6 +183,7 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event);
 
 void intuition_handle_property_notify(XPropertyEvent *event);
 void intuition_handle_motion_notify(XMotionEvent *event);
+void intuition_check_arrow_scroll_repeat(void);
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event); 
 void intuition_handle_configure_notify(XConfigureEvent *event);   // for resizing
 void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event);

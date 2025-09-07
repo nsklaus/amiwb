@@ -9,6 +9,7 @@
 #include "icons.h"
 #include "../toolkit/inputfield.h"
 #include "../toolkit/button.h"
+#include "../toolkit/listview.h"
 #include <stdbool.h>
 #include <sys/types.h>
 
@@ -36,6 +37,7 @@ typedef struct IconInfoDialog {
     // Editable fields (toolkit InputFields)
     InputField *name_field;      // Filename (editable)
     InputField *comment_field;   // File comment via xattr (editable)
+    ListView *comment_list;      // List of comment lines
     InputField *app_field;       // Default application (editable)
     // Path is now displayed as plain text, not an InputField
     

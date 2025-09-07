@@ -217,6 +217,9 @@ void handle_events(void) {
             // Check iconinfo dialogs for directory size calculations
             iconinfo_check_size_calculations();
             
+            // Check for arrow button auto-repeat
+            intuition_check_arrow_scroll_repeat();
+            
             // Very brief sleep to avoid busy-waiting but remain responsive
             usleep(1000);  // 1ms - much more responsive
             continue;
@@ -890,21 +893,23 @@ void handle_map_request(XMapRequestEvent *event) {
     }
 }
 
-// Client wants to move/resize; let intuition translate to frame ops.
+// Client wants to move/resize - this is THE ONLY way clients should resize
 void handle_configure_request(XConfigureRequestEvent *event) {
-
     Canvas *canvas = find_canvas_by_client(event->window);
     if (canvas) {
+        // Managed window - handle the request properly
         intuition_handle_configure_request(event);
     } else {
-        // Unmanaged window
+        // Unmanaged window - just pass it through
         XWindowChanges changes;
         changes.x = event->x;
         changes.y = event->y;
         changes.width = event->width;
         changes.height = event->height;
-        XConfigureWindow(get_display(), event->window, 
-            event->value_mask, &changes);
+        changes.border_width = event->border_width;
+        changes.sibling = event->above;
+        changes.stack_mode = event->detail;
+        XConfigureWindow(get_display(), event->window, event->value_mask, &changes);
     }
 }
 
@@ -1053,40 +1058,15 @@ void handle_motion_notify(XMotionEvent *event) {
     }
 }
 
-// Geometry of a managed frame changed; update caches.
+// Handle ConfigureNotify events - ONLY for our own frame windows
 void handle_configure_notify(XConfigureEvent *event) {
-    // First check if this is a frame window
+    // Only handle ConfigureNotify for OUR frame windows
     Canvas *canvas = find_canvas(event->window);
-    if (canvas && canvas->type == WINDOW) {
+    if (canvas && (canvas->type == WINDOW || canvas->type == DIALOG)) {
         intuition_handle_configure_notify(event);
-        return;
     }
-    
-    // Check if this is a client window that has resized itself
-    canvas = find_canvas_by_client(event->window);
-    if (canvas) {
-        // When a client resizes itself, update our frame to match
-        // This handles apps like GIMP that resize their dialogs without sending ConfigureRequest
-        int frame_width, frame_height;
-        calculate_frame_size_from_client_size(event->width, event->height, 
-                                             &frame_width, &frame_height);
-        
-        // Check if frame needs to change size
-        if (frame_width != canvas->width || frame_height != canvas->height) {
-            // Resize the frame window to accommodate the client
-            XResizeWindow(get_display(), canvas->win, frame_width, frame_height);
-            
-            // Update canvas dimensions
-            canvas->width = frame_width;
-            canvas->height = frame_height;
-            
-            // Recreate render surfaces for the new size
-            render_recreate_canvas_surfaces(canvas);
-            
-            // Redraw the frame decorations
-            redraw_canvas(canvas);
-        }
-    }
+    // IGNORE all ConfigureNotify from client windows - this is the standard!
+    // Clients must use ConfigureRequest to resize, not resize themselves
 }
 
 void handle_unmap_notify(XUnmapEvent *event) {
