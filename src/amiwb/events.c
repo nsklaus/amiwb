@@ -196,6 +196,7 @@ void handle_events(void) {
     // Log cap management
     // unsigned int iter = 0;  // May be used for future debugging
     time_t last_time_check = 0;
+    time_t last_drive_check = 0;  // For diskdrives polling
     
     while (running) {
         // Check for events with timeout for periodic updates
@@ -209,6 +210,13 @@ void handle_events(void) {
             if (now - last_time_check >= 1) {  // Check every second
                 last_time_check = now;
                 update_menubar_time();  // Will only redraw if minute changed
+            }
+            
+            // Check for drive changes every 2 seconds
+            if (now - last_drive_check >= 1) {  // Poll every 1 second instead of 2
+                last_drive_check = now;
+                extern void diskdrives_poll(void);
+                diskdrives_poll();
             }
             
             // Check progress dialogs for updates

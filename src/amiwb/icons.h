@@ -4,7 +4,7 @@
 
 #include "intuition.h"
 
-typedef enum IconType { TYPE_FILE, TYPE_DRAWER, TYPE_ICONIFIED } IconType;
+typedef enum IconType { TYPE_FILE, TYPE_DRAWER, TYPE_ICONIFIED, TYPE_DEVICE } IconType;
 
 typedef struct {
     char *label;                // Icon label (filename or custom)

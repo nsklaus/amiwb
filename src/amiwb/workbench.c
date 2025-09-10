@@ -327,19 +327,14 @@ static FileIcon* get_last_added_icon(void) {
 // Create icon and set its metadata in one call
 FileIcon* create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x, int y,
                                    const char *full_path, const char *name, int type) {
-    log_error("[DEBUG] create_icon_with_metadata: icon_path='%s', full_path='%s', name='%s', type=%d", 
-              icon_path, full_path, name, type);
     
     // Create the icon with the correct type
     // Note: create_icon_with_type will set path to icon_path initially, but we'll override it
     create_icon_with_type(icon_path, canvas, x, y, type);
     FileIcon *new_icon = get_last_added_icon();
     if (new_icon) {
-        log_error("[DEBUG] Icon created, now setting correct metadata: full_path='%s', name='%s'", full_path, name);
         // Override the path and label with the actual file/directory info, not the .info file
         set_icon_meta(new_icon, full_path, name, type);
-        log_error("[DEBUG] Icon metadata set: path='%s', label='%s', type=%d", 
-                  new_icon->path, new_icon->label, new_icon->type);
     } else {
         log_error("[ERROR] get_last_added_icon returned NULL");
     }
@@ -421,15 +416,16 @@ static inline void set_icon_meta(FileIcon *ic, const char *path, const char *lab
 
 static void add_prime_desktop_icons(Canvas *desktop) {
     if (!desktop) return;
-    // System
-    create_icon("/usr/local/share/amiwb/icons/harddisk.info", desktop, 20, 40);
-    FileIcon *system_icon = get_last_added_icon();
-    set_icon_meta(system_icon, "/", "System", TYPE_DRAWER);
-    // Home
-    create_icon("/usr/local/share/amiwb/icons/harddisk.info", desktop, 20, 120);
-    FileIcon *home_icon = get_last_added_icon();
-    const char *home = getenv("HOME");
-    set_icon_meta(home_icon, home ? home : ".", "Home", TYPE_DRAWER);
+    // Commented out - now handled by diskdrives.c
+    // // System
+    // create_icon("/usr/local/share/amiwb/icons/harddisk.info", desktop, 20, 40);
+    // FileIcon *system_icon = get_last_added_icon();
+    // set_icon_meta(system_icon, "/", "System", TYPE_DRAWER);
+    // // Home
+    // create_icon("/usr/local/share/amiwb/icons/harddisk.info", desktop, 20, 120);
+    // FileIcon *home_icon = get_last_added_icon();
+    // const char *home = getenv("HOME");
+    // set_icon_meta(home_icon, home ? home : ".", "Home", TYPE_DRAWER);
 }
 
 // Internal helpers and implementations
@@ -2109,13 +2105,6 @@ void workbench_check_progress_dialogs(void) {
     ProgressDialog *dialog = get_all_progress_dialogs();
     time_t now = time(NULL);
     
-    static int check_count = 0;
-    static time_t last_log = 0;
-    if (dialog && now != last_log) {
-        log_error("[DEBUG] Check #%d: dialog exists, pipe_fd=%d, percent=%.1f, canvas=%p", 
-                  ++check_count, dialog->pipe_fd, dialog->percent, dialog->canvas);
-        last_log = now;
-    }
     
     while (dialog) {
         ProgressDialog *next = dialog->next;  // Save next before potential deletion
@@ -2125,14 +2114,7 @@ void workbench_check_progress_dialogs(void) {
             ProgressMessage msg;
             ssize_t bytes_read = read(dialog->pipe_fd, &msg, sizeof(msg));
             
-            if (bytes_read > 0) {
-                log_error("[DEBUG] Read %zd bytes from pipe (msg type=%d)", bytes_read, msg.type);
-            } else if (bytes_read == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                log_error("[DEBUG] Read error: errno=%d (%s)", errno, strerror(errno));
-            }
-            
             if (bytes_read == sizeof(msg)) {
-                log_error("[DEBUG] Got complete message type=%d at time %ld", msg.type, now);
                 // Process message from child process
                 // Mark as started when we get first message
                 if (dialog->percent < 0) {
@@ -2145,12 +2127,8 @@ void workbench_check_progress_dialogs(void) {
                     dialog->percent = 0.0f;
                     strncpy(dialog->current_file, msg.current_file, PATH_SIZE - 1);
                     
-                    log_error("[DEBUG] MSG_START: now=%ld, start_time=%ld, diff=%ld, threshold=%d", 
-                              now, dialog->start_time, now - dialog->start_time, PROGRESS_DIALOG_THRESHOLD);
-                    
                     // Create window if threshold has passed
                     if (!dialog->canvas && now - dialog->start_time >= PROGRESS_DIALOG_THRESHOLD) {
-                        log_error("[DEBUG] Creating progress window at time %ld", now);
                         const char *title = dialog->operation == PROGRESS_COPY ? "Copying Files..." :
                                           dialog->operation == PROGRESS_MOVE ? "Moving Files..." :
                                           dialog->operation == PROGRESS_DELETE ? "Deleting Files..." :
@@ -2158,14 +2136,10 @@ void workbench_check_progress_dialogs(void) {
                                           "Processing...";
                         dialog->canvas = create_progress_window(dialog->operation, title);
                         if (dialog->canvas) {
-                            log_error("[DEBUG] Progress window created successfully at time %ld", now);
                             update_progress_dialog(dialog, dialog->current_file, 0.0f);
                         } else {
                             log_error("[ERROR] Failed to create progress window");
                         }
-                    } else if (!dialog->canvas) {
-                        log_error("[DEBUG] Not creating window yet: canvas=%p, time_diff=%ld", 
-                                  dialog->canvas, now - dialog->start_time);
                     }
                 } else if (msg.type == MSG_PROGRESS) {
                     // Calculate percent - prioritize bytes for smooth progress on large files
@@ -2179,8 +2153,6 @@ void workbench_check_progress_dialogs(void) {
                     // Create window if 1 second has passed and window doesn't exist
                     if (!dialog->canvas && dialog->start_time > 0) {
                         if (now - dialog->start_time >= PROGRESS_DIALOG_THRESHOLD) {
-                            log_error("[DEBUG] Creating progress window from MSG_PROGRESS at time %ld (start was %ld, diff=%ld)", 
-                                      now, dialog->start_time, now - dialog->start_time);
                             // Create the actual dialog window now
                             const char *title = dialog->operation == PROGRESS_COPY ? "Copying Files..." :
                                               dialog->operation == PROGRESS_MOVE ? "Moving Files..." :
@@ -2189,12 +2161,9 @@ void workbench_check_progress_dialogs(void) {
                                               "Processing...";
                             dialog->canvas = create_progress_window(dialog->operation, title);
                             if (dialog->canvas) {
-                                log_error("[DEBUG] Progress window created from MSG_PROGRESS at time %ld", now);
                                 update_progress_dialog(dialog, msg.current_file, percent);
                             }
                         } else {
-                            log_error("[DEBUG] Not creating from MSG_PROGRESS: time_diff=%ld < threshold=%d", 
-                                      now - dialog->start_time, PROGRESS_DIALOG_THRESHOLD);
                         }
                     } else if (dialog->canvas) {
                         // Update existing dialog
@@ -2333,8 +2302,6 @@ void workbench_check_progress_dialogs(void) {
         if (!dialog->canvas && dialog->start_time > 0 && dialog->percent >= 0) {
             // Dialog has started (percent >= 0) but no window yet
             if (now - dialog->start_time >= PROGRESS_DIALOG_THRESHOLD) {
-                log_error("[DEBUG] Creating progress window from timer check at time %ld (start was %ld, diff=%ld)", 
-                          now, dialog->start_time, now - dialog->start_time);
                 
                 // Determine appropriate title based on operation
                 const char *title = "Processing...";
@@ -2350,7 +2317,6 @@ void workbench_check_progress_dialogs(void) {
                 
                 dialog->canvas = create_progress_window(dialog->operation, title);
                 if (dialog->canvas) {
-                    log_error("[DEBUG] Progress window created from timer check at time %ld", now);
                     // Update with current state
                     float percent = 0.0f;
                     if (dialog->percent > 0) {
@@ -2548,8 +2514,11 @@ void destroy_icon(FileIcon *icon) {
 void clear_canvas_icons(Canvas *canvas) {
     for (int i = icon_count - 1; i >= 0; i--) {
         if (icon_array[i]->display_window == canvas->win) {
-            // Keep iconified window icons on the desktop during refresh
-            if (icon_array[i]->type == TYPE_ICONIFIED) continue;
+            // Keep iconified window icons and device icons on the desktop during refresh
+            if (icon_array[i]->type == TYPE_ICONIFIED || 
+                icon_array[i]->type == TYPE_DEVICE) {
+                continue;
+            }
             destroy_icon(icon_array[i]);
         }
     }
@@ -2625,12 +2594,19 @@ void move_icon(FileIcon *icon, int x, int y) {
 static int icon_cmp(const void *a, const void *b) {
     FileIcon *ia = *(FileIcon **)a;
     FileIcon *ib = *(FileIcon **)b;
+    // System always first
     if (strcmp(ia->label, "System") == 0) return -1;
     if (strcmp(ib->label, "System") == 0) return 1;
+    // Home always second
     if (strcmp(ia->label, "Home") == 0) return -1;
     if (strcmp(ib->label, "Home") == 0) return 1;
+    // Device drives come after System/Home but before everything else
+    if (ia->type == TYPE_DEVICE && ib->type != TYPE_DEVICE) return -1;
+    if (ia->type != TYPE_DEVICE && ib->type == TYPE_DEVICE) return 1;
+    // Then drawers before files
     if (ia->type == TYPE_DRAWER && ib->type != TYPE_DRAWER) return -1;
     if (ia->type != TYPE_DRAWER && ib->type == TYPE_DRAWER) return 1;
+    // Finally alphabetical
     return strcmp(ia->label, ib->label);
 }
 
@@ -3012,8 +2988,8 @@ void launch_with_hook(const char *command) {
 
 void open_file(FileIcon *icon) {
     if (!icon || !icon->path) return;
-    // Directories should be opened within AmiWB (safety guard)
-    if (icon->type == TYPE_DRAWER) {
+    // Directories and devices should be opened within AmiWB (safety guard)
+    if (icon->type == TYPE_DRAWER || icon->type == TYPE_DEVICE) {
         Canvas *c = find_canvas(icon->display_window);
         if (c) open_directory(icon, c);
         return;
@@ -3303,7 +3279,7 @@ void workbench_handle_button_press(XButtonEvent *event) {
     if (icon && event->button == Button1) {
         // Handle double-click BEFORE preparing any drag to avoid interference
         if (is_double_click(event->time, icon->last_click_time)) {
-            if (icon->type == TYPE_DRAWER) open_directory(icon, canvas);
+            if (icon->type == TYPE_DRAWER || icon->type == TYPE_DEVICE) open_directory(icon, canvas);
             else if (icon->type == TYPE_FILE) open_file(icon);
             else if (icon->type == TYPE_ICONIFIED) restore_iconified(icon);
             icon->last_click_time = event->time;
@@ -3800,7 +3776,6 @@ int extract_file_at_path(const char *archive_path, Canvas *canvas) {
         size_t archive_size = 0;
         if (stat(archive_path, &archive_stat) == 0) {
             archive_size = archive_stat.st_size;
-            log_error("[DEBUG] Archive size from stat(): %zu bytes", archive_size);
         }
         
         // Send START message IMMEDIATELY with archive size for byte-based progress
@@ -3815,10 +3790,7 @@ int extract_file_at_path(const char *archive_path, Canvas *canvas) {
         if (canvas) {
             msg.target_window = canvas->win;
         }
-        log_error("[DEBUG] Child sending START message at time %ld with archive_size=%zu", 
-                  msg.start_time, archive_size);
-        ssize_t written = write(pipefd[1], &msg, sizeof(msg));
-        log_error("[DEBUG] Child wrote %zd bytes to pipe (expected %zu)", written, sizeof(msg));
+        write(pipefd[1], &msg, sizeof(msg));
         
         // Open archive file for reading
         int archive_fd = open(archive_path, O_RDONLY);
@@ -4076,12 +4048,9 @@ int extract_file_at_path(const char *archive_path, Canvas *canvas) {
     dialog->percent = -1.0f; // Not started yet
     strncpy(dialog->current_file, archive_name, PATH_SIZE - 1);
     
-    log_error("[DEBUG] Parent created dialog at time %ld, pipe_fd=%d", dialog->start_time, dialog->pipe_fd);
-    
     // Add to global list
     extern void add_progress_dialog_to_list(ProgressDialog *dialog);
     add_progress_dialog_to_list(dialog);
-    log_error("[DEBUG] Parent added dialog to list");
     
     return 0;
 }

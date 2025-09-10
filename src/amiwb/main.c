@@ -42,6 +42,12 @@ void log_error(const char *format, ...) {
     FILE *log = fopen(log_path, "a");
     if (!log) return;  // Silent fail - don't break on log errors
     
+    // Add timestamp
+    time_t now;
+    time(&now);
+    struct tm *tm_info = localtime(&now);
+    fprintf(log, "[%02d:%02d:%02d] ", tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec);
+    
     va_list args;
     va_start(args, format);
     vfprintf(log, format, args);
@@ -198,6 +204,10 @@ int main(int argc, char *argv[]) {
     // Initialize workbench
     init_workbench();
     
+    // Initialize disk drives detection
+    extern void diskdrives_init(void);
+    diskdrives_init();
+    
     // Initialize events
     init_events();
     // Start compositor after events are ready. If it fails, continue.
@@ -218,6 +228,8 @@ int main(int argc, char *argv[]) {
     cleanup_menus();
     cleanup_dialogs();
     cleanup_iconinfo();
+    extern void diskdrives_cleanup(void);
+    diskdrives_cleanup();
     cleanup_workbench();
     // Finally close Display and render resources
     cleanup_intuition();

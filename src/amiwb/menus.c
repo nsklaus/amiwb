@@ -45,6 +45,7 @@ static void rename_file_cancel_callback(void);
 void trigger_execute_action(void);
 void trigger_requester_action(void);
 void trigger_extract_action(void);
+void trigger_eject_action(void);
 void handle_restart_request(void);
 
 // Global variable to store the icon being renamed
@@ -323,14 +324,15 @@ void init_menus(void) {
     // Icons submenu (index 2)
     // Per-icon actions; entries are placeholders to be wired later.
     Menu *icons_submenu = calloc(1, sizeof(Menu));  // zeros all fields
-    icons_submenu->item_count = 6;
+    icons_submenu->item_count = 7;
     icons_submenu->items = malloc(icons_submenu->item_count * sizeof(char*));
     icons_submenu->items[0] = strdup("Open");
     icons_submenu->items[1] = strdup("Copy");
     icons_submenu->items[2] = strdup("Rename");
     icons_submenu->items[3] = strdup("Extract");      // NEW - Extract archives
-    icons_submenu->items[4] = strdup("Information");  // Moved down
-    icons_submenu->items[5] = strdup("delete");
+    icons_submenu->items[4] = strdup("Eject");        // NEW - Eject removable drives
+    icons_submenu->items[5] = strdup("Information");  // Moved down
+    icons_submenu->items[6] = strdup("delete");
     
     // Initialize shortcuts array
     icons_submenu->shortcuts = malloc(icons_submenu->item_count * sizeof(char*));
@@ -338,8 +340,9 @@ void init_menus(void) {
     icons_submenu->shortcuts[1] = strdup("C");  // Copy - Super+C
     icons_submenu->shortcuts[2] = strdup("R");  // Rename - Super+R
     icons_submenu->shortcuts[3] = strdup("X");  // Extract - Super+X
-    icons_submenu->shortcuts[4] = strdup("I");  // Information - Super+I
-    icons_submenu->shortcuts[5] = strdup("D");  // delete - Super+D
+    icons_submenu->shortcuts[4] = strdup("Y");  // Eject - Super+Y
+    icons_submenu->shortcuts[5] = strdup("I");  // Information - Super+I
+    icons_submenu->shortcuts[6] = strdup("D");  // delete - Super+D
     
     init_menu_enabled(icons_submenu);  // Initialize all items as enabled
     icons_submenu->selected_item = -1;
@@ -1530,6 +1533,8 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 trigger_rename_action();
             } else if (strcmp(item, "Extract") == 0) {
                 trigger_extract_action();
+            } else if (strcmp(item, "Eject") == 0) {
+                trigger_eject_action();
             } else if (strcmp(item, "Information") == 0) {
                 trigger_icon_info_action();
             } else if (strcmp(item, "delete") == 0) {
@@ -2111,6 +2116,39 @@ void trigger_extract_action(void) {
             // Call the extraction function, passing the canvas so we know where to create the icon
             extract_file_at_path(selected->path, target_canvas);
         }
+    }
+}
+
+void trigger_eject_action(void) {
+    // Get the selected icon from active window or desktop
+    FileIcon *selected = NULL;
+    Canvas *aw = get_active_window();
+    Canvas *target_canvas = NULL;
+    
+    // If no active window, check desktop
+    if (!aw || aw->type == DESKTOP) {
+        target_canvas = get_desktop_canvas();
+    } else if (aw->type == WINDOW) {
+        target_canvas = aw;
+    }
+    
+    if (target_canvas) {
+        FileIcon **icon_array = get_icon_array();
+        int icon_count = get_icon_count();
+        for (int i = 0; i < icon_count; i++) {
+            FileIcon *icon = icon_array[i];
+            if (icon && icon->selected && icon->display_window == target_canvas->win) {
+                selected = icon;
+                break;
+            }
+        }
+    }
+    
+    // Only eject if it's a TYPE_DEVICE icon
+    if (selected && selected->type == TYPE_DEVICE) {
+        // Import eject_drive function from diskdrives.h
+        extern void eject_drive(FileIcon *icon);
+        eject_drive(selected);
     }
 }
 
