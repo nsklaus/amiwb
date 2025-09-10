@@ -1,4 +1,4 @@
-const EXTENSION_VERSION = '2.06';
+const EXTENSION_VERSION = '2.26';
 console.log(`Color replacer extension v${EXTENSION_VERSION} loaded!`);
 
 // Note: Initial gray background and hiding is now handled by inject.css
@@ -469,54 +469,143 @@ function applySmartColorForcing() {
     return;
   }
   
-  // Create style rules for AmigaOS-style gray backgrounds - AGGRESSIVE for non-GitHub/YouTube
+  // Create site-specific style rules
   const style = document.createElement('style');
-  style.textContent = `
-    /* Unset all fonts globally - use browser defaults */
-    * {
+  
+  // Build the CSS based on which site we're on
+  let cssRules = `
+    /* Unset fonts but NOT icon fonts */
+    *:not([class*="vjs"]):not([class*="icon"]):not([class*="fa-"]) {
       font-family: unset !important;
     }
-    
-    /* Force gray background on most elements but preserve thumbnails and code */
-    body, div:not([class*="thumb"]):not([class*="video"]):not([class*="highlight"]), 
-    section, article, main, header, footer, nav, aside,
-    p, h1, h2, h3, h4, h5, h6, ul, ol, 
-    li:not([class*="thumb"]):not([class*="video"]),
-    dl, dt, dd, table, thead, tbody, tfoot, tr, td:not(.blob-code), th,
-    form, fieldset, legend, label, input, textarea, select, button,
-    blockquote, address, a {
-      background-color: #a0a2a0 !important;
-      box-shadow: none !important;
-    }
-    
+  `;
+  
+  // DEFAULT RULES - but we'll exclude specific elements per site
+  if (window.location.hostname.includes('online-go.com')) {
+    // For online-go.com - Gray everything except player elements
+    cssRules += `
+      /* Gray divs EXCEPT player elements */
+      body, section, article, main, header, footer, nav, aside {
+        background-color: #a0a2a0 !important;
+        background-image: none !important;
+      }
+      
+      div:not(.player-icon-container):not(.flag):not([class*="player-icon"]) {
+        background-color: #a0a2a0 !important;
+        background-image: none !important;
+      }
+      
+      /* Make sure player containers and their children stay transparent */
+      .player-icon-container,
+      .player-icon-container *,
+      [class*="player-icon"],
+      [class*="player-icon"] * {
+        background-color: transparent !important;
+      }
+      
+      p, h1, h2, h3, h4, h5, h6, ul, ol, li, dl, dt, dd,
+      table, thead, tbody, tfoot, tr, td, th,
+      form, fieldset, legend, label, input, textarea, select, button,
+      blockquote, address, a {
+        background-color: #a0a2a0 !important;
+        background-image: none !important;
+      }
+      
+      span:not(.flag) {
+        background-color: #a0a2a0 !important;
+        background-image: none !important;
+      }
+      
+      /* Remove shadows */
+      * {
+        box-shadow: none !important;
+      }
+    `;
+  } else if (window.location.hostname.includes('yts')) {
+    // For yts.mx - Minimal gray
+    cssRules += `
+      /* Gray only safe elements */
+      body {
+        background-color: #a0a2a0 !important;
+      }
+      
+      p, h1, h2, h3, h4, h5, h6, li, td, th, label {
+        background-color: #a0a2a0 !important;
+      }
+      
+      /* Remove shadows */
+      * {
+        box-shadow: none !important;
+      }
+    `;
+  } else if (window.location.hostname.includes('odysee')) {
+    // For odysee.com - Keep what's working, don't break controls
+    cssRules += `
+      /* Gray only the body */
+      body {
+        background-color: #a0a2a0 !important;
+      }
+      
+      /* Gray for text elements only */
+      p, h1, h2, h3, h4, h5, h6, ul, ol, li,
+      table, thead, tbody, tfoot, tr, td, th,
+      form, fieldset, legend, label, input, textarea, select, button,
+      blockquote, address, a {
+        background-color: #a0a2a0 !important;
+        box-shadow: none !important;
+      }
+      
+      /* Remove shadows globally */
+      * {
+        box-shadow: none !important;
+      }
+      
+      /* DON'T override control bar - let it be what it wants */
+      /* Just preserve the icon fonts */
+      [class*="vjs"] {
+        font-family: VideoJS !important;
+      }
+    `;
+  } else {
+    // DEFAULT for other sites - the original aggressive rules
+    cssRules += `
+      /* Force gray background on most elements but preserve thumbnails and code */
+      body, div:not([class*="thumb"]):not([class*="video"]):not([class*="highlight"]), 
+      section, article, main, header, footer, nav, aside,
+      p, h1, h2, h3, h4, h5, h6, ul, ol, 
+      li:not([class*="thumb"]):not([class*="video"]),
+      dl, dt, dd, table, thead, tbody, tfoot, tr, td:not(.blob-code), th,
+      form, fieldset, legend, label, input, textarea, select, button,
+      blockquote, address, a {
+        background-color: #a0a2a0 !important;
+        box-shadow: none !important;
+      }
+      
+      /* Remove background images except for thumbnails */
+      body, section, article, main, header, footer, nav, aside,
+      p, h1, h2, h3, h4, h5, h6, ul, ol, dl, dt, dd,
+      table, thead, tbody, tfoot, tr, td, th,
+      form, fieldset, legend, label, input, textarea, select, button,
+      blockquote, address, span, a {
+        background-image: none !important;
+      }
+      
+      /* Remove gradients and shadows but preserve thumbnails */
+      *:not([class*="thumb"]):not([class*="video"]):not([id*="thumb"]):not(ytd-thumbnail):not(.yt-img-shadow) {
+        background-image: none !important;
+      }
+    `;
+  }
+  
+  // Common rules for all sites
+  cssRules += `
     /* Span elements - but not syntax highlighting spans */
     span:not(.keyword):not(.type):not(.string):not(.comment):not(.function):not(.number):not(.operator):not([class*="highlight"]):not([class*="syntax"]) {
       background-color: #a0a2a0 !important;
     }
     
-    /* Remove background images except for thumbnails */
-    body, section, article, main, header, footer, nav, aside,
-    p, h1, h2, h3, h4, h5, h6, ul, ol, dl, dt, dd,
-    table, thead, tbody, tfoot, tr, td, th,
-    form, fieldset, legend, label, input, textarea, select, button,
-    blockquote, address, span, a {
-      background-image: none !important;
-    }
-    
-    /* Remove gradients and shadows but preserve thumbnails */
-    *:not([class*="thumb"]):not([class*="video"]):not([id*="thumb"]):not(ytd-thumbnail):not(.yt-img-shadow) {
-      background-image: none !important;
-    }
-    
     * {
       box-shadow: none !important;
-    }
-    
-    /* Force solid backgrounds on common containers */
-    .container, .wrapper, .content, .main, .sidebar, .header, .footer,
-    [class*="container"], [class*="wrapper"], [class*="content"] {
-      background-color: #a0a2a0 !important;
-      background-image: none !important;
     }
     
     /* Convert any black backgrounds to gray */
@@ -682,8 +771,48 @@ function applySmartColorForcing() {
     } */
   `;
   
+  // Apply the assembled CSS
+  style.textContent = cssRules;
   document.head.appendChild(style);
   console.log('Smart color forcing applied');
+  
+  // Restore online-go.com avatars that have inline styles
+  if (window.location.hostname.includes('online-go.com')) {
+    // Create a style element that will override everything
+    const overrideStyle = document.createElement('style');
+    overrideStyle.textContent = `
+      /* Force player icons to show their backgrounds */
+      .player-icon-container[style*="background-image"] {
+        background-color: transparent !important;
+        /* Inline styles should work now */
+      }
+      
+      /* Make absolutely sure nothing inside gets grayed */
+      .player-icon-container * {
+        background-color: transparent !important;
+        background-image: inherit !important;
+      }
+    `;
+    document.head.appendChild(overrideStyle);
+    
+    // Also force inline styles after a delay
+    setTimeout(() => {
+      document.querySelectorAll('.player-icon-container[style*="background-image"]').forEach(el => {
+        // Get the original inline style
+        const origStyle = el.getAttribute('style');
+        if (origStyle) {
+          // Remove all our interference
+          el.removeAttribute('style');
+          // Reapply the original
+          el.setAttribute('style', origStyle);
+          // Now force our requirements on top
+          const currentBg = el.style.backgroundImage;
+          el.style.setProperty('background-image', currentBg, 'important');
+          el.style.setProperty('background-color', 'transparent', 'important');
+        }
+      });
+    }, 2000);
+  }
   
   // Fix gray text on gray background dynamically
   setTimeout(() => {

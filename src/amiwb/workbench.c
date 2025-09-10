@@ -95,6 +95,7 @@ int perform_file_operation_with_progress_ex(FileOperation op, const char *src_pa
 int remove_directory_recursive(const char *path);
 static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas);
 static void refresh_canvas(Canvas *canvas);
+static void find_free_slot(Canvas *canvas, int *out_x, int *out_y);
 
 // Helper functions for cleaner file operations
 static bool check_if_file_exists(const char *file_path);
@@ -314,7 +315,8 @@ static void load_deficons(void) {
     }
 }
 
-// Forward declaration of helper function
+// Forward declaration of helper functions
+static char *replace_string(char **str, const char *new_str);
 static inline void set_icon_meta(FileIcon *ic, const char *path, const char *label, int type);
 
 // Get the most recently added icon from the global array
@@ -325,10 +327,21 @@ static FileIcon* get_last_added_icon(void) {
 // Create icon and set its metadata in one call
 FileIcon* create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x, int y,
                                    const char *full_path, const char *name, int type) {
-    create_icon(icon_path, canvas, x, y);
+    log_error("[DEBUG] create_icon_with_metadata: icon_path='%s', full_path='%s', name='%s', type=%d", 
+              icon_path, full_path, name, type);
+    
+    // Create the icon with the correct type
+    // Note: create_icon_with_type will set path to icon_path initially, but we'll override it
+    create_icon_with_type(icon_path, canvas, x, y, type);
     FileIcon *new_icon = get_last_added_icon();
     if (new_icon) {
+        log_error("[DEBUG] Icon created, now setting correct metadata: full_path='%s', name='%s'", full_path, name);
+        // Override the path and label with the actual file/directory info, not the .info file
         set_icon_meta(new_icon, full_path, name, type);
+        log_error("[DEBUG] Icon metadata set: path='%s', label='%s', type=%d", 
+                  new_icon->path, new_icon->label, new_icon->type);
+    } else {
+        log_error("[ERROR] get_last_added_icon returned NULL");
     }
     return new_icon;
 }
@@ -2096,6 +2109,14 @@ void workbench_check_progress_dialogs(void) {
     ProgressDialog *dialog = get_all_progress_dialogs();
     time_t now = time(NULL);
     
+    static int check_count = 0;
+    static time_t last_log = 0;
+    if (dialog && now != last_log) {
+        log_error("[DEBUG] Check #%d: dialog exists, pipe_fd=%d, percent=%.1f, canvas=%p", 
+                  ++check_count, dialog->pipe_fd, dialog->percent, dialog->canvas);
+        last_log = now;
+    }
+    
     while (dialog) {
         ProgressDialog *next = dialog->next;  // Save next before potential deletion
         
@@ -2104,13 +2125,49 @@ void workbench_check_progress_dialogs(void) {
             ProgressMessage msg;
             ssize_t bytes_read = read(dialog->pipe_fd, &msg, sizeof(msg));
             
+            if (bytes_read > 0) {
+                log_error("[DEBUG] Read %zd bytes from pipe (msg type=%d)", bytes_read, msg.type);
+            } else if (bytes_read == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                log_error("[DEBUG] Read error: errno=%d (%s)", errno, strerror(errno));
+            }
+            
             if (bytes_read == sizeof(msg)) {
+                log_error("[DEBUG] Got complete message type=%d at time %ld", msg.type, now);
+                // Process message from child process
                 // Mark as started when we get first message
                 if (dialog->percent < 0) {
                     dialog->percent = 0.0f;  // Mark as started
                 }
                 
-                if (msg.type == MSG_PROGRESS) {
+                if (msg.type == MSG_START) {
+                    // Handle START message - DON'T update start_time from child, keep parent's original
+                    // dialog->start_time = msg.start_time;  // BUG: This makes diff always 0!
+                    dialog->percent = 0.0f;
+                    strncpy(dialog->current_file, msg.current_file, PATH_SIZE - 1);
+                    
+                    log_error("[DEBUG] MSG_START: now=%ld, start_time=%ld, diff=%ld, threshold=%d", 
+                              now, dialog->start_time, now - dialog->start_time, PROGRESS_DIALOG_THRESHOLD);
+                    
+                    // Create window if threshold has passed
+                    if (!dialog->canvas && now - dialog->start_time >= PROGRESS_DIALOG_THRESHOLD) {
+                        log_error("[DEBUG] Creating progress window at time %ld", now);
+                        const char *title = dialog->operation == PROGRESS_COPY ? "Copying Files..." :
+                                          dialog->operation == PROGRESS_MOVE ? "Moving Files..." :
+                                          dialog->operation == PROGRESS_DELETE ? "Deleting Files..." :
+                                          dialog->operation == PROGRESS_EXTRACT ? "Extracting Archive..." :
+                                          "Processing...";
+                        dialog->canvas = create_progress_window(dialog->operation, title);
+                        if (dialog->canvas) {
+                            log_error("[DEBUG] Progress window created successfully at time %ld", now);
+                            update_progress_dialog(dialog, dialog->current_file, 0.0f);
+                        } else {
+                            log_error("[ERROR] Failed to create progress window");
+                        }
+                    } else if (!dialog->canvas) {
+                        log_error("[DEBUG] Not creating window yet: canvas=%p, time_diff=%ld", 
+                                  dialog->canvas, now - dialog->start_time);
+                    }
+                } else if (msg.type == MSG_PROGRESS) {
                     // Calculate percent - prioritize bytes for smooth progress on large files
                     float percent = 0.0f;
                     if (msg.bytes_total > 0) {
@@ -2122,14 +2179,22 @@ void workbench_check_progress_dialogs(void) {
                     // Create window if 1 second has passed and window doesn't exist
                     if (!dialog->canvas && dialog->start_time > 0) {
                         if (now - dialog->start_time >= PROGRESS_DIALOG_THRESHOLD) {
+                            log_error("[DEBUG] Creating progress window from MSG_PROGRESS at time %ld (start was %ld, diff=%ld)", 
+                                      now, dialog->start_time, now - dialog->start_time);
                             // Create the actual dialog window now
                             const char *title = dialog->operation == PROGRESS_COPY ? "Copying Files..." :
                                               dialog->operation == PROGRESS_MOVE ? "Moving Files..." :
-                                              "Deleting Files...";
+                                              dialog->operation == PROGRESS_DELETE ? "Deleting Files..." :
+                                              dialog->operation == PROGRESS_EXTRACT ? "Extracting Archive..." :
+                                              "Processing...";
                             dialog->canvas = create_progress_window(dialog->operation, title);
                             if (dialog->canvas) {
+                                log_error("[DEBUG] Progress window created from MSG_PROGRESS at time %ld", now);
                                 update_progress_dialog(dialog, msg.current_file, percent);
                             }
+                        } else {
+                            log_error("[DEBUG] Not creating from MSG_PROGRESS: time_diff=%ld < threshold=%d", 
+                                      now - dialog->start_time, PROGRESS_DIALOG_THRESHOLD);
                         }
                     } else if (dialog->canvas) {
                         // Update existing dialog
@@ -2141,6 +2206,63 @@ void workbench_check_progress_dialogs(void) {
                     
                 } else if (msg.type == MSG_COMPLETE || msg.type == MSG_ERROR) {
                     // Operation finished
+                    // Operation finished - check if we need to create icons
+                    
+                    // If extraction succeeded, create icon for the extracted directory
+                    if (msg.type == MSG_COMPLETE && dialog->operation == PROGRESS_EXTRACT && 
+                        !msg.create_icon && strlen(msg.dest_path) > 0 && msg.target_window != None) {
+                        // This is an extraction operation - create icon for the directory we extracted into
+                        // This is an extraction operation - create icon for extracted directory
+                        
+                        // Verify the directory was actually created
+                        struct stat st;
+                        if (stat(msg.dest_path, &st) == 0) {
+                            // Directory was successfully created
+                        } else {
+                            log_error("[ERROR] Directory does not exist: %s (errno=%d: %s)", 
+                                     msg.dest_path, errno, strerror(errno));
+                        }
+                        
+                        Canvas *canvas = find_canvas(msg.target_window);
+                        if (canvas) {
+                            // Found the target canvas for icon creation
+                            // Get the directory name from the path
+                            const char *dir_name = strrchr(msg.dest_path, '/');
+                            dir_name = dir_name ? dir_name + 1 : msg.dest_path;
+                            // Extract directory name for icon label
+                            
+                            // Get the def_dir.info icon path for directories
+                            const char *icon_path = definfo_for_file(dir_name, true);
+                            if (!icon_path) {
+                                log_error("[ERROR] No def_dir.info available for directory icon");
+                                break;
+                            }
+                            // Got appropriate icon for directory
+                            
+                            // Find a free spot for the new directory icon
+                            int new_x, new_y;
+                            find_free_slot(canvas, &new_x, &new_y);
+                            // Found position for new icon
+                            
+                            // Create the directory icon using the proper metadata function
+                            // icon_path = def_dir.info, msg.dest_path = actual directory, dir_name = label
+                            // Create icon with proper metadata
+                            FileIcon *new_icon = create_icon_with_metadata(icon_path, canvas, new_x, new_y, 
+                                                    msg.dest_path, dir_name, TYPE_DRAWER);
+                            
+                            if (new_icon) {
+                                // Icon created successfully - update canvas to show it
+                                compute_content_bounds(canvas);
+                                compute_max_scroll(canvas);
+                                redraw_canvas(canvas);
+                                // Canvas updated with new icon
+                            } else {
+                                log_error("[ERROR] Failed to create icon for extracted directory: %s", msg.dest_path);
+                            }
+                        } else {
+                            log_error("[ERROR] Canvas not found for window 0x%lx - cannot create extracted directory icon", msg.target_window);
+                        }
+                    }
                     
                     // If copy succeeded and we have icon metadata, create the icon now
                     if (msg.type == MSG_COMPLETE && msg.create_icon && strlen(msg.dest_path) > 0) {
@@ -2202,6 +2324,41 @@ void workbench_check_progress_dialogs(void) {
                     }
                     dialog = next;
                     continue;
+                }
+            }
+        }
+        
+        // Check if we need to create progress window based on elapsed time
+        // This handles the case where no messages arrive but time has passed
+        if (!dialog->canvas && dialog->start_time > 0 && dialog->percent >= 0) {
+            // Dialog has started (percent >= 0) but no window yet
+            if (now - dialog->start_time >= PROGRESS_DIALOG_THRESHOLD) {
+                log_error("[DEBUG] Creating progress window from timer check at time %ld (start was %ld, diff=%ld)", 
+                          now, dialog->start_time, now - dialog->start_time);
+                
+                // Determine appropriate title based on operation
+                const char *title = "Processing...";
+                if (dialog->operation == PROGRESS_COPY) {
+                    title = "Copying Files...";
+                } else if (dialog->operation == PROGRESS_MOVE) {
+                    title = "Moving Files...";
+                } else if (dialog->operation == PROGRESS_DELETE) {
+                    title = "Deleting Files...";
+                } else if (dialog->operation == PROGRESS_EXTRACT) {
+                    title = "Extracting Archive...";
+                }
+                
+                dialog->canvas = create_progress_window(dialog->operation, title);
+                if (dialog->canvas) {
+                    log_error("[DEBUG] Progress window created from timer check at time %ld", now);
+                    // Update with current state
+                    float percent = 0.0f;
+                    if (dialog->percent > 0) {
+                        percent = dialog->percent;
+                    }
+                    update_progress_dialog(dialog, dialog->current_file, percent);
+                } else {
+                    log_error("[ERROR] Failed to create progress window from timer check");
                 }
             }
         }
@@ -3372,4 +3529,559 @@ off_t read_directory_size_result(int pipe_fd) {
         close(pipe_fd);
         return 0;
     }
+}
+
+// ============================================================================
+// Icon Positioning Helpers
+// ============================================================================
+
+// Find the next free slot for an icon in a canvas (simple version)
+// Just finds the next spot after the last icon
+static void find_free_slot(Canvas *canvas, int *out_x, int *out_y) {
+    if (!canvas || !out_x || !out_y) return;
+    
+    int step_x = 110;  // Horizontal spacing between icons
+    int step_y = 80;   // Vertical spacing between icons
+    
+    // Find the rightmost/bottommost existing icon
+    FileIcon **icons = get_icon_array();
+    int count = get_icon_count();
+    int last_x = -1;
+    int last_y = -1;
+    
+    for (int i = 0; i < count; i++) {
+        if (icons[i] && icons[i]->display_window == canvas->win) {
+            // Track the icon that's furthest along (rightmost, then bottommost)
+            if (icons[i]->x > last_x || (icons[i]->x == last_x && icons[i]->y > last_y)) {
+                last_x = icons[i]->x;
+                last_y = icons[i]->y;
+            }
+        }
+    }
+    
+    // If we found icons, place new one after the last
+    if (last_x >= 0) {
+        *out_x = last_x;
+        *out_y = last_y + step_y;
+        
+        // If too far down, wrap to next column
+        if (*out_y > canvas->height - 100) {
+            *out_x = last_x + step_x;
+            *out_y = (canvas->type == DESKTOP) ? 200 : 10;  // Desktop starts below System/Home
+        }
+    } else {
+        // No icons found, use default position
+        *out_x = (canvas->type == DESKTOP) ? 20 : 10;
+        *out_y = (canvas->type == DESKTOP) ? 200 : 10;
+    }
+}
+
+// ============================================================================
+// Archive Extraction
+// ============================================================================
+
+// Check if file is an archive based on extension
+// Kept for future menu enable/disable logic
+__attribute__((unused))
+static bool is_archive_file(const char *path) {
+    if (!path) return false;
+    
+    const char *ext = strrchr(path, '.');
+    if (!ext) return false;
+    ext++; // Skip the dot
+    
+    // Supported archive formats
+    const char *archive_exts[] = {
+        "lha", "lzh", "zip", "tar", "gz", "tgz", "bz2", "tbz",
+        "xz", "txz", "rar", "7z", NULL
+    };
+    
+    for (int i = 0; archive_exts[i]; i++) {
+        if (strcasecmp(ext, archive_exts[i]) == 0) {
+            return true;
+        }
+    }
+    
+    // Check for compound extensions like .tar.gz
+    const char *name = strrchr(path, '/');
+    name = name ? name + 1 : path;
+    if (strstr(name, ".tar.gz") || strstr(name, ".tar.bz2") || strstr(name, ".tar.xz")) {
+        return true;
+    }
+    
+    return false;
+}
+
+// Extract archive to directory in same location
+int extract_file_at_path(const char *archive_path, Canvas *canvas) {
+    if (!archive_path) {
+        log_error("[ERROR] extract_file_at_path: NULL archive path");
+        return -1;
+    }
+    
+    // Check if archive exists
+    struct stat st;
+    if (stat(archive_path, &st) != 0) {
+        log_error("[ERROR] Archive file not found: %s", archive_path);
+        return -1;
+    }
+    
+    // Get directory and filename
+    char dir_path[PATH_SIZE];
+    char archive_name[NAME_SIZE];
+    
+    const char *last_slash = strrchr(archive_path, '/');
+    if (last_slash) {
+        size_t dir_len = last_slash - archive_path;
+        if (dir_len >= PATH_SIZE) dir_len = PATH_SIZE - 1;
+        strncpy(dir_path, archive_path, dir_len);
+        dir_path[dir_len] = '\0';
+        strncpy(archive_name, last_slash + 1, NAME_SIZE - 1);
+    } else {
+        strcpy(dir_path, ".");
+        strncpy(archive_name, archive_path, NAME_SIZE - 1);
+    }
+    archive_name[NAME_SIZE - 1] = '\0';
+    
+    // Remove extension(s) to get base name
+    char base_name[NAME_SIZE];
+    strncpy(base_name, archive_name, NAME_SIZE - 1);
+    base_name[NAME_SIZE - 1] = '\0';
+    
+    // Handle compound extensions
+    char *ext = strstr(base_name, ".tar.");
+    if (ext) {
+        *ext = '\0';
+    } else {
+        ext = strrchr(base_name, '.');
+        if (ext) *ext = '\0';
+    }
+    
+    // Build target directory path with copy_ prefixes if needed
+    char target_dir[PATH_SIZE];
+    
+    // Calculate lengths once
+    size_t dir_len = strlen(dir_path);
+    size_t base_len = strlen(base_name);
+    
+    // Check if basic path would be too long (dir + "/" + base + null)
+    if (dir_len + 1 + base_len >= PATH_SIZE) {
+        log_error("[ERROR] Path too long for extraction directory");
+        return -1;
+    }
+    
+    // Safe to use now - compiler can see the length check
+    int written = snprintf(target_dir, PATH_SIZE, "%s/%s", dir_path, base_name);
+    if (written >= PATH_SIZE) {
+        log_error("[ERROR] Path truncated during extraction");
+        return -1;
+    }
+    
+    // Check for existing directory and add copy_ prefix if needed
+    int copy_num = 0;
+    while (access(target_dir, F_OK) == 0) {
+        if (copy_num == 0) {
+            // Need room for: dir + "/copy_" + base + null
+            if (dir_len + 6 + base_len >= PATH_SIZE) {
+                log_error("[ERROR] Path too long for copy directory");
+                return -1;
+            }
+            written = snprintf(target_dir, PATH_SIZE, "%s/copy_%s", dir_path, base_name);
+        } else {
+            // Need room for: dir + "/copy99_" + base + null (worst case)
+            if (dir_len + 8 + base_len >= PATH_SIZE) {
+                log_error("[ERROR] Path too long for copy directory");
+                return -1;
+            }
+            written = snprintf(target_dir, PATH_SIZE, "%s/copy%d_%s", dir_path, copy_num, base_name);
+        }
+        
+        if (written >= PATH_SIZE) {
+            log_error("[ERROR] Path truncated during copy naming");
+            return -1;
+        }
+        
+        copy_num++;
+        if (copy_num > 99) {
+            log_error("[ERROR] Too many copies of extraction directory");
+            return -1;
+        }
+    }
+    
+    // Create target directory
+    // Creating extraction directory
+    if (mkdir(target_dir, 0755) != 0) {
+        log_error("[ERROR] Failed to create extraction directory: %s (errno=%d: %s)", 
+                  target_dir, errno, strerror(errno));
+        return -1;
+    }
+    // Successfully created extraction directory
+    
+    // Determine extraction command based on extension
+    char command[PATH_SIZE * 3];
+    const char *ext_lower = strrchr(archive_name, '.');
+    if (!ext_lower) {
+        log_error("[ERROR] Unknown archive format: %s", archive_name);
+        rmdir(target_dir);
+        return -1;
+    }
+    ext_lower++; // Skip dot
+    
+    // Build extraction command
+    if (strcasecmp(ext_lower, "lha") == 0 || strcasecmp(ext_lower, "lzh") == 0) {
+        snprintf(command, sizeof(command), "lha -xw=%s %s 2>&1", target_dir, archive_path);
+    } else if (strcasecmp(ext_lower, "zip") == 0) {
+        snprintf(command, sizeof(command), "unzip -q %s -d %s 2>&1", archive_path, target_dir);
+    } else if (strcasecmp(ext_lower, "rar") == 0) {
+        snprintf(command, sizeof(command), "unrar x -y %s %s/ 2>&1", archive_path, target_dir);
+    } else if (strcasecmp(ext_lower, "7z") == 0) {
+        snprintf(command, sizeof(command), "7z x -y -o%s %s 2>&1", target_dir, archive_path);
+    } else if (strcasecmp(ext_lower, "gz") == 0) {
+        if (strstr(archive_name, ".tar.gz") || strstr(archive_name, ".tgz")) {
+            snprintf(command, sizeof(command), "tar -xzvf %s -C %s 2>&1", archive_path, target_dir);
+        } else {
+            // Single gzip file
+            char output_name[NAME_SIZE];
+            strncpy(output_name, base_name, NAME_SIZE - 1);
+            snprintf(command, sizeof(command), "gunzip -c %s > %s/%s 2>&1", 
+                     archive_path, target_dir, output_name);
+        }
+    } else if (strcasecmp(ext_lower, "bz2") == 0) {
+        if (strstr(archive_name, ".tar.bz2") || strstr(archive_name, ".tbz")) {
+            snprintf(command, sizeof(command), "tar -xjvf %s -C %s 2>&1", archive_path, target_dir);
+        } else {
+            // Single bzip2 file
+            char output_name[NAME_SIZE];
+            strncpy(output_name, base_name, NAME_SIZE - 1);
+            snprintf(command, sizeof(command), "bunzip2 -c %s > %s/%s 2>&1",
+                     archive_path, target_dir, output_name);
+        }
+    } else if (strcasecmp(ext_lower, "xz") == 0) {
+        if (strstr(archive_name, ".tar.xz") || strstr(archive_name, ".txz")) {
+            snprintf(command, sizeof(command), "tar -xJvf %s -C %s 2>&1", archive_path, target_dir);
+        } else {
+            // Single xz file
+            char output_name[NAME_SIZE];
+            strncpy(output_name, base_name, NAME_SIZE - 1);
+            snprintf(command, sizeof(command), "unxz -c %s > %s/%s 2>&1",
+                     archive_path, target_dir, output_name);
+        }
+    } else if (strcasecmp(ext_lower, "tar") == 0) {
+        snprintf(command, sizeof(command), "tar -xvf %s -C %s 2>&1", archive_path, target_dir);
+    } else {
+        log_error("[ERROR] Unsupported archive format: %s", ext_lower);
+        rmdir(target_dir);
+        return -1;
+    }
+    
+    // Create pipe for IPC
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        log_error("[ERROR] Failed to create pipe: %s", strerror(errno));
+        rmdir(target_dir);
+        return -1;
+    }
+    
+    pid_t pid = fork();
+    if (pid == -1) {
+        log_error("[ERROR] Failed to fork: %s", strerror(errno));
+        close(pipefd[0]);
+        close(pipefd[1]);
+        rmdir(target_dir);
+        return -1;
+    }
+    
+    if (pid == 0) {
+        // ===== CHILD PROCESS - Perform extraction =====
+        close(pipefd[0]); // Close read end
+        
+        // Get archive size instantly with stat() - no blocking!
+        struct stat archive_stat;
+        size_t archive_size = 0;
+        if (stat(archive_path, &archive_stat) == 0) {
+            archive_size = archive_stat.st_size;
+            log_error("[DEBUG] Archive size from stat(): %zu bytes", archive_size);
+        }
+        
+        // Send START message IMMEDIATELY with archive size for byte-based progress
+        ProgressMessage msg = {0};
+        msg.type = MSG_START;
+        msg.start_time = time(NULL);
+        msg.files_total = -1; // Files unknown, but we have bytes
+        msg.bytes_total = archive_size;  // Total archive size for progress calculation
+        msg.bytes_done = 0;
+        strncpy(msg.current_file, archive_name, NAME_SIZE - 1);
+        // Store the canvas window ID for later icon creation
+        if (canvas) {
+            msg.target_window = canvas->win;
+        }
+        log_error("[DEBUG] Child sending START message at time %ld with archive_size=%zu", 
+                  msg.start_time, archive_size);
+        ssize_t written = write(pipefd[1], &msg, sizeof(msg));
+        log_error("[DEBUG] Child wrote %zd bytes to pipe (expected %zu)", written, sizeof(msg));
+        
+        // Open archive file for reading
+        int archive_fd = open(archive_path, O_RDONLY);
+        if (archive_fd < 0) {
+            msg.type = MSG_ERROR;
+            snprintf(msg.current_file, NAME_SIZE, "Failed to open archive: %s", strerror(errno));
+            log_error("[ERROR] Failed to open archive %s: %s", archive_path, strerror(errno));
+            write(pipefd[1], &msg, sizeof(msg));
+            close(pipefd[1]);
+            _exit(1);
+        }
+        
+        // Build extraction command that reads from stdin
+        char extract_cmd[PATH_SIZE * 2];
+        bool use_stdin = true;  // Most formats can read from stdin
+        
+        if (strcasecmp(ext_lower, "zip") == 0) {
+            // funzip can extract from stdin, or use bsdtar
+            snprintf(extract_cmd, sizeof(extract_cmd), "bsdtar -xf - -C %s", target_dir);
+        } else if (strcasecmp(ext_lower, "rar") == 0) {
+            // Use bsdtar for RAR (works for v4 and earlier)
+            snprintf(extract_cmd, sizeof(extract_cmd), "bsdtar -xf - -C %s", target_dir);
+        } else if (strcasecmp(ext_lower, "7z") == 0) {
+            // 7z can extract from stdin with -si flag
+            snprintf(extract_cmd, sizeof(extract_cmd), "7z x -si -y -o%s", target_dir);
+        } else if (strcasecmp(ext_lower, "lha") == 0 || strcasecmp(ext_lower, "lzh") == 0) {
+            // lha supports stdin with - flag
+            snprintf(extract_cmd, sizeof(extract_cmd), "lha x -w=%s -", target_dir);
+        } else if (strstr(archive_name, ".tar.gz") || strstr(archive_name, ".tgz")) {
+            snprintf(extract_cmd, sizeof(extract_cmd), "tar -xz -C %s", target_dir);
+        } else if (strstr(archive_name, ".tar.bz2") || strstr(archive_name, ".tbz")) {
+            snprintf(extract_cmd, sizeof(extract_cmd), "tar -xj -C %s", target_dir);
+        } else if (strstr(archive_name, ".tar.xz") || strstr(archive_name, ".txz")) {
+            snprintf(extract_cmd, sizeof(extract_cmd), "tar -xJ -C %s", target_dir);
+        } else if (strcasecmp(ext_lower, "tar") == 0) {
+            snprintf(extract_cmd, sizeof(extract_cmd), "tar -x -C %s", target_dir);
+        } else if (strcasecmp(ext_lower, "gz") == 0) {
+            // Single gzip file
+            char output_name[NAME_SIZE];
+            strncpy(output_name, base_name, NAME_SIZE - 1);
+            // Remove .gz extension
+            char *dot = strrchr(output_name, '.');
+            if (dot && strcasecmp(dot, ".gz") == 0) *dot = '\0';
+            snprintf(extract_cmd, sizeof(extract_cmd), "gunzip -c > %s/%s", target_dir, output_name);
+        } else {
+            // Default: try bsdtar which handles many formats
+            snprintf(extract_cmd, sizeof(extract_cmd), "bsdtar -xf - -C %s", target_dir);
+        }
+        
+        // Log which extraction method we're using
+        log_error("[INFO] Extracting %s using command: %.200s", archive_name, extract_cmd);
+        
+        // Execute extraction command
+        FILE *tar_pipe;
+        int status;
+        
+        if (use_stdin) {
+            // Most formats: read archive ourselves and pipe to extractor
+            tar_pipe = popen(extract_cmd, "w");
+            if (!tar_pipe) {
+                close(archive_fd);
+                msg.type = MSG_ERROR;
+                // More specific error message including which tool failed
+                const char *tool = strstr(extract_cmd, "bsdtar") ? "bsdtar" :
+                                  strstr(extract_cmd, "tar") ? "tar" :
+                                  strstr(extract_cmd, "7z") ? "7z" :
+                                  strstr(extract_cmd, "gunzip") ? "gunzip" :
+                                  "extractor";
+                snprintf(msg.current_file, NAME_SIZE, "Failed: %s not found or not executable", tool);
+                log_error("[ERROR] Extraction failed for %s: Could not execute '%s' (command: %.100s)", 
+                          archive_path, tool, extract_cmd);
+                write(pipefd[1], &msg, sizeof(msg));
+                close(pipefd[1]);
+                _exit(1);
+            }
+            
+            // Read archive and pipe to extractor, tracking bytes
+            char buffer[65536];  // 64KB buffer for efficiency
+            size_t bytes_read_total = 0;
+            ssize_t bytes_read;
+            time_t last_update = time(NULL);
+            
+            while ((bytes_read = read(archive_fd, buffer, sizeof(buffer))) > 0) {
+                // Write chunk to extractor's stdin
+                size_t bytes_written = fwrite(buffer, 1, bytes_read, tar_pipe);
+                if (bytes_written != (size_t)bytes_read) {
+                    // Write error
+                    msg.type = MSG_ERROR;
+                    strncpy(msg.current_file, "Extraction write error", NAME_SIZE - 1);
+                    write(pipefd[1], &msg, sizeof(msg));
+                    break;
+                }
+                
+                // Track progress
+                bytes_read_total += bytes_read;
+                
+                // Send progress update every 256KB or every second
+                time_t now = time(NULL);
+                if (bytes_read_total % (256 * 1024) == 0 || now > last_update) {
+                    msg.type = MSG_PROGRESS;
+                    msg.bytes_done = bytes_read_total;
+                    msg.bytes_total = archive_size;
+                    msg.files_done = 0;  // Not tracking files
+                    msg.files_total = -1;
+                    
+                    // Just send the archive name, no "Extracting" prefix (dialog adds that)
+                    snprintf(msg.current_file, NAME_SIZE, "%s", archive_name);
+                    write(pipefd[1], &msg, sizeof(msg));
+                    last_update = now;
+                }
+            }
+            
+            close(archive_fd);
+            status = pclose(tar_pipe);
+        } else {
+            // Formats that don't support stdin (rar, lha): use old method with estimation
+            close(archive_fd);  // Don't need this
+            
+            tar_pipe = popen(extract_cmd, "r");
+            if (!tar_pipe) {
+                msg.type = MSG_ERROR;
+                // More specific error message for non-stdin tools
+                const char *tool = strstr(extract_cmd, "unrar") ? "unrar" :
+                                  strstr(extract_cmd, "lha") ? "lha" :
+                                  "extractor";
+                snprintf(msg.current_file, NAME_SIZE, "Failed: %s not found or not executable", tool);
+                log_error("[ERROR] Extraction failed for %s: Could not execute '%s' (command: %.100s)", 
+                          archive_path, tool, extract_cmd);
+                write(pipefd[1], &msg, sizeof(msg));
+                close(pipefd[1]);
+                _exit(1);
+            }
+            
+            // Read output for progress (less accurate but works)
+            char line[256];
+            time_t last_update = time(NULL);
+            time_t start_time = time(NULL);
+            
+            while (fgets(line, sizeof(line), tar_pipe)) {
+                time_t now = time(NULL);
+                if (now > last_update) {
+                    msg.type = MSG_PROGRESS;
+                    msg.files_done = 0;  // Not tracking files
+                    msg.files_total = -1;
+                    
+                    // Estimate progress based on time (rough)
+                    if (archive_size > 0) {
+                        time_t elapsed = now - start_time;
+                        // Estimate: 100MB/sec extraction rate
+                        size_t estimated_bytes = elapsed * 100000000;
+                        if (estimated_bytes > archive_size * 0.9) {
+                            estimated_bytes = (size_t)(archive_size * 0.9);
+                        }
+                        msg.bytes_done = estimated_bytes;
+                        msg.bytes_total = archive_size;
+                    }
+                    
+                    snprintf(msg.current_file, NAME_SIZE, "Extracting...");
+                    write(pipefd[1], &msg, sizeof(msg));
+                    last_update = now;
+                }
+            }
+            
+            status = pclose(tar_pipe);
+        }
+        int extraction_success = 0;
+        
+        if (status == -1) {
+            log_error("[WARNING] pclose failed: errno=%d (%s) - checking if extraction succeeded anyway", 
+                      errno, strerror(errno));
+            // pclose might fail if the child was already reaped, check if extraction worked
+            struct stat st;
+            if (stat(target_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
+                // Check if directory has any contents
+                DIR *dir = opendir(target_dir);
+                if (dir) {
+                    struct dirent *entry;
+                    int has_files = 0;
+                    while ((entry = readdir(dir)) != NULL) {
+                        if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                            has_files = 1;
+                            break;
+                        }
+                    }
+                    closedir(dir);
+                    if (has_files) {
+                        // Directory exists with content - treating as success
+                        extraction_success = 1;
+                    }
+                }
+            }
+        } else if (WIFEXITED(status)) {
+            int exit_code = WEXITSTATUS(status);
+            // Extraction command exited with code
+            extraction_success = (exit_code == 0);
+        } else {
+            log_error("[ERROR] Extraction command terminated abnormally");
+            extraction_success = 0;
+        }
+        
+        // Create a fresh message for completion to avoid any contamination from progress messages
+        ProgressMessage final_msg = {0};
+        
+        if (extraction_success) {
+            // Success - send completion with refresh hint
+            // Extraction successful - preparing completion message
+            
+            final_msg.type = MSG_COMPLETE;
+            final_msg.files_done = 0;  // Not tracking files
+            final_msg.bytes_done = archive_size;  // 100% complete
+            final_msg.bytes_total = archive_size;
+            final_msg.create_icon = false;  // This is extraction, not copy with icon
+            strncpy(final_msg.dest_dir, dir_path, PATH_SIZE - 1); // Parent dir for refresh
+            strncpy(final_msg.dest_path, target_dir, PATH_SIZE - 1); // Created dir
+            // Pass through the canvas window
+            if (canvas) {
+                final_msg.target_window = canvas->win;
+            }
+            // Completion message prepared with window and path
+        } else {
+            // Extraction failed
+            log_error("[ERROR] Extraction failed for %s", archive_path);
+            final_msg.type = MSG_ERROR;
+            snprintf(final_msg.current_file, NAME_SIZE, "Extraction failed");
+            // Clean up empty directory
+            rmdir(target_dir);
+        }
+        
+        write(pipefd[1], &final_msg, sizeof(final_msg));
+        close(pipefd[1]);
+        _exit(extraction_success ? 0 : 1);
+    }
+    
+    // ===== PARENT PROCESS - Return immediately =====
+    close(pipefd[1]); // Close write end
+    
+    // Make pipe non-blocking
+    int flags = fcntl(pipefd[0], F_GETFL, 0);
+    fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
+    
+    // Create progress dialog structure
+    ProgressDialog *dialog = calloc(1, sizeof(ProgressDialog));
+    if (!dialog) {
+        close(pipefd[0]);
+        int status;
+        waitpid(pid, &status, 0);
+        return -1;
+    }
+    
+    dialog->operation = PROGRESS_EXTRACT; // Extract operation
+    dialog->pipe_fd = pipefd[0];
+    dialog->child_pid = pid;
+    dialog->start_time = time(NULL);
+    dialog->canvas = NULL; // Window created later if needed
+    dialog->percent = -1.0f; // Not started yet
+    strncpy(dialog->current_file, archive_name, PATH_SIZE - 1);
+    
+    log_error("[DEBUG] Parent created dialog at time %ld, pipe_fd=%d", dialog->start_time, dialog->pipe_fd);
+    
+    // Add to global list
+    extern void add_progress_dialog_to_list(ProgressDialog *dialog);
+    add_progress_dialog_to_list(dialog);
+    log_error("[DEBUG] Parent added dialog to list");
+    
+    return 0;
 }

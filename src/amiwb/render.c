@@ -742,7 +742,49 @@ void redraw_canvas(Canvas *canvas) {
             
             XftColor item_fg;
             XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &fg_color, &item_fg);
-            XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, 10, item_y + y_base, (FcChar8 *)label, strlen(label));
+            
+            // Check if we need to add " [WB]" suffix for window list menu
+            char display_label[256];
+            if (menu->window_refs && menu->window_refs[i]) {
+                Canvas *win = menu->window_refs[i];
+                if (win->client_win == None) {  // Workbench window
+                    // Max 20 chars total: need room for " [WB]" (5 chars)
+                    if (strlen(label) > 15) {
+                        // Smart truncation: try to break at word boundary
+                        int cut_pos = 13;  // Default position (13 + 2 for ".." + 5 for " [WB]" = 20)
+                        for (int j = 13; j >= 9; j--) {
+                            if (label[j] == ' ' || label[j] == '_' || label[j] == '-') {
+                                cut_pos = j;
+                                break;
+                            }
+                        }
+                        snprintf(display_label, sizeof(display_label), "%.*s.. [WB]", cut_pos, label);
+                        // cut_pos chars + ".." (2) + " [WB]" (5) = exactly 20 total
+                    } else {
+                        snprintf(display_label, sizeof(display_label), "%s [WB]", label);
+                    }
+                } else {  // Client window
+                    // Full 20 chars for clients (no suffix)
+                    if (strlen(label) > 20) {
+                        // Smart truncation for clients too
+                        int cut_pos = 18;  // Default position (18 + 2 for ".." = 20)
+                        for (int j = 18; j >= 14; j--) {
+                            if (label[j] == ' ' || label[j] == '_' || label[j] == '-') {
+                                cut_pos = j;
+                                break;
+                            }
+                        }
+                        snprintf(display_label, sizeof(display_label), "%.*s..", cut_pos, label);
+                        // cut_pos chars + ".." (2) = exactly 20 total
+                    } else {
+                        snprintf(display_label, sizeof(display_label), "%s", label);
+                    }
+                }
+                XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, 10, item_y + y_base, (FcChar8 *)display_label, strlen(display_label));
+            } else {
+                // Regular menu item, no modification
+                XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, 10, item_y + y_base, (FcChar8 *)label, strlen(label));
+            }
             
             // Draw shortcut if present (e.g., "∷ R" for Rename) - also in gray if disabled
             if (menu->shortcuts && menu->shortcuts[i]) {

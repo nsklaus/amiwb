@@ -23,7 +23,8 @@ typedef enum {
 typedef enum {
     PROGRESS_COPY,
     PROGRESS_MOVE,
-    PROGRESS_DELETE
+    PROGRESS_DELETE,
+    PROGRESS_EXTRACT
 } ProgressOperation;
 
 // Dialog state structure

@@ -30,6 +30,7 @@
 // while being memory-efficient for a lightweight desktop
 #define PATH_SIZE 512           // Buffer size for file paths (typical paths are <300 chars)
 #define NAME_SIZE 128           // Buffer size for file names (most names are <50 chars)
+#define FULL_SIZE (PATH_SIZE + NAME_SIZE + 2)  // Buffer for path + "/" + filename + null
 
 // frame sizes
 // NOTE: Border sizes differ by window type:

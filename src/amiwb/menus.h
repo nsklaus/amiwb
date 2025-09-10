@@ -20,6 +20,7 @@ typedef struct Menu {
     int parent_index;           // Index in parent menu (-1 for top level)
     struct Menu *parent_menu;   // Parent menu (NULL for menubar)
     struct Menu **submenus;     // Array of submenus (NULL if none)
+    Canvas **window_refs;       // Window references for window_list menu (NULL for regular menus)
     bool is_custom;             // True if this is a custom menu from config file
 } Menu;
 

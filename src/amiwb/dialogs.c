@@ -1740,7 +1740,9 @@ void render_progress_dialog_content(Canvas *canvas) {
     // Line 2: Current file (with operation prefix)
     const char *op_prefix = dialog->operation == PROGRESS_MOVE ? "Moving: " :
                            dialog->operation == PROGRESS_COPY ? "Copying: " :
-                           "Deleting: ";
+                           dialog->operation == PROGRESS_DELETE ? "Deleting: " :
+                           dialog->operation == PROGRESS_EXTRACT ? "File: " :
+                           "";
     
     char display_text[PATH_SIZE + 20];
     snprintf(display_text, sizeof(display_text), "%s%s", op_prefix, dialog->current_file);
@@ -1794,6 +1796,34 @@ void render_progress_dialog_content(Canvas *canvas) {
                         bar_x, bar_y + bar_height - 1, bar_width, 1);  // Bottom
     XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
                         bar_x + bar_width - 1, bar_y, 1, bar_height);  // Right
+    
+    // Draw percentage text centered on the progress bar
+    char percent_text[16];
+    snprintf(percent_text, sizeof(percent_text), "%.0f%%", dialog->percent);
+    
+    XGlyphInfo percent_ext;
+    XftTextExtentsUtf8(dpy, font, (FcChar8*)percent_text, strlen(percent_text), &percent_ext);
+    
+    // Center the text horizontally and vertically in the progress bar
+    int percent_x = bar_x + (bar_width - percent_ext.xOff) / 2;
+    int percent_y = bar_y + (bar_height + font->ascent) / 2 - 2;  // Adjust Y by -2 for better centering
+    
+    // Determine text color based on progress bar position
+    // Turn white when blue bar is within 5px of text start (sooner transition)
+    bool use_white = (percent_x - bar_x - 5) < filled_width;
+    
+    // Draw percentage with appropriate color
+    if (use_white) {
+        XftColor xft_white;
+        XRenderColor white_color = WHITE;
+        XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &white_color, &xft_white);
+        XftDrawStringUtf8(canvas->xft_draw, &xft_white, font, percent_x, percent_y,
+                         (FcChar8*)percent_text, strlen(percent_text));
+        XftColorFree(dpy, canvas->visual, canvas->colormap, &xft_white);
+    } else {
+        XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, percent_x, percent_y,
+                         (FcChar8*)percent_text, strlen(percent_text));
+    }
     
     // Abort button - right after progress bar
     int button_x = content_x + (content_w - BUTTON_WIDTH) / 2;

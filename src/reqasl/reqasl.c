@@ -306,11 +306,42 @@ void reqasl_show(ReqASL *req, const char *initial_path) {
     
     req->is_open = true;
     
-    // Navigate to initial path if provided
+    // Determine which path to use:
+    // Priority: 1) --path argument, 2) REQASL_LAST_PATH env, 3) HOME
+    const char *path_to_use = NULL;
+    
     if (initial_path && initial_path[0]) {
-        reqasl_navigate_to(req, initial_path);
+        // Command line argument takes priority
+        path_to_use = initial_path;
     } else {
-        // Use current path
+        // Check X11 property for last used path (shared across all processes)
+        Window root = DefaultRootWindow(req->display);
+        Atom prop = XInternAtom(req->display, "REQASL_LAST_PATH", False);
+        Atom actual_type;
+        int actual_format;
+        unsigned long nitems, bytes_after;
+        unsigned char *data = NULL;
+        
+        if (XGetWindowProperty(req->display, root, prop,
+                              0, PATH_SIZE, False, XA_STRING,
+                              &actual_type, &actual_format, &nitems, &bytes_after,
+                              &data) == Success && data) {
+            // Got the property - check if path still exists
+            if (access((char *)data, F_OK) == 0) {
+                path_to_use = (char *)data;
+            }
+            // Note: XFree(data) is called after we're done using it
+        }
+    }
+    
+    if (path_to_use) {
+        reqasl_navigate_to(req, path_to_use);
+        // Free the X11 property data if we allocated it
+        if (path_to_use != initial_path) {
+            XFree((unsigned char *)path_to_use);
+        }
+    } else {
+        // Fall back to current path (HOME)
         scan_directory(req, req->current_path);
     }
     
@@ -346,10 +377,9 @@ void reqasl_refresh(ReqASL *req) {
     draw_window(req);
 }
 
-void reqasl_navigate_to(ReqASL *req, const char *path) {
+// Internal navigation function - can optionally skip env var update
+static void navigate_internal(ReqASL *req, const char *path, bool update_env) {
     if (!req || !path) return;
-    
-    // Navigating to path
     
     struct stat st;
     if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
@@ -358,6 +388,18 @@ void reqasl_navigate_to(ReqASL *req, const char *path) {
         req->current_path[sizeof(req->current_path) - 1] = '\0';
         strncpy(req->drawer_text, req->current_path, sizeof(req->drawer_text) - 1);
         req->drawer_text[sizeof(req->drawer_text) - 1] = '\0';
+        
+        // Update X11 property only if requested (replaces env var)
+        if (update_env) {
+            // Store as X11 property on root window for persistence across processes
+            Window root = DefaultRootWindow(req->display);
+            Atom prop = XInternAtom(req->display, "REQASL_LAST_PATH", False);
+            XChangeProperty(req->display, root, prop,
+                          XA_STRING, 8, PropModeReplace,
+                          (unsigned char *)req->current_path, 
+                          strlen(req->current_path));
+            XFlush(req->display);
+        }
         
         // Clear the File field when changing directories
         req->file_text[0] = '\0';
@@ -388,6 +430,11 @@ void reqasl_navigate_to(ReqASL *req, const char *path) {
     } else {
         // Path not valid
     }
+}
+
+// Public navigation function - always updates env var
+void reqasl_navigate_to(ReqASL *req, const char *path) {
+    navigate_internal(req, path, true);  // true = update env var
 }
 
 void reqasl_navigate_parent(ReqASL *req) {
@@ -925,6 +972,52 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 }
             }
             
+            // Handle right-click for HOME/last path toggle
+            if (event->xbutton.button == Button3) {
+                // Check if click is in listview area
+                if (req->listview && 
+                    event->xbutton.x >= req->listview->x &&
+                    event->xbutton.x < req->listview->x + req->listview->width &&
+                    event->xbutton.y >= req->listview->y &&
+                    event->xbutton.y < req->listview->y + req->listview->height) {
+                    
+                    // Get HOME directory
+                    const char *home_dir = getenv("HOME");
+                    if (!home_dir) {
+                        struct passwd *pw = getpwuid(getuid());
+                        if (pw) home_dir = pw->pw_dir;
+                    }
+                    
+                    if (home_dir) {
+                        // Check if we're currently at HOME
+                        if (strcmp(req->current_path, home_dir) == 0) {
+                            // We're at HOME - go back to last non-HOME path from X11 property
+                            Window root = DefaultRootWindow(req->display);
+                            Atom prop = XInternAtom(req->display, "REQASL_LAST_PATH", False);
+                            Atom actual_type;
+                            int actual_format;
+                            unsigned long nitems, bytes_after;
+                            unsigned char *data = NULL;
+                            
+                            if (XGetWindowProperty(req->display, root, prop,
+                                                  0, PATH_SIZE, False, XA_STRING,
+                                                  &actual_type, &actual_format, &nitems, &bytes_after,
+                                                  &data) == Success && data) {
+                                if (strcmp((char *)data, home_dir) != 0) {
+                                    // Navigate to last path WITHOUT updating X11 property
+                                    navigate_internal(req, (char *)data, false);
+                                }
+                                XFree(data);
+                            }
+                        } else {
+                            // Not at HOME - go to HOME without updating env var
+                            navigate_internal(req, home_dir, false);
+                        }
+                    }
+                    return true;
+                }
+            }
+            
             if (event->xbutton.button == Button1) {
                 int x = event->xbutton.x;
                 int y = event->xbutton.y;
@@ -1228,9 +1321,27 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                                 }
                                 // Else: mixed selection or multiple directories - do nothing
                             }
+                        } else if (req->is_save_mode) {
+                            // Save mode - get filename from File field
+                            if (req->file_field && strlen(req->file_field->text) > 0) {
+                                // Construct full path from current directory + filename
+                                char full_path[FULL_SIZE];
+                                snprintf(full_path, sizeof(full_path), "%s/%s", 
+                                        req->current_path, req->file_field->text);
+                                
+                                if (req->on_open) {
+                                    // Callback mode - return the save path to caller
+                                    req->on_open(full_path);
+                                } else {
+                                    // Standalone save mode - just print path (shouldn't happen)
+                                    printf("%s\n", full_path);
+                                }
+                                reqasl_hide(req);
+                            }
+                            // If no filename entered, do nothing (don't close dialog)
                         } else if (req->listview && req->listview->selected_index >= 0 && 
                                  req->listview->selected_index < req->entry_count) {
-                            // Single selection mode (save mode or single item selected)
+                            // Single selection mode (open mode with single item selected)
                             FileEntry *entry = req->entries[req->listview->selected_index];
                             
                             if (entry->type == TYPE_DRAWER) {
@@ -1780,14 +1891,18 @@ void reqasl_set_title(ReqASL *req, const char *title) {
     }
 }
 
+// Set dialog mode (open or save)
 void reqasl_set_mode(ReqASL *req, bool is_save_mode) {
     if (!req) return;
     
     req->is_save_mode = is_save_mode;
-    req->multi_select_enabled = !is_save_mode;  // Enable multi-select for open mode
     
-    // Update ListView multi-selection if it exists
-    if (req->listview) {
-        listview_set_multi_select(req->listview, req->multi_select_enabled);
+    // In save mode, disable multi-selection
+    if (is_save_mode) {
+        req->multi_select_enabled = false;
+        if (req->listview) {
+            listview_set_multi_select(req->listview, false);
+        }
     }
 }
+

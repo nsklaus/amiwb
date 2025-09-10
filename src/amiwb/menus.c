@@ -17,6 +17,7 @@
 #include <fontconfig/fontconfig.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>  // For strcasecmp
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
@@ -43,6 +44,7 @@ static void rename_file_cancel_callback(void);
 // Forward declarations for actions
 void trigger_execute_action(void);
 void trigger_requester_action(void);
+void trigger_extract_action(void);
 void handle_restart_request(void);
 
 // Global variable to store the icon being renamed
@@ -119,6 +121,20 @@ static void rename_file_ok_callback(const char *new_name) {
         icon->label = strdup(new_name);
         free(icon->path);
         icon->path = strdup(new_path);
+        
+        // Check for sidecar .info file and rename it too
+        char old_info_path[PATH_SIZE + 10];  // +10 for ".info" suffix
+        char new_info_path[PATH_SIZE + 10];
+        snprintf(old_info_path, sizeof(old_info_path), "%s.info", old_path);
+        snprintf(new_info_path, sizeof(new_info_path), "%s.info", new_path);
+        
+        // If sidecar .info exists, rename it too
+        if (access(old_info_path, F_OK) == 0) {
+            if (rename(old_info_path, new_info_path) != 0) {
+                // Log warning but don't fail the whole operation
+                log_error("[WARNING] Could not rename sidecar .info file: %s", strerror(errno));
+            }
+        }
         
         // Recalculate label width after rename
         XftFont *font = get_font();
@@ -198,7 +214,7 @@ void init_menus(void) {
 
     text_color.color = (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}; // Black
 
-    menubar = malloc(sizeof(Menu));
+    menubar = calloc(1, sizeof(Menu));  // calloc zeros all fields (NULL for pointers, 0 for ints)
     if (!menubar) return;
     menubar->canvas = create_canvas(NULL, 0, 0, XDisplayWidth(ctx->dpy, DefaultScreen(ctx->dpy)), MENU_ITEM_HEIGHT, MENU);
     if (!menubar->canvas) {
@@ -217,6 +233,7 @@ void init_menus(void) {
     menubar->items[3] = strdup("Tools");
     menubar->shortcuts = NULL;  // Top-level menubar doesn't need shortcuts
     menubar->enabled = NULL;  // Top-level menubar doesn't need enabled states
+    menubar->window_refs = NULL;  // Regular menus don't have window references
     menubar->selected_item = -1;
     menubar->parent_menu = NULL;
     menubar->submenus = malloc(menubar->item_count * sizeof(Menu*));
@@ -224,7 +241,7 @@ void init_menus(void) {
 
     // Workbench submenu (index 0)
     // Basic actions for the environment and global app state.
-    Menu *wb_submenu = malloc(sizeof(Menu));
+    Menu *wb_submenu = calloc(1, sizeof(Menu));  // zeros all fields
     wb_submenu->item_count = 7;
     wb_submenu->items = malloc(wb_submenu->item_count * sizeof(char*));
     wb_submenu->items[0] = strdup("Execute");
@@ -258,7 +275,7 @@ void init_menus(void) {
 
     // Windows submenu (index 1)
     // Window management and content view controls.
-    Menu *win_submenu = malloc(sizeof(Menu));
+    Menu *win_submenu = calloc(1, sizeof(Menu));  // zeros all fields
     win_submenu->item_count = 7;  // Added Refresh
     win_submenu->items = malloc(win_submenu->item_count * sizeof(char*));
     win_submenu->items[0] = strdup("New Drawer");
@@ -286,7 +303,7 @@ void init_menus(void) {
     win_submenu->canvas = NULL;
     // Create nested submenu for "View Modes" (index 6)
     // Switch listing mode and toggle hidden files.
-    Menu *view_by_sub = malloc(sizeof(Menu));
+    Menu *view_by_sub = calloc(1, sizeof(Menu));  // zeros all fields
     view_by_sub->item_count = 4;  // Icons, Names, Hidden, Spatial
     view_by_sub->items = malloc(view_by_sub->item_count * sizeof(char*));
     view_by_sub->items[0] = strdup("Icons");
@@ -305,22 +322,24 @@ void init_menus(void) {
 
     // Icons submenu (index 2)
     // Per-icon actions; entries are placeholders to be wired later.
-    Menu *icons_submenu = malloc(sizeof(Menu));
-    icons_submenu->item_count = 5;
+    Menu *icons_submenu = calloc(1, sizeof(Menu));  // zeros all fields
+    icons_submenu->item_count = 6;
     icons_submenu->items = malloc(icons_submenu->item_count * sizeof(char*));
     icons_submenu->items[0] = strdup("Open");
     icons_submenu->items[1] = strdup("Copy");
     icons_submenu->items[2] = strdup("Rename");
-    icons_submenu->items[3] = strdup("Information");
-    icons_submenu->items[4] = strdup("delete");
+    icons_submenu->items[3] = strdup("Extract");      // NEW - Extract archives
+    icons_submenu->items[4] = strdup("Information");  // Moved down
+    icons_submenu->items[5] = strdup("delete");
     
     // Initialize shortcuts array
     icons_submenu->shortcuts = malloc(icons_submenu->item_count * sizeof(char*));
     icons_submenu->shortcuts[0] = strdup("O");  // Open - Super+O
     icons_submenu->shortcuts[1] = strdup("C");  // Copy - Super+C
     icons_submenu->shortcuts[2] = strdup("R");  // Rename - Super+R
-    icons_submenu->shortcuts[3] = strdup("I");  // Information - Super+I
-    icons_submenu->shortcuts[4] = strdup("D");  // delete - Super+D
+    icons_submenu->shortcuts[3] = strdup("X");  // Extract - Super+X
+    icons_submenu->shortcuts[4] = strdup("I");  // Information - Super+I
+    icons_submenu->shortcuts[5] = strdup("D");  // delete - Super+D
     
     init_menu_enabled(icons_submenu);  // Initialize all items as enabled
     icons_submenu->selected_item = -1;
@@ -332,7 +351,7 @@ void init_menus(void) {
 
     // Tools submenu (index 3)
     // Quick launchers for external apps; editable in config later.
-    Menu *tools_submenu = malloc(sizeof(Menu));
+    Menu *tools_submenu = calloc(1, sizeof(Menu));  // zeros all fields
     tools_submenu->item_count = 4;
     tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
     tools_submenu->items[0] = strdup("Text Editor");
@@ -901,7 +920,7 @@ static void show_window_list_menu(int x, int y) {
     }
     
     // Create a temporary menu for the window list
-    Menu *window_menu = malloc(sizeof(Menu));
+    Menu *window_menu = calloc(1, sizeof(Menu));  // zeros all fields including window_refs
     if (!window_menu) return;
     
     // Get current window list
@@ -913,86 +932,24 @@ static void show_window_list_menu(int x, int y) {
     window_menu->items = malloc(window_menu->item_count * sizeof(char*));
     window_menu->shortcuts = malloc(window_menu->item_count * sizeof(char*));
     window_menu->enabled = malloc(window_menu->item_count * sizeof(bool));
+    window_menu->window_refs = malloc(window_menu->item_count * sizeof(Canvas*));
     
     // Add Desktop option first
     window_menu->items[0] = strdup("Desktop");
     window_menu->shortcuts[0] = NULL;  // No shortcut for Desktop in window list
     window_menu->enabled[0] = true;
+    window_menu->window_refs[0] = NULL;  // Desktop has no window reference
     
     // Add each window
     for (int i = 0; i < window_count; i++) {
         Canvas *c = window_list[i];
         const char *title = c->title_base ? c->title_base : "Untitled";
         
-        // Check if this is a Workbench window (no client window)
-        bool is_workbench = (c->client_win == None);
-        
-        // Build the display string with smart truncation
-        char display_title[50];
-        
-        if (is_workbench) {
-            // Need room for " [WB]" (5 chars), so max title length is ~20
-            if (strlen(title) > 20) {
-                // Title is too long, need to truncate
-                char temp[25];
-                
-                // Find first space after position 15
-                int first_space = -1;
-                for (int j = 15; title[j] && j < 25; j++) {
-                    if (title[j] == ' ') {
-                        first_space = j;
-                        break;
-                    }
-                }
-                
-                if (first_space > 0) {
-                    // Found a space after position 15, truncate there
-                    strncpy(temp, title, first_space);
-                    temp[first_space] = '\0';
-                    snprintf(display_title, sizeof(display_title), "%s. [WB]", temp);
-                } else {
-                    // No space found, hard truncate at 15
-                    strncpy(temp, title, 15);
-                    temp[15] = '\0';
-                    snprintf(display_title, sizeof(display_title), "%s. [WB]", temp);
-                }
-            } else {
-                // Title fits, just add suffix
-                snprintf(display_title, sizeof(display_title), "%s [WB]", title);
-            }
-        } else {
-            // Client window - truncate at 25 if needed
-            if (strlen(title) > 25) {
-                char temp[30];
-                // Find first space after position 20
-                int first_space = -1;
-                for (int j = 20; title[j] && j < 30; j++) {
-                    if (title[j] == ' ') {
-                        first_space = j;
-                        break;
-                    }
-                }
-                
-                if (first_space > 0) {
-                    // Found a space, truncate there
-                    strncpy(temp, title, first_space);
-                    temp[first_space] = '\0';
-                    snprintf(display_title, sizeof(display_title), "%s.", temp);
-                } else {
-                    // No space found, hard truncate at 20
-                    strncpy(temp, title, 20);
-                    temp[20] = '\0';
-                    snprintf(display_title, sizeof(display_title), "%s.", temp);
-                }
-            } else {
-                // Title fits
-                snprintf(display_title, sizeof(display_title), "%s", title);
-            }
-        }
-        
-        window_menu->items[i + 1] = strdup(display_title);
+        // Just use the title directly - no truncation, no suffix
+        window_menu->items[i + 1] = strdup(title);
         window_menu->shortcuts[i + 1] = NULL;  // No shortcuts for individual windows
         window_menu->enabled[i + 1] = true;
+        window_menu->window_refs[i + 1] = c;  // Store Canvas pointer for render-time checking
     }
     
     window_menu->selected_item = -1;
@@ -1002,18 +959,15 @@ static void show_window_list_menu(int x, int y) {
     window_menu->is_custom = false;
     window_menu->commands = NULL;
     
-    // Calculate menu width for window list (simpler than regular menus - no shortcuts)
-    int max_width = 0;
-    for (int i = 0; i < window_menu->item_count; i++) {
-        XGlyphInfo extents;
-        XftTextExtentsUtf8(ctx->dpy, font, 
-            (FcChar8 *)window_menu->items[i], strlen(window_menu->items[i]), &extents);
-        if (extents.xOff > max_width) {
-            max_width = extents.xOff;
-        }
-    }
-    // Just add small padding: 10px left, 10px right
-    int menu_width = max_width + 20;
+    // Calculate menu width for window list - use fixed 20 chars max
+    // Since we truncate everything to 20 chars at render time, calculate based on that
+    XGlyphInfo extents;
+    // Measure 20 chars worth of typical text (use "M" as average width char)
+    char sample_text[21] = "MMMMMMMMMMMMMMMMMMMM";  // 20 Ms for width calculation
+    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)sample_text, 20, &extents);
+    
+    // Add padding: 10px left, 10px right
+    int menu_width = extents.xOff + 20;
     if (menu_width < 80) menu_width = 80;  // Minimum width
     
     int menu_height = window_menu->item_count * MENU_ITEM_HEIGHT + 8;
@@ -1074,6 +1028,7 @@ void menu_handle_menubar_press(XButtonEvent *event) {
                 free(active_menu->shortcuts);
             }
             if (active_menu->enabled) free(active_menu->enabled);
+            if (active_menu->window_refs) free(active_menu->window_refs);
             free(active_menu);
             active_menu = NULL;
         }
@@ -1401,19 +1356,8 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 Canvas *c = window_list[i];
                 const char *title = c->title_base ? c->title_base : "Untitled";
                 
-                // Compare with menu item (may be truncated)
-                char truncated[35];
-                if (strlen(title) > 30) {
-                    strncpy(truncated, title, 27);
-                    truncated[27] = '.';
-                    truncated[28] = '.';
-                    truncated[29] = '.';
-                    truncated[30] = '\0';
-                } else {
-                    strcpy(truncated, title);
-                }
-                
-                if (strcmp(item, truncated) == 0) {
+                // Direct comparison - no truncation
+                if (strcmp(item, title) == 0) {
                     // Find the index in canvas_array
                     for (int j = 0; j < canvas_count; j++) {
                         if (canvas_array[j] == c) {
@@ -1584,6 +1528,8 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 trigger_copy_action();
             } else if (strcmp(item, "Rename") == 0) {
                 trigger_rename_action();
+            } else if (strcmp(item, "Extract") == 0) {
+                trigger_extract_action();
             } else if (strcmp(item, "Information") == 0) {
                 trigger_icon_info_action();
             } else if (strcmp(item, "delete") == 0) {
@@ -2105,6 +2051,66 @@ void trigger_copy_action(void) {
         }
         
         free(dir_path);
+    }
+}
+
+// Public function to trigger extract action (called from menu or global shortcut)
+void trigger_extract_action(void) {
+    // Get the selected icon from active window or desktop
+    FileIcon *selected = NULL;
+    Canvas *aw = get_active_window();
+    Canvas *target_canvas = NULL;
+    
+    // If no active window, check desktop
+    if (!aw || aw->type == DESKTOP) {
+        target_canvas = get_desktop_canvas();
+    } else if (aw->type == WINDOW) {
+        target_canvas = aw;
+    }
+    
+    if (target_canvas) {
+        FileIcon **icon_array = get_icon_array();
+        int icon_count = get_icon_count();
+        for (int i = 0; i < icon_count; i++) {
+            FileIcon *icon = icon_array[i];
+            if (icon && icon->selected && icon->display_window == target_canvas->win) {
+                selected = icon;
+                break;
+            }
+        }
+    }
+    
+    if (selected && selected->path) {
+        // Check if the selected file is an archive
+        const char *ext = strrchr(selected->path, '.');
+        if (!ext) return;
+        ext++; // Skip the dot
+        
+        // Check for supported archive formats
+        const char *archive_exts[] = {
+            "lha", "lzh", "zip", "tar", "gz", "tgz", "bz2", "tbz",
+            "xz", "txz", "rar", "7z", NULL
+        };
+        
+        bool is_archive = false;
+        for (int i = 0; archive_exts[i]; i++) {
+            if (strcasecmp(ext, archive_exts[i]) == 0) {
+                is_archive = true;
+                break;
+            }
+        }
+        
+        // Also check for compound extensions
+        const char *name = strrchr(selected->path, '/');
+        name = name ? name + 1 : selected->path;
+        if (strstr(name, ".tar.gz") || strstr(name, ".tar.bz2") || strstr(name, ".tar.xz")) {
+            is_archive = true;
+        }
+        
+        if (is_archive) {
+            // Call the extraction function, passing the canvas so we know where to create the icon
+            extract_file_at_path(selected->path, target_canvas);
+        }
     }
 }
 

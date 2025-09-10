@@ -75,4 +75,7 @@ void set_spatial_mode(bool mode);
 bool get_global_show_hidden_state(void);
 void set_global_show_hidden_state(bool show);
 
+// Archive extraction
+int extract_file_at_path(const char *archive_path, Canvas *canvas);
+
 #endif

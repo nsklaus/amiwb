@@ -4,6 +4,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
 #include <stdbool.h>
+#include "../amiwb/config.h"  // For PATH_SIZE and NAME_SIZE
 
 // Forward declarations
 typedef struct ListView ListView;
@@ -32,7 +33,7 @@ typedef struct ReqASL {
     XftDraw *xft_draw;
     
     // Current directory and files
-    char current_path[1024];
+    char current_path[PATH_SIZE];
     FileEntry **entries;
     int entry_count;
     int entry_capacity;
@@ -43,9 +44,9 @@ typedef struct ReqASL {
     int visible_items;
     
     // Input fields
-    char pattern_text[256];
-    char drawer_text[1024];
-    char file_text[256];
+    char pattern_text[NAME_SIZE];     // Pattern filter
+    char drawer_text[PATH_SIZE];      // Current directory path
+    char file_text[NAME_SIZE];        // Selected filename
     
     // InputField widgets for text editing
     InputField *pattern_field;
@@ -75,7 +76,7 @@ typedef struct ReqASL {
     bool cancel_button_pressed;
     
     // Window title
-    char window_title[256];
+    char window_title[NAME_SIZE];
     
     // Dialog mode
     bool is_save_mode;  // true for save, false for open

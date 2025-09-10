@@ -5,8 +5,9 @@
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
 #include <stdbool.h>
+#include "../amiwb/config.h"  // For NAME_SIZE
 
-#define INPUTFIELD_MAX_LENGTH 256
+#define INPUTFIELD_MAX_LENGTH NAME_SIZE
 
 typedef struct InputField {
     int x, y;
