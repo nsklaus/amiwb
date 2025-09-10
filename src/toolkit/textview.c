@@ -389,7 +389,7 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
             tv->line_height = 16;  // Fallback to a reasonable default
         }
         
-        tv->visible_lines = tv->height / tv->line_height;
+        tv->visible_lines = (tv->height - 2) / tv->line_height;  // 2px safety buffer
         if (tv->visible_lines <= 0) {
             tv->visible_lines = 1;  // At least 1 line must be visible
         }
@@ -398,7 +398,7 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
         fprintf(stderr, "[WARNING] TextView: No font loaded, using defaults\n");
         tv->char_width = 8;
         tv->line_height = 16;
-        tv->visible_lines = tv->height / tv->line_height;
+        tv->visible_lines = (tv->height - 2) / tv->line_height;  // 2px safety buffer
         if (tv->visible_lines <= 0) {
             tv->visible_lines = 1;
         }
@@ -979,6 +979,7 @@ void textview_move_cursor_right(TextView *tv) {
 void textview_move_cursor_up(TextView *tv) {
     if (!tv || tv->cursor_line == 0) return;
     
+    int old_scroll_x = tv->scroll_x;
     int old_scroll_y = tv->scroll_y;
     tv->cursor_line--;
     // Get line length in characters, not bytes
@@ -990,8 +991,8 @@ void textview_move_cursor_up(TextView *tv) {
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
     
-    // If scrolling occurred, need full redraw
-    if (tv->scroll_y != old_scroll_y) {
+    // If scrolling occurred (horizontal OR vertical), need full redraw
+    if (tv->scroll_x != old_scroll_x || tv->scroll_y != old_scroll_y) {
         textview_draw(tv);
     } else {
         textview_update_cursor(tv);
@@ -1001,6 +1002,7 @@ void textview_move_cursor_up(TextView *tv) {
 void textview_move_cursor_down(TextView *tv) {
     if (!tv || tv->cursor_line >= tv->line_count - 1) return;
     
+    int old_scroll_x = tv->scroll_x;
     int old_scroll_y = tv->scroll_y;
     tv->cursor_line++;
     // Get line length in characters, not bytes
@@ -1012,8 +1014,8 @@ void textview_move_cursor_down(TextView *tv) {
     if (tv->on_cursor_move) tv->on_cursor_move(tv);
     textview_ensure_cursor_visible(tv);
     
-    // If scrolling occurred, need full redraw
-    if (tv->scroll_y != old_scroll_y) {
+    // If scrolling occurred (horizontal OR vertical), need full redraw
+    if (tv->scroll_x != old_scroll_x || tv->scroll_y != old_scroll_y) {
         textview_draw(tv);
     } else {
         textview_update_cursor(tv);
@@ -1201,6 +1203,16 @@ void textview_draw(TextView *tv) {
     
     tv->scrollbar_visible = need_v_scrollbar;
     tv->h_scrollbar_visible = need_h_scrollbar;
+    
+    // Recalculate visible lines if horizontal scrollbar appeared
+    if (tv->h_scrollbar_visible) {
+        int available_height = tv->height - 2 - HORI_SCROLLBAR_HEIGHT;  // 2px safety buffer
+        int new_visible_lines = available_height / tv->line_height;
+        if (new_visible_lines < tv->visible_lines) {
+            tv->visible_lines = new_visible_lines;
+            if (tv->visible_lines <= 0) tv->visible_lines = 1;
+        }
+    }
     
     // Draw visible lines (start 2 pixels higher to create bottom padding)
     int y = tv->line_height - 2;
@@ -1426,9 +1438,15 @@ void textview_draw(TextView *tv) {
                         (tv->cursor_color & 0xFF) * 0x101,          // Blue
                         0xFFFF                                       // Alpha
                     };
+                    // Fixed cursor that covers all characters
+                    // y is at baseline + 2, text baseline is at y - 2
+                    // Characters extend from baseline - ascent to baseline + descent
+                    int baseline = y - 2;
+                    int cursor_y = baseline - tv->font->ascent + 1;  // Top of tallest char + 1px offset
+                    int cursor_height = tv->font->height;  // Full font height (ascent + descent)
                     XRenderFillRectangle(tv->display, PictOpSrc, dest, &cursor_color,
-                                       cursor_x, y - tv->line_height + 2, 
-                                       cursor_width, tv->line_height);
+                                       cursor_x, cursor_y, 
+                                       cursor_width, cursor_height);
                     
                     XRenderFreePicture(tv->display, dest);
                 }
@@ -1651,7 +1669,7 @@ void textview_update_cursor(TextView *tv) {
         int y = (line_idx - tv->scroll_y + 1) * line_height - 2;  // Match the -2 offset from textview_draw
         const char *line = tv->lines[line_idx];
         
-        // Clear just this line's area (cursor is drawn from y - line_height + 2 to y + 2)
+        // Clear the FULL line area to remove any cursor artifacts
         // Don't clear the line number area - start after it
         int clear_x = tv->line_numbers ? tv->line_number_width : 0;
         // Clear using XRender to match cursor drawing (avoids sync issues)
@@ -1660,19 +1678,23 @@ void textview_update_cursor(TextView *tv) {
             0, NULL);
         
         XRenderColor gray_bg = {0xa2a2, 0xa2a2, 0xa0a0, 0xFFFF};
+        // Clear exactly where the cursor is drawn
+        int baseline = y - 2;
+        int clear_y = baseline - tv->font->ascent + 1;  // Match cursor position
+        int clear_height = tv->font->height;  // Match cursor height
         XRenderFillRectangle(tv->display, PictOpSrc, dest, &gray_bg,
-                           clear_x, y - line_height + 2,
+                           clear_x, clear_y,
                            viewport_width - clear_x,
-                           line_height);
+                           clear_height);
         
         XRenderFreePicture(tv->display, dest);
         
         // Set clipping to prevent drawing into scrollbar area and line numbers
         XRectangle clip_rect;
         clip_rect.x = tv->line_numbers ? tv->line_number_width : 0;  // Protect line number area
-        clip_rect.y = y - line_height + 2;  // Match the clear area
+        clip_rect.y = clear_y;  // Match the clear area
         clip_rect.width = viewport_width - clip_rect.x;  // Adjust width based on x start
-        clip_rect.height = line_height;  // Match the clear area
+        clip_rect.height = clear_height;  // Match cursor height
         Region clip_region = XCreateRegion();
         XUnionRectWithRegion(&clip_rect, clip_region, clip_region);
         XftDrawSetClipRectangles(tv->xft_draw, 0, 0, &clip_rect, 1);
@@ -1759,9 +1781,14 @@ void textview_update_cursor(TextView *tv) {
                     (tv->cursor_color & 0xFF) * 0x101,
                     0xFFFF
                 };
+                // Fixed cursor that covers all characters
+                // y is at baseline + 2, text baseline is at y - 2
+                int baseline = y - 2;
+                int cursor_y = baseline - tv->font->ascent + 1;  // Top of tallest char + 1px offset
+                int cursor_height = tv->font->height;  // Full font height (ascent + descent)
                 XRenderFillRectangle(tv->display, PictOpSrc, dest, &cursor_color,
-                                   cursor_draw_x, y - line_height + 2,
-                                   cursor_width, line_height);  // Full line height
+                                   cursor_draw_x, cursor_y,
+                                   cursor_width, cursor_height);
                 
                 XRenderFreePicture(tv->display, dest);
                 
@@ -2949,15 +2976,15 @@ bool textview_handle_configure(TextView *tv, XConfigureEvent *event) {
     tv->width = event->width;
     tv->height = event->height;
     
-    // Recalculate visible lines
+    // Recalculate visible lines with safety buffer
     if (tv->line_height > 0) {
-        tv->visible_lines = tv->height / tv->line_height;
+        tv->visible_lines = (tv->height - 2) / tv->line_height;  // 2px safety buffer
         if (tv->visible_lines <= 0) {
             tv->visible_lines = 1;
         }
     } else {
         fprintf(stderr, "[WARNING] TextView: line_height is %d during resize, using default\n", tv->line_height);
-        tv->visible_lines = tv->height / 16;  // Use default
+        tv->visible_lines = (tv->height - 2) / 16;  // Use default with safety buffer
         if (tv->visible_lines <= 0) tv->visible_lines = 1;
     }
     
@@ -2973,7 +3000,7 @@ void textview_update_scrollbar(TextView *tv) {
     if (!tv) return;
     
     // Recalculate visible lines based on current height
-    int viewable_height = tv->height;
+    int viewable_height = tv->height - 2;  // 2px safety buffer before decorations
     if (tv->h_scrollbar_visible) viewable_height -= HORI_SCROLLBAR_HEIGHT;
     if (tv->line_height > 0) {
         tv->visible_lines = viewable_height / tv->line_height;
