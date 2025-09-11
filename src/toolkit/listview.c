@@ -39,7 +39,10 @@ void listview_update_scrollbar(ListView *lv) {
 
 ListView* listview_create(int x, int y, int width, int height) {
     ListView *lv = malloc(sizeof(ListView));
-    if (!lv) return NULL;
+    if (!lv) {
+        fprintf(stderr, "[ERROR] ListView: Failed to allocate memory (size=%zu)\n", sizeof(ListView));
+        return NULL;
+    }
     
     lv->x = x;
     lv->y = y;
@@ -309,6 +312,10 @@ bool listview_handle_click_with_time(ListView *lv, int x, int y, unsigned int st
                 // Ctrl+click: toggle individual selection
                 listview_toggle_selection(lv, item_index);
                 lv->selected_index = item_index;  // Keep track of last clicked
+                // Call the select callback for multi-selection changes
+                if (lv->on_select) {
+                    lv->on_select(item_index, lv->items[item_index].text, lv->callback_data);
+                }
             }
             // Check for Shift (ShiftMask = 0x01)
             else if (state & 0x01) {  // ShiftMask
@@ -330,6 +337,10 @@ bool listview_handle_click_with_time(ListView *lv, int x, int y, unsigned int st
                     lv->selected[item_index] = true;
                     lv->selection_count = 1;
                     lv->selected_index = item_index;
+                }
+                // Call the select callback for range selection
+                if (lv->on_select) {
+                    lv->on_select(item_index, lv->items[item_index].text, lv->callback_data);
                 }
             }
             else {

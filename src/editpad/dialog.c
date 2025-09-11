@@ -289,7 +289,7 @@ Button* dialog_add_button(Dialog *dialog, int x, int y, int width, int height,
 InputField* dialog_add_field(Dialog *dialog, int x, int y, int width, int height) {
     if (!dialog) return NULL;
     
-    InputField *field = inputfield_create(x, y, width, height);
+    InputField *field = inputfield_create(x, y, width, height, dialog->font);
     if (!field) return NULL;
     
     // Resize field array

@@ -25,15 +25,13 @@ status: the base environment is mostly complete.
 
 - menubar:
     all entries implemented. with global shortcut system (not user configurable, 
-    shortcuts hardcoded in for now). menus are not dynamic yet, there's only 
-    system menus. app menus substitutions later.
+    shortcuts hardcoded in for now). 
+    app menus substitutions works (for amiwb apps).
     additional custom menus parsed from file, toolsdaemon style. 
     show date and time. 
 
 - window decorations:
     sliders, arrows, close, resize, iconify, lower and maximize buttons work. 
-
-- it handle fullscreen for apps, and X resolutions changes and resizes accordingly
 
 - iconifying windows:
     "workbench" windows use a fixed "filer.info" icon for now, and clients use 
@@ -50,7 +48,9 @@ status: the base environment is mostly complete.
     file execution works through xdg-open for now.
     def_icons system works, it's simple and based on file extensions for matching.
 
-- background pictures for desktop and windows, both can do tiling  
+- auto mount external drives as device icons on the desktop 
+- background pictures for desktop and windows, both can do optional tiling  
+- it handles: fullscreen for apps, and X resolutions changes and resizes accordingly
 
 - file operations:
     copy, move, drag and drop (with progress dialog)
@@ -74,4 +74,3 @@ TODO:
 
 - make reqasl a file picker to load and save files from apps (wip)
 - make a GUI for system settings 
-- auto mount external drives as icons on the desktop

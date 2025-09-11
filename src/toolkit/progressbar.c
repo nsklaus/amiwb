@@ -1,12 +1,16 @@
 // progressbar.c - Progress bar widget implementation
 #include "progressbar.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 // Create a new progress bar widget
 ProgressBar* progressbar_create(Window parent, int x, int y, int width, int height) {
     ProgressBar *pb = calloc(1, sizeof(ProgressBar));
-    if (!pb) return NULL;
+    if (!pb) {
+        fprintf(stderr, "[ERROR] ProgressBar: Failed to allocate memory (size=%zu)\n", sizeof(ProgressBar));
+        return NULL;
+    }
     
     pb->x = x;
     pb->y = y;

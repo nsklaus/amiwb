@@ -24,9 +24,21 @@ typedef struct InputField {
     void (*on_enter)(const char *text, void *user_data);
     void (*on_change)(const char *text, void *user_data);
     void *user_data;
+    XftFont *font;  // Font to use for this InputField (borrowed from app, don't free)
+    
+    // Path completion support
+    bool enable_path_completion;  // Enable filesystem path autocompletion
+    char completion_base_dir[512]; // Base directory for file completion (empty = use current dir)
+    Window completion_window;      // X11 window for dropdown (0 if not shown)
+    bool dropdown_open;            // True when dropdown is visible and active
+    char **completion_candidates;  // Array of completion strings
+    int completion_count;          // Number of completion candidates
+    int completion_selected;       // Currently selected completion (-1 if none)
+    char completion_prefix[INPUTFIELD_MAX_LENGTH];  // The prefix being completed
+    int completion_prefix_len;     // Length of prefix in text buffer
 } InputField;
 
-InputField* inputfield_create(int x, int y, int width, int height);
+InputField* inputfield_create(int x, int y, int width, int height, XftFont *font);
 void inputfield_destroy(InputField *field);
 void inputfield_set_text(InputField *field, const char *text);
 const char* inputfield_get_text(InputField *field);
@@ -46,5 +58,17 @@ void inputfield_scroll_to_end(InputField *field);
 void inputfield_update_size(InputField *field, int new_width);
 void inputfield_set_disabled(InputField *field, bool disabled);
 void inputfield_set_readonly(InputField *field, bool readonly);
+
+// Path completion functions
+void inputfield_enable_path_completion(InputField *field, bool enable);
+void inputfield_set_completion_base_dir(InputField *field, const char *dir);
+void inputfield_show_completions(InputField *field, Display *dpy, Window parent_window);
+void inputfield_show_completions_at(InputField *field, Display *dpy, Window parent_window, int x, int y);
+void inputfield_hide_completions(InputField *field, Display *dpy);
+bool inputfield_handle_completion_click(InputField *field, int x, int y);
+void inputfield_apply_completion(InputField *field, int index);
+bool inputfield_is_completion_window(InputField *field, Window window);
+void inputfield_redraw_completion(InputField *field, Display *dpy);
+bool inputfield_has_dropdown_open(InputField *field);
 
 #endif

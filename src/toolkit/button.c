@@ -7,7 +7,7 @@
 Button* button_create(int x, int y, int width, int height, const char *label) {
     Button *button = malloc(sizeof(Button));
     if (!button) {
-        printf("[ERROR] malloc failed for Button structure (size=%zu)\n", sizeof(Button));
+        fprintf(stderr, "[ERROR] Button: Failed to allocate memory (size=%zu)\n", sizeof(Button));
         return NULL;
     }
     

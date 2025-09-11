@@ -95,7 +95,7 @@ void show_icon_info_dialog(FileIcon *icon) {
     int y_pos = BORDER_HEIGHT_TOP + ICONINFO_MARGIN - 1;  // Slightly above to avoid icon frame
     
     // Name field (editable)
-    dialog->name_field = inputfield_create(field_x, y_pos, field_width, 20);
+    dialog->name_field = inputfield_create(field_x, y_pos, field_width, 20, get_font());
     if (dialog->name_field) {
         strcpy(dialog->name_field->name, "Filename");
         inputfield_set_text(dialog->name_field, icon->label);
@@ -109,7 +109,7 @@ void show_icon_info_dialog(FileIcon *icon) {
     dialog->comment_field = inputfield_create(field_x,  // Same x as name field and "Size:" 
                                             y_pos, 
                                             field_width,  // Same width as name field
-                                            20);
+                                            20, get_font());
     if (dialog->comment_field) {
         strcpy(dialog->comment_field->name, "Comment");
         inputfield_set_text(dialog->comment_field, "");  // Empty by default
@@ -129,7 +129,7 @@ void show_icon_info_dialog(FileIcon *icon) {
     dialog->path_field = inputfield_create(field_x,
                                           y_pos + 200,  // Temporary - will be repositioned in render
                                           field_width,
-                                          20);
+                                          20, get_font());
     if (dialog->path_field) {
         strcpy(dialog->path_field->name, "Filepath");
         // Extract directory path (without filename)
@@ -151,7 +151,7 @@ void show_icon_info_dialog(FileIcon *icon) {
     dialog->app_field = inputfield_create(field_x,
                                          y_pos,
                                          field_width,
-                                         20);
+                                         20, get_font());
     if (dialog->app_field) {
         strcpy(dialog->app_field->name, "Run with");
     }

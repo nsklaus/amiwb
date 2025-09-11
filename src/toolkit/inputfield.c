@@ -5,11 +5,20 @@
 #include <X11/keysym.h>
 #include <X11/Xft/Xft.h>
 #include <X11/Xatom.h>
+#include <X11/extensions/Xrender.h>
+#include <fontconfig/fontconfig.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <ctype.h>
 
-InputField* inputfield_create(int x, int y, int width, int height) {
+// Forward declaration for path completion dropdown rendering
+static void draw_completion_dropdown(InputField *field, Display *dpy);
+
+InputField* inputfield_create(int x, int y, int width, int height, XftFont *font) {
     InputField *field = malloc(sizeof(InputField));
     if (!field) {
-        printf("[ERROR] malloc failed for InputField structure (size=%zu)\n", sizeof(InputField));
+        fprintf(stderr, "[ERROR] InputField: Failed to allocate memory (size=%zu)\n", sizeof(InputField));
         return NULL;
     }
     
@@ -29,6 +38,18 @@ InputField* inputfield_create(int x, int y, int width, int height) {
     field->on_enter = NULL;
     field->on_change = NULL;
     field->user_data = NULL;
+    field->font = font;  // Store the font pointer (borrowed from app)
+    
+    // Initialize path completion fields
+    field->enable_path_completion = false;
+    field->completion_base_dir[0] = '\0';  // Initialize base dir as empty
+    field->completion_window = 0;
+    field->dropdown_open = false;
+    field->completion_candidates = NULL;
+    field->completion_count = 0;
+    field->completion_selected = -1;
+    field->completion_prefix[0] = '\0';
+    field->completion_prefix_len = 0;
     
     return field;
 }
@@ -37,6 +58,15 @@ void inputfield_destroy(InputField *field) {
     if (!field) {
         return;  // Not fatal - cleanup function
     }
+    
+    // Clean up completion resources
+    if (field->completion_candidates) {
+        for (int i = 0; i < field->completion_count; i++) {
+            free(field->completion_candidates[i]);
+        }
+        free(field->completion_candidates);
+    }
+    
     free(field);
 }
 
@@ -460,6 +490,13 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
     switch (keysym) {
         case XK_Return:
         case XK_KP_Enter:
+            // If completion dropdown is visible, apply selected completion
+            if (field->dropdown_open && field->completion_count > 0) {
+                inputfield_apply_completion(field, field->completion_selected);
+                inputfield_hide_completions(field, event->display);
+                return true;
+            }
+            // Otherwise, normal Enter behavior
             if (field->on_enter) {
                 field->on_enter(field->text, field->user_data);
             }
@@ -499,6 +536,48 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
         case XK_KP_End:
             field->cursor_pos = strlen(field->text);
             return true;
+            
+        case XK_Tab:
+            // Trigger path completion if enabled
+            if (field->enable_path_completion && !field->readonly) {
+                // Get the parent window from the event
+                Window parent = event->window;
+                inputfield_show_completions(field, event->display, parent);
+                return true;
+            }
+            break;
+            
+        case XK_Escape:
+            // Hide completion dropdown if visible
+            if (field->dropdown_open) {
+                inputfield_hide_completions(field, event->display);
+                return true;
+            }
+            break;
+            
+        case XK_Up:
+        case XK_KP_Up:
+            // Navigate completion dropdown up
+            if (field->dropdown_open && field->completion_count > 0) {
+                if (field->completion_selected > 0) {
+                    field->completion_selected--;
+                    draw_completion_dropdown(field, event->display);
+                }
+                return true;
+            }
+            break;
+            
+        case XK_Down:
+        case XK_KP_Down:
+            // Navigate completion dropdown down
+            if (field->dropdown_open && field->completion_count > 0) {
+                if (field->completion_selected < field->completion_count - 1) {
+                    field->completion_selected++;
+                    draw_completion_dropdown(field, event->display);
+                }
+                return true;
+            }
+            break;
     }
     
     // Handle regular text input (blocked if readonly)
@@ -652,4 +731,458 @@ void inputfield_set_readonly(InputField *field, bool readonly) {
     }
     
     field->readonly = readonly;
+}
+
+// ========== Path Completion Functions ==========
+
+// Enable or disable path completion
+void inputfield_enable_path_completion(InputField *field, bool enable) {
+    if (!field) return;
+    field->enable_path_completion = enable;
+    
+    // If disabling, clean up any active completion
+    if (!enable && field->completion_window) {
+        inputfield_hide_completions(field, NULL);
+    }
+}
+
+// Set base directory for completion (for File field to use Path field's directory)
+void inputfield_set_completion_base_dir(InputField *field, const char *dir) {
+    if (!field) return;
+    
+    if (dir && dir[0] != '\0') {
+        strncpy(field->completion_base_dir, dir, PATH_SIZE - 1);
+        field->completion_base_dir[PATH_SIZE - 1] = '\0';
+        
+        // Ensure it ends with /
+        size_t len = strlen(field->completion_base_dir);
+        if (len > 0 && len < PATH_SIZE - 1 && field->completion_base_dir[len - 1] != '/') {
+            field->completion_base_dir[len] = '/';
+            field->completion_base_dir[len + 1] = '\0';
+        }
+    } else {
+        field->completion_base_dir[0] = '\0';
+    }
+}
+
+// Free completion candidates
+static void free_completion_candidates(InputField *field) {
+    if (field->completion_candidates) {
+        for (int i = 0; i < field->completion_count; i++) {
+            free(field->completion_candidates[i]);
+        }
+        free(field->completion_candidates);
+        field->completion_candidates = NULL;
+        field->completion_count = 0;
+        field->completion_selected = -1;
+    }
+}
+
+// Compare function for sorting completions
+static int completion_compare(const void *a, const void *b) {
+    return strcasecmp(*(const char **)a, *(const char **)b);
+}
+
+// Expand tilde to home directory
+static char *expand_tilde(const char *path) {
+    if (path[0] != '~') return strdup(path);
+    
+    const char *home = getenv("HOME");
+    if (!home) return strdup(path);
+    
+    if (path[1] == '\0' || path[1] == '/') {
+        // ~/... or just ~
+        size_t home_len = strlen(home);
+        size_t path_len = strlen(path + 1);
+        char *result = malloc(home_len + path_len + 1);
+        if (!result) {
+            fprintf(stderr, "[ERROR] InputField: Failed to allocate memory for path expansion\n");
+            return strdup(path);
+        }
+        
+        snprintf(result, home_len + path_len + 1, "%s%s", home, path + 1);
+        return result;
+    }
+    
+    return strdup(path);
+}
+
+// Find completions for the given partial path
+static void find_completions(InputField *field, const char *partial) {
+    free_completion_candidates(field);
+    
+    // Expand tilde if present
+    char *expanded = expand_tilde(partial);
+    
+    // Split into directory and prefix
+    char dir_path[PATH_SIZE];
+    char prefix[NAME_SIZE];
+    
+    char *last_slash = strrchr(expanded, '/');
+    if (last_slash) {
+        // Has directory component
+        size_t dir_len = last_slash - expanded + 1;
+        if (dir_len >= PATH_SIZE) {
+            fprintf(stderr, "[ERROR] InputField: Directory path too long\n");
+            free(expanded);
+            return;
+        }
+        strncpy(dir_path, expanded, dir_len);
+        dir_path[dir_len] = '\0';
+        
+        strncpy(prefix, last_slash + 1, NAME_SIZE - 1);
+        prefix[NAME_SIZE - 1] = '\0';
+    } else {
+        // No directory, use base dir if set, otherwise current directory
+        if (field->completion_base_dir[0] != '\0') {
+            strncpy(dir_path, field->completion_base_dir, PATH_SIZE - 1);
+            dir_path[PATH_SIZE - 1] = '\0';
+        } else {
+            strncpy(dir_path, "./", PATH_SIZE - 1);
+            dir_path[PATH_SIZE - 1] = '\0';
+        }
+        
+        strncpy(prefix, expanded, NAME_SIZE - 1);
+        prefix[NAME_SIZE - 1] = '\0';
+    }
+    
+    // Expand the directory path
+    char *expanded_dir = expand_tilde(dir_path);
+    
+    // Open directory
+    DIR *dir = opendir(expanded_dir);
+    if (!dir) {
+        free(expanded);
+        free(expanded_dir);
+        return;
+    }
+    
+    // Allocate initial space for candidates
+    int capacity = 16;
+    field->completion_candidates = malloc(capacity * sizeof(char *));
+    field->completion_count = 0;
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        // Skip . and ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        
+        // Check if name starts with prefix (case-insensitive)
+        if (strncasecmp(entry->d_name, prefix, strlen(prefix)) == 0) {
+            // Grow array if needed
+            if (field->completion_count >= capacity) {
+                capacity *= 2;
+                field->completion_candidates = realloc(field->completion_candidates,
+                                                      capacity * sizeof(char *));
+            }
+            
+            // Check if it's a directory
+            char full_path[PATH_SIZE];
+            int ret = snprintf(full_path, sizeof(full_path), "%s%s", expanded_dir, entry->d_name);
+            if (ret >= PATH_SIZE) {
+                fprintf(stderr, "[WARNING] InputField: Path too long for completion, skipping: %s%s\n", expanded_dir, entry->d_name);
+                continue;
+            }
+            struct stat st;
+            bool is_dir = (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode));
+            
+            // Add to candidates (with / suffix for directories)
+            if (is_dir) {
+                field->completion_candidates[field->completion_count] = 
+                    malloc(strlen(entry->d_name) + 2);
+                sprintf(field->completion_candidates[field->completion_count], 
+                       "%s/", entry->d_name);
+            } else {
+                field->completion_candidates[field->completion_count] = 
+                    strdup(entry->d_name);
+            }
+            field->completion_count++;
+        }
+    }
+    
+    closedir(dir);
+    
+    // Sort completions
+    if (field->completion_count > 0) {
+        qsort(field->completion_candidates, field->completion_count,
+              sizeof(char *), completion_compare);
+    }
+    
+    // Store the prefix info
+    strncpy(field->completion_prefix, partial, sizeof(field->completion_prefix) - 1);
+    field->completion_prefix[sizeof(field->completion_prefix) - 1] = '\0';
+    field->completion_prefix_len = strlen(partial) - strlen(prefix);
+    
+    free(expanded);
+    free(expanded_dir);
+}
+
+// Apply selected completion to text buffer
+void inputfield_apply_completion(InputField *field, int index) {
+    if (!field || index < 0 || index >= field->completion_count) return;
+    
+    
+    // Build the completed path
+    char completed[PATH_SIZE];
+    if (field->completion_prefix_len >= PATH_SIZE) {
+        fprintf(stderr, "[ERROR] InputField: Completion prefix too long\n");
+        return;
+    }
+    strncpy(completed, field->completion_prefix, field->completion_prefix_len);
+    completed[field->completion_prefix_len] = '\0';
+    
+    // Safe concatenation
+    size_t current_len = strlen(completed);
+    size_t candidate_len = strlen(field->completion_candidates[index]);
+    if (current_len + candidate_len >= PATH_SIZE) {
+        fprintf(stderr, "[ERROR] InputField: Completed path too long\n");
+        return;
+    }
+    strncat(completed, field->completion_candidates[index], PATH_SIZE - current_len - 1);
+    
+    
+    // Replace text buffer
+    strncpy(field->text, completed, INPUTFIELD_MAX_LENGTH);
+    field->text[INPUTFIELD_MAX_LENGTH] = '\0';
+    field->cursor_pos = strlen(field->text);
+    field->visible_start = 0;  // Reset scroll
+    
+    // Note: Don't hide dropdown here - caller will do it with proper Display pointer
+    
+    // Notify change
+    if (field->on_change) {
+        field->on_change(field->text, field->user_data);
+    }
+}
+
+// Draw completion dropdown content
+static void draw_completion_dropdown(InputField *field, Display *dpy) {
+    if (!field || !field->completion_window || field->completion_count == 0) return;
+    
+    // Get window dimensions
+    Window root_return;
+    int x_return, y_return;
+    unsigned int width, height, border_width_return, depth_return;
+    XGetGeometry(dpy, field->completion_window, &root_return, 
+                 &x_return, &y_return, &width, &height, 
+                 &border_width_return, &depth_return);
+    
+    // Create XRender Picture for proper rendering
+    Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
+    XRenderPictFormat *format = XRenderFindVisualFormat(dpy, visual);
+    Pixmap pixmap = XCreatePixmap(dpy, field->completion_window, width, height, 
+                                  DefaultDepth(dpy, DefaultScreen(dpy)));
+    Picture picture = XRenderCreatePicture(dpy, pixmap, format, 0, NULL);
+    
+    // Define colors from config.h
+    XRenderColor gray = {0xa0a0, 0xa2a2, 0xa0a0, 0xffff};  // GRAY from config.h
+    XRenderColor black = {0x0000, 0x0000, 0x0000, 0xFFFF}; // BLACK from config.h
+    XRenderColor white = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}; // WHITE from config.h
+    XRenderColor blue = {0x4858, 0x6F6F, 0xB0B0, 0xFFFF};  // BLUE from config.h
+    
+    // Clear background to gray
+    XRenderFillRectangle(dpy, PictOpSrc, picture, &gray, 0, 0, width, height);
+    
+    // Draw black border
+    XRenderFillRectangle(dpy, PictOpSrc, picture, &black, 0, 0, width, 1);        // Top
+    XRenderFillRectangle(dpy, PictOpSrc, picture, &black, 0, 0, 1, height);       // Left
+    XRenderFillRectangle(dpy, PictOpSrc, picture, &black, width-1, 0, 1, height); // Right
+    XRenderFillRectangle(dpy, PictOpSrc, picture, &black, 0, height-1, width, 1); // Bottom
+    
+    // Create XftDraw for text rendering
+    XftDraw *xft_draw = XftDrawCreate(dpy, pixmap, visual, 
+                                      DefaultColormap(dpy, DefaultScreen(dpy)));
+    
+    // Use the font stored in the InputField (passed from the app)
+    if (!field->font) {
+        // Can't render without font
+        XftDrawDestroy(xft_draw);
+        XRenderFreePicture(dpy, picture);
+        XFreePixmap(dpy, pixmap);
+        return;
+    }
+    
+    // Draw completion items
+    int item_height = 20;
+    int max_items = (height - 4) / item_height;
+    int start_item = 0;
+    
+    // Scroll to show selected item if needed
+    if (field->completion_selected >= max_items) {
+        start_item = field->completion_selected - max_items + 1;
+    }
+    
+    // Prepare XftColors
+    XftColor black_color, white_color;
+    XftColorAllocValue(dpy, visual, DefaultColormap(dpy, DefaultScreen(dpy)), &black, &black_color);
+    XftColorAllocValue(dpy, visual, DefaultColormap(dpy, DefaultScreen(dpy)), &white, &white_color);
+    
+    for (int i = 0; i < max_items && start_item + i < field->completion_count; i++) {
+        int y = 2 + i * item_height;
+        int item_index = start_item + i;
+        
+        // Highlight selected item with blue background
+        if (item_index == field->completion_selected) {
+            XRenderFillRectangle(dpy, PictOpSrc, picture, &blue, 
+                               2, y, width - 4, item_height);
+        }
+        
+        // Draw text
+        int text_x = 5;
+        int text_y = y + item_height - 5;
+        
+        XftColor *text_color = (item_index == field->completion_selected) ? &white_color : &black_color;
+        XftDrawStringUtf8(xft_draw, text_color, field->font, text_x, text_y,
+                         (FcChar8*)field->completion_candidates[item_index],
+                         strlen(field->completion_candidates[item_index]));
+    }
+    
+    // Copy to window
+    GC gc = XCreateGC(dpy, field->completion_window, 0, NULL);
+    XCopyArea(dpy, pixmap, field->completion_window, gc, 0, 0, width, height, 0, 0);
+    XFreeGC(dpy, gc);
+    
+    // Clean up (do NOT close the font - it belongs to the app)
+    XftColorFree(dpy, visual, DefaultColormap(dpy, DefaultScreen(dpy)), &black_color);
+    XftColorFree(dpy, visual, DefaultColormap(dpy, DefaultScreen(dpy)), &white_color);
+    XftDrawDestroy(xft_draw);
+    XRenderFreePicture(dpy, picture);
+    XFreePixmap(dpy, pixmap);
+    XFlush(dpy);
+}
+
+// Show completion dropdown at specific coordinates relative to parent window
+void inputfield_show_completions_at(InputField *field, Display *dpy, Window parent_window, int x, int y) {
+    if (!field || !dpy) return;
+    
+    // Find completions for current text
+    find_completions(field, field->text);
+    
+    if (field->completion_count == 0) {
+        return;  // No completions found
+    }
+    
+    // If only one completion, apply it directly
+    if (field->completion_count == 1) {
+        inputfield_apply_completion(field, 0);
+        return;
+    }
+    
+    // Calculate dropdown size
+    int item_height = 20;
+    int max_items = 5;  // Show max 5 items to avoid going under window borders
+    int show_items = field->completion_count < max_items ? field->completion_count : max_items;
+    int dropdown_height = show_items * item_height + 4;  // +4 for borders
+    
+    // Create or move/resize dropdown window
+    if (!field->completion_window) {
+        Window root = DefaultRootWindow(dpy);
+        
+        // Convert parent-relative coordinates to screen coordinates
+        int screen_x, screen_y;
+        Window child_return;
+        XTranslateCoordinates(dpy, parent_window, root, x, y, 
+                            &screen_x, &screen_y, &child_return);
+        
+        // Create window as child of ROOT (like Execute dialog does)
+        XSetWindowAttributes attrs;
+        attrs.override_redirect = True;
+        attrs.background_pixel = 0xA0A2A0;  // Gray background
+        attrs.border_pixel = BlackPixel(dpy, DefaultScreen(dpy));
+        attrs.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask | 
+                           PointerMotionMask | EnterWindowMask | LeaveWindowMask;
+        
+        field->completion_window = XCreateWindow(dpy, root,  // ROOT window, like Execute dialog
+            screen_x, screen_y,  // Screen coordinates
+            field->width, dropdown_height,
+            0,  // No border width (we draw our own)
+            CopyFromParent, InputOutput, CopyFromParent,
+            CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask,
+            &attrs);
+    } else {
+        // Convert coordinates and resize existing window
+        Window root = DefaultRootWindow(dpy);
+        int screen_x, screen_y;
+        Window child_return;
+        XTranslateCoordinates(dpy, parent_window, root, x, y, 
+                            &screen_x, &screen_y, &child_return);
+        XMoveResizeWindow(dpy, field->completion_window, 
+                         screen_x, screen_y, field->width, dropdown_height);
+    }
+    
+    // Initialize selection to first item
+    field->completion_selected = 0;
+    
+    // Map and raise the dropdown
+    XMapRaised(dpy, field->completion_window);
+    field->dropdown_open = true;
+    
+    // Draw the content
+    draw_completion_dropdown(field, dpy);
+}
+
+// Show completion dropdown (uses field's relative coordinates)
+void inputfield_show_completions(InputField *field, Display *dpy, Window parent_window) {
+    if (!field || !dpy) return;
+    // Use field coordinates with proper Y position BELOW the field
+    inputfield_show_completions_at(field, dpy, parent_window, field->x, field->y + field->height);
+}
+
+// Hide completion dropdown
+void inputfield_hide_completions(InputField *field, Display *dpy) {
+    if (!field) return;
+    
+    field->dropdown_open = false;
+    
+    if (field->completion_window && dpy) {
+        XUnmapWindow(dpy, field->completion_window);
+        XDestroyWindow(dpy, field->completion_window);
+        field->completion_window = 0;
+        XFlush(dpy);
+    }
+    
+    free_completion_candidates(field);
+}
+
+// Handle click on completion dropdown
+bool inputfield_handle_completion_click(InputField *field, int x, int y) {
+    if (!field || !field->completion_window || field->completion_count == 0) {
+        return false;
+    }
+    
+    
+    // Adjust for border (2 pixels)
+    if (y < 2) {
+        return false;
+    }
+    
+    int item_height = 20;
+    int index = (y - 2) / item_height;
+    
+    
+    // Check if index is valid
+    if (index >= 0 && index < field->completion_count) {
+        inputfield_apply_completion(field, index);
+        return true;
+    }
+    
+    return false;
+}
+
+// Check if a window belongs to this field's completion dropdown
+bool inputfield_is_completion_window(InputField *field, Window window) {
+    return field && field->completion_window && field->completion_window == window;
+}
+
+// Redraw completion dropdown (for expose events)
+void inputfield_redraw_completion(InputField *field, Display *dpy) {
+    if (field && field->completion_window && field->completion_count > 0) {
+        draw_completion_dropdown(field, dpy);
+    }
+}
+
+// Check if dropdown is currently open
+bool inputfield_has_dropdown_open(InputField *field) {
+    return field && field->dropdown_open;
 }

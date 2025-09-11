@@ -49,6 +49,10 @@ void editpad_log_init(void) {
         fprintf(lf, "EditPad log file, started on: %s\n", ts);
         fprintf(lf, "----------------------------------------\n");
         fclose(lf);  // Close immediately - no fd inheritance
+        
+        // Redirect stderr to append to the log file
+        // This makes toolkit widget errors go to editpad.log automatically
+        freopen(path_buf, "a", stderr);
     }
 }
 

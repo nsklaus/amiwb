@@ -40,6 +40,10 @@ static void reqasl_log_init(void) {
         fprintf(lf, "ReqASL log file, started on: %s\n", ts);
         fprintf(lf, "----------------------------------------\n");
         fclose(lf);
+        
+        // Redirect stderr to append to the log file
+        // This makes toolkit widget errors go to reqasl.log automatically
+        freopen(log_path, "a", stderr);
     }
 }
 
@@ -88,6 +92,7 @@ static void handle_list_double_click(ReqASL *req, int y);
 static int compare_entries(const void *a, const void *b);
 static void listview_select_callback(int index, const char *text, void *user_data);
 static void listview_double_click_callback(int index, const char *text, void *user_data);
+static bool reqasl_execute_action(ReqASL *req);
 
 ReqASL* reqasl_create(Display *display) {
     if (!display) return NULL;
@@ -156,7 +161,9 @@ ReqASL* reqasl_create(Display *display) {
                              listview_select_callback,
                              listview_double_click_callback,
                              req);
-        // Multi-selection will be enabled later based on mode
+        // Default to open mode with multi-selection enabled
+        req->multi_select_enabled = true;
+        listview_set_multi_select(req->listview, true);
     }
     
     // Create InputField widgets for text editing
@@ -164,22 +171,24 @@ ReqASL* reqasl_create(Display *display) {
     int input_y = req->list_y + req->list_height + SPACING;
     
     req->pattern_field = inputfield_create(MARGIN + LABEL_WIDTH, input_y, 
-                                          req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT);
+                                          req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT, req->font);
     if (req->pattern_field) {
         inputfield_set_text(req->pattern_field, "*");  // Default to show all files
         inputfield_set_disabled(req->pattern_field, false);  // Pattern field is now functional
     }
     
     req->drawer_field = inputfield_create(MARGIN + LABEL_WIDTH, input_y + INPUT_HEIGHT + SPACING,
-                                         req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT);
+                                         req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT, req->font);
     if (req->drawer_field) {
         inputfield_set_text(req->drawer_field, "");
+        inputfield_enable_path_completion(req->drawer_field, true);  // Enable path completion for drawer field
     }
     
     req->file_field = inputfield_create(MARGIN + LABEL_WIDTH, input_y + 2 * (INPUT_HEIGHT + SPACING),
-                                       req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT);
+                                       req->width - MARGIN * 2 - LABEL_WIDTH, INPUT_HEIGHT, req->font);
     if (req->file_field) {
         inputfield_set_text(req->file_field, "");
+        inputfield_enable_path_completion(req->file_field, true);  // Enable path completion for file field
     }
     
     // Initialize entries array
@@ -209,6 +218,11 @@ ReqASL* reqasl_create(Display *display) {
         inputfield_set_text(req->drawer_field, req->drawer_text);
         // Ensure the end of the path is visible
         inputfield_scroll_to_end(req->drawer_field);
+    }
+    
+    // Set file field's base directory for completion
+    if (req->file_field) {
+        inputfield_set_completion_base_dir(req->file_field, req->drawer_text);
     }
     
     // Create window
@@ -411,6 +425,11 @@ static void navigate_internal(ReqASL *req, const char *path, bool update_env) {
         if (req->drawer_field) {
             inputfield_set_text(req->drawer_field, req->drawer_text);
             inputfield_scroll_to_end(req->drawer_field);
+        }
+        
+        // Update file field's base directory for completion
+        if (req->file_field) {
+            inputfield_set_completion_base_dir(req->file_field, req->drawer_text);
         }
         
         req->selected_index = -1;
@@ -950,17 +969,305 @@ static void handle_list_double_click(ReqASL *req, int y) {
     }
 }
 
+// Helper function to execute the appropriate action based on current ReqASL state
+// Returns true if action was taken and dialog should close/continue
+static bool reqasl_execute_action(ReqASL *req) {
+    if (!req) return false;
+    
+    // Check if we should skip File field due to multi-selection
+    bool is_multi_selection = (req->listview && req->multi_select_enabled && req->listview->selection_count > 1);
+    
+    // Priority 1: Check File field ONLY if not multi-selection
+    if (!is_multi_selection && req->file_field && strlen(req->file_field->text) > 0) {
+        char full_path[FULL_SIZE];
+        
+        // Build full path
+        if (req->file_field->text[0] == '/' || req->file_field->text[0] == '~') {
+            // Absolute path provided
+            strncpy(full_path, req->file_field->text, sizeof(full_path) - 1);
+            full_path[sizeof(full_path) - 1] = '\0';
+        } else {
+            // Relative to current directory
+            snprintf(full_path, sizeof(full_path), "%s/%s", 
+                    req->current_path, req->file_field->text);
+        }
+        
+        if (req->is_save_mode) {
+            // Save mode - save to this file
+            if (req->on_open) {
+                req->on_open(full_path);
+            } else {
+                printf("%s\n", full_path);  // Standalone mode output
+            }
+            reqasl_hide(req);
+            return true;
+        } else {
+            // Open mode - file must exist
+            struct stat st;
+            if (stat(full_path, &st) == 0 && S_ISREG(st.st_mode)) {
+                // It's a regular file - open it
+                if (req->on_open) {
+                    req->on_open(full_path);
+                } else {
+                    pid_t pid = fork();
+                    if (pid == 0) {
+                        execlp("xdg-open", "xdg-open", full_path, (char *)NULL);
+                        _exit(EXIT_FAILURE);
+                    }
+                }
+                reqasl_hide(req);
+                return true;
+            }
+            // File doesn't exist or is not a regular file - continue to next priority
+        }
+    }
+    
+    // Priority 2: Check multi-selection
+    if (req->listview && req->multi_select_enabled && req->listview->selection_count > 0) {
+        int selected_indices[LISTVIEW_MAX_ITEMS];
+        int count = listview_get_selected_items(req->listview, selected_indices, LISTVIEW_MAX_ITEMS);
+        
+        if (count > 0) {
+            // Check if all selected items are files
+            bool all_files = true;
+            for (int i = 0; i < count; i++) {
+                if (req->entries[selected_indices[i]]->type == TYPE_DRAWER) {
+                    all_files = false;
+                    break;
+                }
+            }
+            
+            if (all_files) {
+                if (req->on_open) {
+                    // Callback mode - return each path
+                    for (int i = 0; i < count; i++) {
+                        req->on_open(req->entries[selected_indices[i]]->path);
+                    }
+                    reqasl_hide(req);
+                    return true;
+                } else {
+                    // Standalone mode - check for same app
+                    char *first_app = NULL;
+                    char *first_mime = NULL;
+                    bool same_app = true;
+                    
+                    for (int i = 0; i < count && same_app; i++) {
+                        FileEntry *entry = req->entries[selected_indices[i]];
+                        
+                        // Get MIME type
+                        char mime_cmd[PATH_SIZE];
+                        snprintf(mime_cmd, sizeof(mime_cmd), 
+                                "xdg-mime query filetype '%s' 2>/dev/null", entry->path);
+                        
+                        FILE *mime_pipe = popen(mime_cmd, "r");
+                        if (mime_pipe) {
+                            char mime_type[NAME_SIZE] = {0};
+                            if (fgets(mime_type, sizeof(mime_type), mime_pipe)) {
+                                char *nl = strchr(mime_type, '\n');
+                                if (nl) *nl = '\0';
+                                
+                                // Get default app
+                                char app_cmd[PATH_SIZE];
+                                snprintf(app_cmd, sizeof(app_cmd), 
+                                        "xdg-mime query default '%s' 2>/dev/null", mime_type);
+                                
+                                FILE *app_pipe = popen(app_cmd, "r");
+                                if (app_pipe) {
+                                    char desktop_file[NAME_SIZE] = {0};
+                                    if (fgets(desktop_file, sizeof(desktop_file), app_pipe)) {
+                                        nl = strchr(desktop_file, '\n');
+                                        if (nl) *nl = '\0';
+                                        
+                                        if (i == 0) {
+                                            first_app = strdup(desktop_file);
+                                            first_mime = strdup(mime_type);
+                                        } else if (!first_app || strcmp(first_app, desktop_file) != 0) {
+                                            // Different app - log warning
+                                            log_error("[WARNING] Multi-selection with different apps refused:");
+                                            log_error("  File 1: %s", req->entries[selected_indices[0]]->path);
+                                            log_error("    MIME: %s, App: %s", first_mime ? first_mime : "unknown", 
+                                                     first_app ? first_app : "unknown");
+                                            log_error("  File %d: %s", i+1, entry->path);
+                                            log_error("    MIME: %s, App: %s", mime_type, desktop_file);
+                                            same_app = false;
+                                        }
+                                    }
+                                    pclose(app_pipe);
+                                }
+                            }
+                            pclose(mime_pipe);
+                        }
+                    }
+                    
+                    if (same_app && first_app) {
+                        if (count == 1) {
+                            // Single file - just use xdg-open
+                            pid_t pid = fork();
+                            if (pid == 0) {
+                                execlp("xdg-open", "xdg-open", 
+                                      req->entries[selected_indices[0]]->path, (char *)NULL);
+                                _exit(EXIT_FAILURE);
+                            }
+                        } else {
+                            // Multiple files with same app - batch open
+                            char *exe_name = strdup(first_app);
+                            char *dot = strrchr(exe_name, '.');
+                            if (dot && strcmp(dot, ".desktop") == 0) {
+                                *dot = '\0';
+                            }
+                            
+                            // Debug: log what we're about to execute
+                            pid_t pid = fork();
+                            if (pid == 0) {
+                                char *args[count + 2];
+                                args[0] = exe_name;
+                                for (int i = 0; i < count; i++) {
+                                    args[i + 1] = req->entries[selected_indices[i]]->path;
+                                }
+                                args[count + 1] = NULL;
+                                
+                                execvp(exe_name, args);
+                                
+                                // Fallback if direct exec fails
+                                for (int i = 0; i < count; i++) {
+                                    if (fork() == 0) {
+                                        execlp("xdg-open", "xdg-open", 
+                                              req->entries[selected_indices[i]]->path, (char *)NULL);
+                                        _exit(EXIT_FAILURE);
+                                    }
+                                }
+                                _exit(EXIT_FAILURE);
+                            }
+                            free(exe_name);
+                        }
+                        reqasl_hide(req);
+                    }
+                    // If not same_app, don't open anything (warning already logged)
+                    
+                    if (first_app) free(first_app);
+                    if (first_mime) free(first_mime);
+                    return same_app;  // Return false if apps didn't match
+                }
+            } else if (count == 1 && req->entries[selected_indices[0]]->type == TYPE_DRAWER) {
+                // Single directory - open in workbench
+                FileEntry *entry = req->entries[selected_indices[0]];
+                Atom amiwb_open_dir = XInternAtom(req->display, "AMIWB_OPEN_DIRECTORY", False);
+                Window root = DefaultRootWindow(req->display);
+                
+                XChangeProperty(req->display, root, amiwb_open_dir,
+                              XA_STRING, 8, PropModeReplace,
+                              (unsigned char *)entry->path, strlen(entry->path));
+                XFlush(req->display);
+                reqasl_hide(req);
+                return true;
+            }
+            // Mixed selection or multiple directories - do nothing
+            return false;
+        }
+    }
+    
+    // Priority 3: Single selection in listview
+    if (req->listview && req->listview->selected_index >= 0 && 
+        req->listview->selected_index < req->entry_count) {
+        FileEntry *entry = req->entries[req->listview->selected_index];
+        
+        if (entry->type == TYPE_DRAWER) {
+            // Directory - open in workbench
+            Atom amiwb_open_dir = XInternAtom(req->display, "AMIWB_OPEN_DIRECTORY", False);
+            Window root = DefaultRootWindow(req->display);
+            
+            XChangeProperty(req->display, root, amiwb_open_dir,
+                          XA_STRING, 8, PropModeReplace,
+                          (unsigned char *)entry->path, strlen(entry->path));
+            XFlush(req->display);
+        } else {
+            // File - open with xdg-open
+            if (req->on_open) {
+                req->on_open(entry->path);
+            } else {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
+                    _exit(EXIT_FAILURE);
+                }
+            }
+        }
+        reqasl_hide(req);
+        return true;
+    }
+    
+    // Priority 4: Nothing selected - open current directory
+    Atom amiwb_open_dir = XInternAtom(req->display, "AMIWB_OPEN_DIRECTORY", False);
+    Window root = DefaultRootWindow(req->display);
+    
+    XChangeProperty(req->display, root, amiwb_open_dir,
+                  XA_STRING, 8, PropModeReplace,
+                  (unsigned char *)req->current_path, strlen(req->current_path));
+    XFlush(req->display);
+    reqasl_hide(req);
+    return true;
+}
+
 bool reqasl_handle_event(ReqASL *req, XEvent *event) {
     if (!req || !event) return false;
     
     switch (event->type) {
         case Expose:
             if (event->xexpose.count == 0) {
+                // Check if expose is for a dropdown window
+                if (req->drawer_field && inputfield_is_completion_window(req->drawer_field, event->xexpose.window)) {
+                    inputfield_redraw_completion(req->drawer_field, req->display);
+                    return true;
+                }
+                if (req->file_field && inputfield_is_completion_window(req->file_field, event->xexpose.window)) {
+                    inputfield_redraw_completion(req->file_field, req->display);
+                    return true;
+                }
+                
+                // Normal window expose
                 draw_window(req);
             }
             return true;
             
         case ButtonPress:
+            // Check if click is on a dropdown window
+            if (req->drawer_field && inputfield_is_completion_window(req->drawer_field, event->xbutton.window)) {
+                // Click is on drawer field's dropdown
+                if (inputfield_handle_completion_click(req->drawer_field, 
+                                                      event->xbutton.x, event->xbutton.y)) {
+                    // Selection was made, close dropdown
+                    inputfield_hide_completions(req->drawer_field, req->display);
+                    // Field text already updated by inputfield_handle_completion_click
+                    // Update req->drawer_text to match the new field value
+                    snprintf(req->drawer_text, PATH_SIZE, "%s", inputfield_get_text(req->drawer_field));
+                    draw_window(req);
+                }
+                return true;
+            }
+            if (req->file_field && inputfield_is_completion_window(req->file_field, event->xbutton.window)) {
+                // Click is on file field's dropdown
+                if (inputfield_handle_completion_click(req->file_field, 
+                                                      event->xbutton.x, event->xbutton.y)) {
+                    // Selection was made, close dropdown
+                    inputfield_hide_completions(req->file_field, req->display);
+                    // Field text already updated by inputfield_handle_completion_click
+                    // Update req->file_text to match the new field value
+                    snprintf(req->file_text, NAME_SIZE, "%s", inputfield_get_text(req->file_field));
+                    draw_window(req);
+                }
+                return true;
+            }
+            
+            // Check if any dropdown is open - click outside should close it
+            if ((req->drawer_field && inputfield_has_dropdown_open(req->drawer_field)) ||
+                (req->file_field && inputfield_has_dropdown_open(req->file_field))) {
+                // Close any open dropdowns on click outside
+                if (req->drawer_field) inputfield_hide_completions(req->drawer_field, req->display);
+                if (req->file_field) inputfield_hide_completions(req->file_field, req->display);
+                draw_window(req);
+                // Don't return - let the click be processed normally
+            }
+            
             // Handle scroll wheel
             if (event->xbutton.button == Button4 || event->xbutton.button == Button5) {
                 if (req->listview) {
@@ -1184,208 +1491,8 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     if (x >= open_x && x < open_x + BUTTON_WIDTH &&
                         y >= button_y && y < button_y + BUTTON_HEIGHT) {
                         
-                        // Check for multi-selection or single selection
-                        if (req->listview && req->multi_select_enabled && req->listview->selection_count > 0) {
-                            // Multi-selection mode - get all selected items
-                            int selected_indices[LISTVIEW_MAX_ITEMS];
-                            int count = listview_get_selected_items(req->listview, selected_indices, LISTVIEW_MAX_ITEMS);
-                            
-                            if (count > 0) {
-                                // Check if all selected items are files (not directories)
-                                bool all_files = true;
-                                for (int i = 0; i < count; i++) {
-                                    if (req->entries[selected_indices[i]]->type == TYPE_DRAWER) {
-                                        all_files = false;
-                                        break;
-                                    }
-                                }
-                                
-                                if (all_files) {
-                                    if (req->on_open) {
-                                        // Callback mode - return each path to caller
-                                        for (int i = 0; i < count; i++) {
-                                            FileEntry *entry = req->entries[selected_indices[i]];
-                                            req->on_open(entry->path);
-                                        }
-                                    } else {
-                                        // Standalone mode - check if all files use the same application
-                                        char *app_name = NULL;
-                                        bool same_app = true;
-                                        
-                                        // Get the default app for each file and check if they're all the same
-                                        for (int i = 0; i < count && same_app; i++) {
-                                            FileEntry *entry = req->entries[selected_indices[i]];
-                                            
-                                            // Get MIME type for the file
-                                            char mime_cmd[PATH_SIZE];
-                                            snprintf(mime_cmd, sizeof(mime_cmd), "xdg-mime query filetype '%s' 2>/dev/null", entry->path);
-                                            
-                                            FILE *mime_pipe = popen(mime_cmd, "r");
-                                            if (mime_pipe) {
-                                                char mime_type[NAME_SIZE] = {0};
-                                                if (fgets(mime_type, sizeof(mime_type), mime_pipe)) {
-                                                    // Remove newline
-                                                    char *nl = strchr(mime_type, '\n');
-                                                    if (nl) *nl = '\0';
-                                                    
-                                                    // Get default app for this MIME type
-                                                    char app_cmd[PATH_SIZE];
-                                                    snprintf(app_cmd, sizeof(app_cmd), "xdg-mime query default '%s' 2>/dev/null", mime_type);
-                                                    
-                                                    FILE *app_pipe = popen(app_cmd, "r");
-                                                    if (app_pipe) {
-                                                        char desktop_file[NAME_SIZE] = {0};
-                                                        if (fgets(desktop_file, sizeof(desktop_file), app_pipe)) {
-                                                            // Remove newline
-                                                            nl = strchr(desktop_file, '\n');
-                                                            if (nl) *nl = '\0';
-                                                            
-                                                            if (i == 0) {
-                                                                // First file - store the app name
-                                                                app_name = strdup(desktop_file);
-                                                            } else {
-                                                                // Compare with first file's app
-                                                                if (!app_name || strcmp(app_name, desktop_file) != 0) {
-                                                                    same_app = false;
-                                                                }
-                                                            }
-                                                        }
-                                                        pclose(app_pipe);
-                                                    }
-                                                }
-                                                pclose(mime_pipe);
-                                            }
-                                        }
-                                        
-                                        if (same_app && app_name && count > 1) {
-                                            // All files use the same app - extract the executable name from desktop file
-                                            // Desktop files are like "imv.desktop", "mpv.desktop", etc.
-                                            char *exe_name = strdup(app_name);
-                                            char *dot = strrchr(exe_name, '.');
-                                            if (dot && strcmp(dot, ".desktop") == 0) {
-                                                *dot = '\0';
-                                            }
-                                            
-                                            // Try to open all files with the same application
-                                            pid_t pid = fork();
-                                            if (pid == 0) {
-                                                // Build argument array
-                                                char *args[count + 2];
-                                                args[0] = exe_name;
-                                                for (int i = 0; i < count; i++) {
-                                                    args[i + 1] = req->entries[selected_indices[i]]->path;
-                                                }
-                                                args[count + 1] = NULL;
-                                                
-                                                // Try to execute the app directly
-                                                execvp(exe_name, args);
-                                                
-                                                // If direct execution fails, fall back to xdg-open for each file
-                                                for (int i = 0; i < count; i++) {
-                                                    if (fork() == 0) {
-                                                        execlp("xdg-open", "xdg-open", req->entries[selected_indices[i]]->path, (char *)NULL);
-                                                        _exit(EXIT_FAILURE);
-                                                    }
-                                                }
-                                                _exit(EXIT_FAILURE);
-                                            }
-                                            free(exe_name);
-                                        } else {
-                                            // Different apps or single file - use xdg-open for each
-                                            for (int i = 0; i < count; i++) {
-                                                FileEntry *entry = req->entries[selected_indices[i]];
-                                                pid_t pid = fork();
-                                                if (pid == 0) {
-                                                    execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
-                                                    _exit(EXIT_FAILURE);
-                                                }
-                                            }
-                                        }
-                                        
-                                        if (app_name) free(app_name);
-                                    }
-                                    reqasl_hide(req);
-                                } else if (count == 1 && req->entries[selected_indices[0]]->type == TYPE_DRAWER) {
-                                    // Single directory selected - navigate into it
-                                    FileEntry *entry = req->entries[selected_indices[0]];
-                                    Atom amiwb_open_dir = XInternAtom(req->display, 
-                                                                     "AMIWB_OPEN_DIRECTORY", False);
-                                    Window root = DefaultRootWindow(req->display);
-                                    
-                                    XChangeProperty(req->display, root, amiwb_open_dir,
-                                                  XA_STRING, 8, PropModeReplace,
-                                                  (unsigned char *)entry->path, 
-                                                  strlen(entry->path));
-                                    XFlush(req->display);
-                                    reqasl_hide(req);
-                                }
-                                // Else: mixed selection or multiple directories - do nothing
-                            }
-                        } else if (req->is_save_mode) {
-                            // Save mode - get filename from File field
-                            if (req->file_field && strlen(req->file_field->text) > 0) {
-                                // Construct full path from current directory + filename
-                                char full_path[FULL_SIZE];
-                                snprintf(full_path, sizeof(full_path), "%s/%s", 
-                                        req->current_path, req->file_field->text);
-                                
-                                if (req->on_open) {
-                                    // Callback mode - return the save path to caller
-                                    req->on_open(full_path);
-                                } else {
-                                    // Standalone save mode - just print path (shouldn't happen)
-                                    printf("%s\n", full_path);
-                                }
-                                reqasl_hide(req);
-                            }
-                            // If no filename entered, do nothing (don't close dialog)
-                        } else if (req->listview && req->listview->selected_index >= 0 && 
-                                 req->listview->selected_index < req->entry_count) {
-                            // Single selection mode (open mode with single item selected)
-                            FileEntry *entry = req->entries[req->listview->selected_index];
-                            
-                            if (entry->type == TYPE_DRAWER) {
-                                // Directory selected - open it in workbench window via IPC
-                                Atom amiwb_open_dir = XInternAtom(req->display, 
-                                                                 "AMIWB_OPEN_DIRECTORY", False);
-                                Window root = DefaultRootWindow(req->display);
-                                
-                                XChangeProperty(req->display, root, amiwb_open_dir,
-                                              XA_STRING, 8, PropModeReplace,
-                                              (unsigned char *)entry->path, 
-                                              strlen(entry->path));
-                                XFlush(req->display);
-                            } else {
-                                // File selected - check if we have a callback or should use xdg-open
-                                if (req->on_open) {
-                                    // Callback mode - return path to caller
-                                    req->on_open(entry->path);
-                                } else {
-                                    // Standalone mode - open with xdg-open
-                                    pid_t pid = fork();
-                                    if (pid == 0) {
-                                        // Child process
-                                        execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
-                                        perror("execlp failed for xdg-open");
-                                        _exit(EXIT_FAILURE);
-                                    }
-                                }
-                            }
-                            reqasl_hide(req);
-                        } else {
-                            // Nothing selected - open current directory in workbench window
-                            Atom amiwb_open_dir = XInternAtom(req->display, 
-                                                             "AMIWB_OPEN_DIRECTORY", False);
-                            Window root = DefaultRootWindow(req->display);
-                            
-                            XChangeProperty(req->display, root, amiwb_open_dir,
-                                          XA_STRING, 8, PropModeReplace,
-                                          (unsigned char *)req->current_path, 
-                                          strlen(req->current_path));
-                            XFlush(req->display);
-                            reqasl_hide(req);
-                        }
-                        return true;
+                        // Use helper function to execute the appropriate action
+                        reqasl_execute_action(req);
                     }
                 }
                 
@@ -1491,6 +1598,18 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 
                 // Handle Escape key - clear selection first, then quit
                 if (keysym == XK_Escape) {
+                    // Check if any dropdown is open - if so, let it handle Escape
+                    if (req->drawer_field && inputfield_has_dropdown_open(req->drawer_field)) {
+                        inputfield_handle_key(req->drawer_field, &event->xkey);
+                        draw_window(req);
+                        return true;
+                    }
+                    if (req->file_field && inputfield_has_dropdown_open(req->file_field)) {
+                        inputfield_handle_key(req->file_field, &event->xkey);
+                        draw_window(req);
+                        return true;
+                    }
+                    
                     // Check if there's any selection (multi or single)
                     bool has_selection = false;
                     if (req->listview) {
@@ -1523,6 +1642,20 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                             req->on_cancel();
                         }
                         reqasl_hide(req);
+                        return true;
+                    }
+                }
+                
+                // Check if any dropdown is open - if so, let it handle arrow keys
+                if (keysym == XK_Up || keysym == XK_Down) {
+                    if (req->drawer_field && inputfield_has_dropdown_open(req->drawer_field)) {
+                        inputfield_handle_key(req->drawer_field, &event->xkey);
+                        draw_window(req);
+                        return true;
+                    }
+                    if (req->file_field && inputfield_has_dropdown_open(req->file_field)) {
+                        inputfield_handle_key(req->file_field, &event->xkey);
+                        draw_window(req);
                         return true;
                     }
                 }
@@ -1599,6 +1732,11 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                                sizeof(req->drawer_text) - 1);
                         req->drawer_text[sizeof(req->drawer_text) - 1] = '\0';
                         
+                        // Update file field's base directory for completion
+                        if (req->file_field) {
+                            inputfield_set_completion_base_dir(req->file_field, req->drawer_text);
+                        }
+                        
                         // If Enter was pressed in drawer field, navigate to path
                         // Note: InputField widget automatically removes focus on Enter
                         if (keysym == XK_Return || keysym == XK_KP_Enter) {
@@ -1632,49 +1770,8 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 
                 // Handle Return key for opening files/directories (only if not editing)
                 if (keysym == XK_Return && !any_field_focused) {
-                    if (req->listview && req->listview->selected_index >= 0 && 
-                        req->listview->selected_index < req->entry_count) {
-                        
-                        FileEntry *entry = req->entries[req->listview->selected_index];
-                        
-                        if (entry->type == TYPE_DRAWER) {
-                            // Navigate into directory (same as double-click)
-                            reqasl_navigate_to(req, entry->path);
-                        } else {
-                            // File selected - check if we have a callback or should use xdg-open
-                            if (req->on_open) {
-                                // Callback mode - return path to caller
-                                req->on_open(entry->path);
-                                reqasl_hide(req);
-                            } else {
-                                // Standalone mode - open file with xdg-open (like workbench.c does)
-                                pid_t pid = fork();
-                                if (pid == 0) {
-                                    // Child process
-                                    execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
-                                    perror("execlp failed for xdg-open");
-                                    _exit(EXIT_FAILURE);
-                                } else if (pid > 0) {
-                                    // Parent - file opened, hide reqasl
-                                    reqasl_hide(req);
-                                }
-                            }
-                        }
-                        return true;
-                    } else {
-                        // No selection or invalid selection - open current directory in workbench window
-                        Atom amiwb_open_dir = XInternAtom(req->display, 
-                                                         "AMIWB_OPEN_DIRECTORY", False);
-                        Window root = DefaultRootWindow(req->display);
-                        
-                        XChangeProperty(req->display, root, amiwb_open_dir,
-                                      XA_STRING, 8, PropModeReplace,
-                                      (unsigned char *)req->current_path, 
-                                      strlen(req->current_path));
-                        XFlush(req->display);
-                        reqasl_hide(req);
-                        return true;
-                    }
+                    // Use helper function to execute the appropriate action
+                    return reqasl_execute_action(req);
                 }
                 
                 // Handle Backspace key - go to parent directory (only if not editing)
@@ -1782,14 +1879,65 @@ static void listview_select_callback(int index, const char *text, void *user_dat
     if (!req || index < 0 || index >= req->entry_count) return;
     
     req->selected_index = index;
-    FileEntry *entry = req->entries[index];
     
-    // Update file field with selection if it's a file
-    if (entry->type == TYPE_FILE) {
-        strcpy(req->file_text, entry->name);
-        // Also update the InputField widget
-        if (req->file_field) {
-            inputfield_set_text(req->file_field, entry->name);
+    
+    // In multi-select mode, always build the list from all selected items
+    if (req->listview && req->multi_select_enabled) {
+        // If no items selected, clear the file field
+        if (req->listview->selection_count == 0) {
+            strcpy(req->file_text, "");
+            if (req->file_field) {
+                inputfield_set_text(req->file_field, "");
+            }
+        } else {
+            // Build comma-separated list of selected files
+            char multi_files[PATH_SIZE];
+            multi_files[0] = '\0';
+            int written = 0;
+            int file_count = 0;
+            
+            for (int i = 0; i < req->entry_count && i < LISTVIEW_MAX_ITEMS; i++) {
+                if (req->listview->selected[i] && req->entries[i]->type == TYPE_FILE) {
+                    // Add comma if not first item
+                    if (written > 0) {
+                        int remaining = PATH_SIZE - written - 1;
+                        if (remaining > 2) {
+                            written += snprintf(multi_files + written, remaining, ", ");
+                        }
+                    }
+                    
+                    // Add quoted filename
+                    int remaining = PATH_SIZE - written - 1;
+                    if (remaining > strlen(req->entries[i]->name) + 2) {
+                        written += snprintf(multi_files + written, remaining, 
+                                          "\"%s\"", req->entries[i]->name);
+                        file_count++;
+                    }
+                    
+                    // Stop if we're running out of space
+                    if (written >= PATH_SIZE - 10) {
+                        break;
+                    }
+                }
+            }
+            
+            // Update the file field with multi-selection list
+            strcpy(req->file_text, multi_files);
+            if (req->file_field) {
+                inputfield_set_text(req->file_field, multi_files);
+            }
+        }
+    } else {
+        // Single selection - original behavior
+        FileEntry *entry = req->entries[index];
+        
+        // Update file field with selection if it's a file
+        if (entry->type == TYPE_FILE) {
+            strcpy(req->file_text, entry->name);
+            // Also update the InputField widget
+            if (req->file_field) {
+                inputfield_set_text(req->file_field, entry->name);
+            }
         }
     }
     
@@ -1897,11 +2045,17 @@ void reqasl_set_mode(ReqASL *req, bool is_save_mode) {
     
     req->is_save_mode = is_save_mode;
     
-    // In save mode, disable multi-selection
+    // In save mode, disable multi-selection; in open mode, enable it
     if (is_save_mode) {
         req->multi_select_enabled = false;
         if (req->listview) {
             listview_set_multi_select(req->listview, false);
+        }
+    } else {
+        // Open mode - enable multi-selection
+        req->multi_select_enabled = true;
+        if (req->listview) {
+            listview_set_multi_select(req->listview, true);
         }
     }
 }

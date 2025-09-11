@@ -343,6 +343,10 @@ const SITE_MODIFICATIONS = {
       'img, video, svg, canvas': {
         'background-color': 'transparent',
         'background': 'transparent'
+      },
+      // Remove images from table cells
+      'td img, th img': {
+        'display': 'none'
       }
     }
   },
