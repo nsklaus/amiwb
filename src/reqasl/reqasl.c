@@ -278,6 +278,25 @@ ReqASL* reqasl_create(Display *display) {
     Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(display, req->window, &wm_delete, 1);
     
+    // Register with AmiWB for menu substitution
+    Atom app_type_atom = XInternAtom(display, "_AMIWB_APP_TYPE", False);
+    Atom menu_data_atom = XInternAtom(display, "_AMIWB_MENU_DATA", False);
+    
+    // Set app type
+    const char *app_type = "ReqASL";
+    XChangeProperty(display, req->window, app_type_atom,
+                   XA_STRING, 8, PropModeReplace,
+                   (unsigned char*)app_type, strlen(app_type));
+    
+    // Set menu data
+    // File > Open: opens selected files (same as OK button)
+    // Edit > New Drawer, Rename, Delete: stubs for now
+    // View > By Names, By Date: stubs for sorting options
+    const char *menu_data = "File:Open|Edit:New Drawer,Rename,Delete|View:By Names,By Date";
+    XChangeProperty(display, req->window, menu_data_atom,
+                   XA_STRING, 8, PropModeReplace,
+                   (unsigned char*)menu_data, strlen(menu_data));
+    
     return req;
 }
 
@@ -313,6 +332,67 @@ void reqasl_destroy(ReqASL *req) {
     
     free_entries(req);
     free(req);
+}
+
+// Update menu item enable/disable states
+static void reqasl_update_menu_states(ReqASL *req) {
+    if (!req) return;
+    
+    // Build menu state string
+    // Format: "menu_index,item_index,enabled;menu_index,item_index,enabled;..."
+    char menu_states[512];
+    char *p = menu_states;
+    int remaining = sizeof(menu_states);
+    
+    // File menu (index 0)
+    // Open (0): Enable if files are selected
+    bool has_selection = false;
+    if (req->listview) {
+        // Check for multi-selection
+        for (int i = 0; i < req->listview->item_count; i++) {
+            if (req->listview->selected[i]) {
+                has_selection = true;
+                break;
+            }
+        }
+        // If no multi-selection, check for single selection
+        if (!has_selection && req->listview->selected_index >= 0) {
+            has_selection = true;
+        }
+    }
+    
+    int written = snprintf(p, remaining, "0,0,%d;", has_selection ? 1 : 0);  // File > Open
+    p += written;
+    remaining -= written;
+    
+    // Edit menu (index 1)
+    // New Drawer (0): Always enabled for now
+    // Rename (1): Disabled for now (needs dialog)
+    // Delete (2): Disabled for now (needs warning dialog first)
+    written = snprintf(p, remaining, "1,0,1;");  // Edit > New Drawer (enabled)
+    p += written;
+    remaining -= written;
+    
+    written = snprintf(p, remaining, "1,1,0;");  // Edit > Rename (disabled)
+    p += written;
+    remaining -= written;
+    
+    written = snprintf(p, remaining, "1,2,0;");  // Edit > Delete (disabled)
+    p += written;
+    remaining -= written;
+    
+    // View menu (index 2)
+    // By Names (0), By Date (1): Both disabled for now (stubs)
+    written = snprintf(p, remaining, "2,0,0;2,1,0");  // View items disabled
+    p += written;
+    remaining -= written;
+    
+    // Set the menu states property
+    Atom menu_states_atom = XInternAtom(req->display, "_AMIWB_MENU_STATES", False);
+    XChangeProperty(req->display, req->window, menu_states_atom,
+                   XA_STRING, 8, PropModeReplace,
+                   (unsigned char*)menu_states, strlen(menu_states));
+    XFlush(req->display);
 }
 
 void reqasl_show(ReqASL *req, const char *initial_path) {
@@ -365,6 +445,9 @@ void reqasl_show(ReqASL *req, const char *initial_path) {
     
     // Initial draw
     draw_window(req);
+    
+    // Set initial menu states
+    reqasl_update_menu_states(req);
 }
 
 void reqasl_hide(ReqASL *req) {
@@ -1868,6 +1951,53 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 reqasl_hide(req);
                 return true;
             }
+            // Handle menu selection from AmiWB
+            else if (event->xclient.message_type == 
+                     XInternAtom(req->display, "_AMIWB_MENU_SELECT", False)) {
+                int menu_index = event->xclient.data.l[0];
+                int item_index = event->xclient.data.l[1];
+                
+                // Handle File menu (index 0)
+                if (menu_index == 0) {
+                    switch (item_index) {
+                        case 0:  // Open - same as OK button/double-click
+                            reqasl_execute_action(req);
+                            break;
+                    }
+                }
+                // Handle Edit menu (index 1)
+                else if (menu_index == 1) {
+                    switch (item_index) {
+                        case 0:  // New Drawer
+                            // TODO: Create dialog to get drawer name
+                            // TODO: Create directory in current path
+                            // TODO: Refresh file list
+                            break;
+                        case 1:  // Rename
+                            // TODO: Create rename dialog
+                            // TODO: Rename selected file/directory
+                            // TODO: Refresh file list
+                            break;
+                        case 2:  // Delete
+                            // TODO: Create warning dialog
+                            // TODO: Delete selected files/directories
+                            // TODO: Refresh file list
+                            break;
+                    }
+                }
+                // Handle View menu (index 2)
+                else if (menu_index == 2) {
+                    switch (item_index) {
+                        case 0:  // By Names
+                            // TODO: Implement alphabetical sorting
+                            break;
+                        case 1:  // By Date
+                            // TODO: Implement date sorting
+                            break;
+                    }
+                }
+                return true;
+            }
             break;
     }
     
@@ -1943,6 +2073,9 @@ static void listview_select_callback(int index, const char *text, void *user_dat
     
     // Redraw to update input fields
     draw_window(req);
+    
+    // Update menu states when selection changes
+    reqasl_update_menu_states(req);
 }
 
 static void listview_double_click_callback(int index, const char *text, void *user_data) {
