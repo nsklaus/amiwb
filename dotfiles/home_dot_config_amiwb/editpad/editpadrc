@@ -5,7 +5,7 @@ log_path = ~/Sources/amiwb/editpad.log
 
 # Font settings
 font = Source Code Pro:style=Bold
-fontsize = 11
+fontsize = 12
 
 # Editor preferences
 linenumbers = false

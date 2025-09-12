@@ -9,6 +9,7 @@
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
+#include <fontconfig/fontconfig.h>
 
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
@@ -85,9 +86,42 @@ EditPad* editpad_create(Display *display) {
     XSetClassHint(display, ep->main_window, class_hint);
     XFree(class_hint);
     
-    // Create TextView widget (full window)
+    // Create font with 75 DPI (same as reqasl and amiwb)
+    char font_path[PATH_SIZE];
+    snprintf(font_path, sizeof(font_path), "%s/%s", 
+             "/usr/local/share/amiwb", "fonts/SourceCodePro-Bold.otf");
+    
+    FcPattern *pattern = FcPatternCreate();
+    if (pattern) {
+        FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)font_path);
+        FcPatternAddDouble(pattern, FC_SIZE, 12.0);  // Size 12 like reqasl/amiwb
+        // FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);  // No need to specify weight - font file is already Bold variant
+        FcPatternAddDouble(pattern, FC_DPI, 75);  // Force 75 DPI like reqasl/amiwb
+        FcConfigSubstitute(NULL, pattern, FcMatchPattern);
+        XftDefaultSubstitute(display, DefaultScreen(display), pattern);
+        ep->font = XftFontOpenPattern(display, pattern);
+        // Note: pattern is now owned by the font, don't destroy it
+    }
+    
+    if (!ep->font) {
+        // Fallback to monospace with DPI setting
+        ep->font = XftFontOpen(display, DefaultScreen(display),
+                              XFT_FAMILY, XftTypeString, "monospace",
+                              XFT_SIZE, XftTypeDouble, 12.0,  // Size 12 like reqasl/amiwb
+                              XFT_DPI, XftTypeDouble, 75.0,  // Force 75 DPI
+                              NULL);
+    }
+    
+    if (!ep->font) {
+        log_error("[ERROR] Failed to load font for EditPad");
+        XDestroyWindow(display, ep->main_window);
+        free(ep);
+        return NULL;
+    }
+    
+    // Create TextView widget (full window) with our font
     ep->text_view = textview_create(display, ep->main_window,
-                                   0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+                                   0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, ep->font);
     
     // Apply settings
     textview_set_line_numbers(ep->text_view, ep->line_numbers);
@@ -156,6 +190,10 @@ void editpad_destroy(EditPad *ep) {
     
     if (ep->text_view) {
         textview_destroy(ep->text_view);
+    }
+    
+    if (ep->font) {
+        XftFontClose(ep->display, ep->font);
     }
     
     if (ep->main_window) {

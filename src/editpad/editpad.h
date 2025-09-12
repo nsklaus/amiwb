@@ -2,6 +2,7 @@
 #define EDITPAD_H
 
 #include <X11/Xlib.h>
+#include <X11/Xft/Xft.h>
 #include <stdbool.h>
 #include "../toolkit/textview.h"
 #include "../amiwb/config.h"
@@ -12,6 +13,7 @@ typedef struct EditPad {
     Window root;
     Window main_window;
     TextView *text_view;
+    XftFont *font;  // Font for the text editor
     
     // File info
     char current_file[PATH_SIZE];

@@ -113,7 +113,7 @@ ReqASL* reqasl_create(Display *display) {
     if (pattern) {
         FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)"/usr/local/share/amiwb/fonts/SourceCodePro-Bold.otf");
         FcPatternAddDouble(pattern, FC_SIZE, 12.0);
-        FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);
+        // FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);  // No need to specify weight - font file is already Bold variant
         FcPatternAddDouble(pattern, FC_DPI, 75);
         FcConfigSubstitute(NULL, pattern, FcMatchPattern);
         XftDefaultSubstitute(display, DefaultScreen(display), pattern);

@@ -297,52 +297,75 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
             
             field->visible_start = visible_start;
             
-            // Draw text character by character
-            int draw_x = text_x;
-            for (int i = visible_start; i < text_len; i++) {
-                // Check if we've exceeded available width
-                if (draw_x - text_x >= available_width) break;
-                
-                char ch[2] = {field->text[i], '\0'};
-                XGlyphInfo glyph_info;
-                XftTextExtentsUtf8(dpy, font, (FcChar8*)ch, 1, &glyph_info);
-                
-                // For spaces, use a minimum width if the font returns 0
-                int char_width = glyph_info.width;
-                if (field->text[i] == ' ' && char_width == 0) {
-                    // Use width of 'n' character as space width (common typographic practice)
-                    XGlyphInfo n_info;
-                    XftTextExtentsUtf8(dpy, font, (FcChar8*)"n", 1, &n_info);
-                    char_width = n_info.width;
-                }
-                
-                // Check if this is the cursor position
-                bool is_cursor = (field->has_focus && !field->disabled && i == field->cursor_pos);
-                
-                if (is_cursor) {
-                    // Draw blue background for cursor
-                    XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
-                                       draw_x, y + 3, char_width, h - 6);
-                    // Draw white text on blue background
-                    XftDrawStringUtf8(xft_draw, &white_color, font,
-                                    draw_x, text_y, (FcChar8*)ch, 1);
+            // Draw text in chunks for proper font rendering
+            
+            // Draw text before cursor
+            if (field->cursor_pos > visible_start) {
+                int chars_before = field->cursor_pos - visible_start;
+                XftDrawStringUtf8(xft_draw, &black_color, font, text_x, text_y,
+                                 (FcChar8*)&field->text[visible_start], chars_before);
+            }
+            
+            // Draw cursor character with blue background (if not at end)
+            if (field->has_focus && !field->disabled && field->cursor_pos < text_len) {
+                // Measure position where cursor starts
+                XGlyphInfo before_info;
+                if (field->cursor_pos > visible_start) {
+                    XftTextExtentsUtf8(dpy, font, (FcChar8*)&field->text[visible_start], 
+                                      field->cursor_pos - visible_start, &before_info);
                 } else {
-                    // Draw black text normally
-                    XftDrawStringUtf8(xft_draw, &black_color, font,
-                                    draw_x, text_y, (FcChar8*)ch, 1);
+                    before_info.width = 0;
                 }
+                int cursor_x = text_x + before_info.width;
                 
-                draw_x += char_width;
+                // Draw blue background and white character
+                char cursor_ch[2] = {field->text[field->cursor_pos], '\0'};
+                XGlyphInfo cursor_info;
+                XftTextExtentsUtf8(dpy, font, (FcChar8*)cursor_ch, 1, &cursor_info);
+                XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
+                                    cursor_x, y + 3, cursor_info.width, h - 6);
+                XftDrawStringUtf8(xft_draw, &white_color, font,
+                                 cursor_x, text_y, (FcChar8*)cursor_ch, 1);
+            }
+            
+            // Draw text after cursor
+            if (field->cursor_pos + 1 <= text_len) {
+                // Measure where to start
+                XGlyphInfo before_info;
+                int chars_to_skip = field->cursor_pos + 1 - visible_start;
+                if (chars_to_skip > 0) {
+                    XftTextExtentsUtf8(dpy, font, (FcChar8*)&field->text[visible_start],
+                                      chars_to_skip, &before_info);
+                } else {
+                    before_info.width = 0;
+                }
+                int after_x = text_x + before_info.width;
+                
+                // Only draw if there's text after cursor
+                if (field->cursor_pos + 1 < text_len) {
+                    XftDrawStringUtf8(xft_draw, &black_color, font, after_x, text_y,
+                                     (FcChar8*)&field->text[field->cursor_pos + 1],
+                                     text_len - field->cursor_pos - 1);
+                }
             }
             
             // Draw cursor at end if it's past the last character
             if (field->has_focus && !field->disabled && field->cursor_pos == text_len) {
+                // Measure position of cursor at end
+                XGlyphInfo full_info;
+                if (text_len > visible_start) {
+                    XftTextExtentsUtf8(dpy, font, (FcChar8*)&field->text[visible_start],
+                                      text_len - visible_start, &full_info);
+                } else {
+                    full_info.width = 0;
+                }
+                
                 XGlyphInfo space_info;
                 XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
                 // Use minimum width of 8 pixels if space has no width
                 int cursor_width = space_info.width > 0 ? space_info.width : 8;
                 // Add 1 pixel of padding before cursor when at end of text
-                int cursor_x = draw_x + (text_len > 0 ? 1 : 0);
+                int cursor_x = text_x + full_info.width + (text_len > 0 ? 1 : 0);
                 // Always draw the cursor at the end when field has focus
                 XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
                                    cursor_x, y + 3, cursor_width, h - 6);

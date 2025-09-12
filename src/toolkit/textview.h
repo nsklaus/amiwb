@@ -125,7 +125,7 @@ typedef struct TextView {
 
 // Creation and destruction
 TextView* textview_create(Display *display, Window parent, int x, int y, 
-                         int width, int height);
+                         int width, int height, XftFont *font);
 void textview_destroy(TextView *tv);
 
 // Text operations

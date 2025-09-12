@@ -287,7 +287,7 @@ static void find_word_bounds(const char *line, int pos, int *word_start, int *wo
 
 // Create a new TextView widget
 TextView* textview_create(Display *display, Window parent, int x, int y, 
-                         int width, int height) {
+                         int width, int height, XftFont *font) {
     TextView *tv = calloc(1, sizeof(TextView));
     if (!tv) return NULL;
     
@@ -359,21 +359,15 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     tv->sel_fg_color = 0x000000;  // Black
     tv->line_num_color = 0x666666;  // Dark gray for line numbers
     
-    // Load font - use config from editpadrc or default to system font
-    // Default to SourceCodePro-Bold from config.h SYSFONT
-    char font_path[PATH_SIZE];
-    snprintf(font_path, sizeof(font_path), "%s/%s", 
-             "/usr/local/share/amiwb", "fonts/SourceCodePro-Bold.otf");
-    
-    tv->font = XftFontOpenName(display, DefaultScreen(display),
-                              "Source Code Pro:style=Bold:size=11");
+    // Store the font provided by the client
+    tv->font = font;
     
     if (!tv->font) {
-        // Fallback to monospace
-        tv->font = XftFontOpen(display, DefaultScreen(display),
-                              XFT_FAMILY, XftTypeString, "monospace",
-                              XFT_SIZE, XftTypeDouble, 11.0,
-                              NULL);
+        fprintf(stderr, "[ERROR] TextView: No font provided\n");
+        free(tv->lines);
+        free(tv->line_widths);
+        free(tv);
+        return NULL;
     }
     
     // Calculate font metrics
@@ -537,7 +531,7 @@ void textview_destroy(TextView *tv) {
                      DefaultColormap(tv->display, DefaultScreen(tv->display)), &tv->xft_line_num_color);
     }
     if (tv->xft_draw) XftDrawDestroy(tv->xft_draw);
-    if (tv->font) XftFontClose(tv->display, tv->font);
+    // Font is owned by the client, don't close it here
     if (tv->window) XDestroyWindow(tv->display, tv->window);
     
     free(tv);
