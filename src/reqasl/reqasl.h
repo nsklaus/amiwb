@@ -46,7 +46,7 @@ typedef struct ReqASL {
     // Input fields
     char pattern_text[NAME_SIZE];     // Pattern filter
     char drawer_text[PATH_SIZE];      // Current directory path
-    char file_text[NAME_SIZE];        // Selected filename
+    char file_text[PATH_SIZE];        // Selected filename(s) - needs PATH_SIZE for multi-selection
     
     // InputField widgets for text editing
     InputField *pattern_field;

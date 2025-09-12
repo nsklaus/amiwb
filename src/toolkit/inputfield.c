@@ -307,13 +307,22 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
                 XGlyphInfo glyph_info;
                 XftTextExtentsUtf8(dpy, font, (FcChar8*)ch, 1, &glyph_info);
                 
+                // For spaces, use a minimum width if the font returns 0
+                int char_width = glyph_info.width;
+                if (field->text[i] == ' ' && char_width == 0) {
+                    // Use width of 'n' character as space width (common typographic practice)
+                    XGlyphInfo n_info;
+                    XftTextExtentsUtf8(dpy, font, (FcChar8*)"n", 1, &n_info);
+                    char_width = n_info.width;
+                }
+                
                 // Check if this is the cursor position
                 bool is_cursor = (field->has_focus && !field->disabled && i == field->cursor_pos);
                 
                 if (is_cursor) {
                     // Draw blue background for cursor
                     XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
-                                       draw_x, y + 3, glyph_info.width, h - 6);
+                                       draw_x, y + 3, char_width, h - 6);
                     // Draw white text on blue background
                     XftDrawStringUtf8(xft_draw, &white_color, font,
                                     draw_x, text_y, (FcChar8*)ch, 1);
@@ -323,7 +332,7 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
                                     draw_x, text_y, (FcChar8*)ch, 1);
                 }
                 
-                draw_x += glyph_info.width;
+                draw_x += char_width;
             }
             
             // Draw cursor at end if it's past the last character

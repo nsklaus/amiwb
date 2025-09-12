@@ -1024,7 +1024,7 @@ static void handle_list_click(ReqASL *req, int y) {
         // Update file field with selection
         FileEntry *entry = req->entries[absolute_index];
         if (entry->type == TYPE_FILE) {
-            strcpy(req->file_text, entry->name);
+            snprintf(req->file_text, PATH_SIZE, "%s", entry->name);
         }
         
         draw_window(req);
@@ -1335,7 +1335,7 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     inputfield_hide_completions(req->file_field, req->display);
                     // Field text already updated by inputfield_handle_completion_click
                     // Update req->file_text to match the new field value
-                    snprintf(req->file_text, NAME_SIZE, "%s", inputfield_get_text(req->file_field));
+                    snprintf(req->file_text, PATH_SIZE, "%s", inputfield_get_text(req->file_field));
                     draw_window(req);
                 }
                 return true;
@@ -2015,46 +2015,40 @@ static void listview_select_callback(int index, const char *text, void *user_dat
     if (req->listview && req->multi_select_enabled) {
         // If no items selected, clear the file field
         if (req->listview->selection_count == 0) {
-            strcpy(req->file_text, "");
+            req->file_text[0] = '\0';
             if (req->file_field) {
                 inputfield_set_text(req->file_field, "");
             }
         } else {
-            // Build comma-separated list of selected files
-            char multi_files[PATH_SIZE];
-            multi_files[0] = '\0';
-            int written = 0;
+            // Count selected files and find the single file if only one
             int file_count = 0;
-            
+            int single_file_index = -1;
             for (int i = 0; i < req->entry_count && i < LISTVIEW_MAX_ITEMS; i++) {
                 if (req->listview->selected[i] && req->entries[i]->type == TYPE_FILE) {
-                    // Add comma if not first item
-                    if (written > 0) {
-                        int remaining = PATH_SIZE - written - 1;
-                        if (remaining > 2) {
-                            written += snprintf(multi_files + written, remaining, ", ");
-                        }
+                    if (file_count == 0) {
+                        single_file_index = i;
                     }
-                    
-                    // Add quoted filename
-                    int remaining = PATH_SIZE - written - 1;
-                    if (remaining > strlen(req->entries[i]->name) + 2) {
-                        written += snprintf(multi_files + written, remaining, 
-                                          "\"%s\"", req->entries[i]->name);
-                        file_count++;
-                    }
-                    
-                    // Stop if we're running out of space
-                    if (written >= PATH_SIZE - 10) {
-                        break;
-                    }
+                    file_count++;
                 }
             }
             
-            // Update the file field with multi-selection list
-            strcpy(req->file_text, multi_files);
+            // Show filename for single selection, count for multi-selection
+            char display_text[NAME_SIZE];
+            if (file_count == 1 && single_file_index >= 0) {
+                // Single file - show its name
+                snprintf(display_text, sizeof(display_text), "%s", req->entries[single_file_index]->name);
+            } else if (file_count > 1) {
+                // Multiple files - show count
+                snprintf(display_text, sizeof(display_text), "%d files selected", file_count);
+            } else {
+                // No files selected (shouldn't happen in this branch)
+                display_text[0] = '\0';
+            }
+            
+            // Update the file field
+            snprintf(req->file_text, PATH_SIZE, "%s", display_text);
             if (req->file_field) {
-                inputfield_set_text(req->file_field, multi_files);
+                inputfield_set_text(req->file_field, display_text);
             }
         }
     } else {
@@ -2063,7 +2057,7 @@ static void listview_select_callback(int index, const char *text, void *user_dat
         
         // Update file field with selection if it's a file
         if (entry->type == TYPE_FILE) {
-            strcpy(req->file_text, entry->name);
+            snprintf(req->file_text, PATH_SIZE, "%s", entry->name);
             // Also update the InputField widget
             if (req->file_field) {
                 inputfield_set_text(req->file_field, entry->name);
