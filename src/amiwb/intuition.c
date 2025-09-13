@@ -427,13 +427,18 @@ static bool init_display_and_root(void) {
     }
     XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask | PropertyChangeMask |
                  StructureNotifyMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | KeyPressMask);
-    // Advertise minimal EWMH support for fullscreen
+    // Advertise EWMH support for fullscreen and other essential atoms
     Atom net_supported = XInternAtom(display, "_NET_SUPPORTED", False);
-    Atom supported[2];
+    Atom supported[7];
     supported[0] = XInternAtom(display, "_NET_WM_STATE", False);
     supported[1] = XInternAtom(display, "_NET_WM_STATE_FULLSCREEN", False);
+    supported[2] = XInternAtom(display, "_NET_WM_ALLOWED_ACTIONS", False);
+    supported[3] = XInternAtom(display, "_NET_WM_ACTION_FULLSCREEN", False);
+    supported[4] = XInternAtom(display, "_NET_ACTIVE_WINDOW", False);
+    supported[5] = XInternAtom(display, "_NET_WM_NAME", False);
+    supported[6] = XInternAtom(display, "_NET_CLIENT_LIST", False);
     XChangeProperty(display, root, net_supported, XA_ATOM, 32, PropModeReplace,
-                   (unsigned char*)supported, 2);
+                   (unsigned char*)supported, 7);
     XSync(display, False);
     return true;
 }
@@ -648,31 +653,57 @@ static Bool init_render_pictures(Canvas *c, CanvasType t) {
 
 static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
     if (!attrs) return NULL;
-    // Calculate frame position from client position (subtract decorations)
-    int fx = attrs->x - BORDER_WIDTH_LEFT;
-    int fy = attrs->y - BORDER_HEIGHT_TOP;
     
-    // Only adjust if window would be completely off-screen or under menubar
-    if (fx + attrs->width < 50) fx = 0;  // Too far left, bring back
-    if (fy < MENUBAR_HEIGHT) fy = MENUBAR_HEIGHT;  // Don't go under menubar
+    // Check if this window wants to be fullscreen
+    int screen_width = DisplayWidth(display, DefaultScreen(display));
+    int screen_height = DisplayHeight(display, DefaultScreen(display));
+    bool is_fullscreen_size = (attrs->width == screen_width && attrs->height == screen_height);
+    bool has_fullscreen_state = is_fullscreen_active(client);
     
-    int fw, fh;
-    calculate_frame_size_from_client_size(attrs->width, attrs->height, &fw, &fh);
+    int fx, fy, fw, fh;
+    
+    if (is_fullscreen_size || has_fullscreen_state) {
+        // Fullscreen window - no decorations, positioned at 0,0
+        fx = 0;
+        fy = 0;
+        fw = attrs->width;
+        fh = attrs->height;
+    } else {
+        // Normal window - add decorations
+        // Calculate frame position from client position (subtract decorations)
+        fx = attrs->x - BORDER_WIDTH_LEFT;
+        fy = attrs->y - BORDER_HEIGHT_TOP;
+        
+        // Only adjust if window would be completely off-screen or under menubar
+        if (fx + attrs->width < 50) fx = 0;  // Too far left, bring back
+        if (fy < MENUBAR_HEIGHT) fy = MENUBAR_HEIGHT;  // Don't go under menubar
+        
+        calculate_frame_size_from_client_size(attrs->width, attrs->height, &fw, &fh);
+    }
     
     
     // Use create_canvas_with_client to set client_win BEFORE any rendering
     Canvas *frame = create_canvas_with_client(NULL, fx, fy, fw, fh, WINDOW, client);
     if (!frame) return NULL;
     
+    // Mark as fullscreen if detected
+    if (is_fullscreen_size || has_fullscreen_state) {
+        frame->fullscreen = true;
+        fullscreen_active = True;
+        // Hide menubar for fullscreen windows
+        menubar_apply_fullscreen(true);
+        // Move client to 0,0 within frame (no decoration offsets)
+        XMoveWindow(display, client, 0, 0);
+    }
+    
     // Check if this is a transient window (modal dialog) and mark it
+    // Don't center fullscreen windows
     Window transient_for = None;
-    if (XGetTransientForHint(display, client, &transient_for)) {
+    if (!is_fullscreen_size && !has_fullscreen_state && XGetTransientForHint(display, client, &transient_for)) {
         frame->is_transient = true;
         frame->transient_for = transient_for;
         
         // Force transient dialogs to center of screen - don't trust GTK's position
-        int screen_width = DisplayWidth(display, DefaultScreen(display));
-        int screen_height = DisplayHeight(display, DefaultScreen(display));
         fx = (screen_width - fw) / 2;
         fy = (screen_height - fh) / 2;
         if (fy < MENUBAR_HEIGHT) fy = MENUBAR_HEIGHT;
@@ -710,6 +741,13 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
     // This is the core of window management - we take the client's window
     // and place it inside our frame window at the specified offset
     XReparentWindow(display, client, frame->win, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
+    
+    // Set EWMH _NET_WM_ALLOWED_ACTIONS to indicate fullscreen is supported
+    Atom allowed_actions = XInternAtom(display, "_NET_WM_ALLOWED_ACTIONS", False);
+    Atom action_fullscreen = XInternAtom(display, "_NET_WM_ACTION_FULLSCREEN", False);
+    XChangeProperty(display, client, allowed_actions, XA_ATOM, 32, PropModeReplace,
+                   (unsigned char*)&action_fullscreen, 1);
+    
     // XSelectInput: Tell X11 which events we want to receive for this window
     // StructureNotifyMask: Get notified when window is resized, moved, etc.
     // PropertyChangeMask: Get notified when window properties change (like title)
@@ -2281,15 +2319,47 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
     unsigned long frame_mask = 0;
 
     if (event->value_mask & (CWWidth | CWHeight)) {
-        calculate_frame_size_from_client_size(event->width, event->height, &frame_changes.width, &frame_changes.height);
+        // Check if this is a fullscreen request (window size equals screen size)
+        int screen_width = DisplayWidth(display, DefaultScreen(display));
+        int screen_height = DisplayHeight(display, DefaultScreen(display));
+        bool is_fullscreen_size = (event->width == screen_width && event->height == screen_height);
+        bool has_fullscreen_state = is_fullscreen_active(event->window);
         
+        // If requesting screen size OR has fullscreen state, don't add frame decorations
+        if (is_fullscreen_size || has_fullscreen_state) {
+            // Fullscreen - use client size directly as frame size
+            frame_changes.width = event->width;
+            frame_changes.height = event->height;
+            // Position at 0,0 for fullscreen
+            frame_changes.x = 0;
+            frame_changes.y = 0;
+            frame_mask |= CWX | CWY;
+            
+            // Mark as fullscreen and hide menubar
+            if (!canvas->fullscreen) {
+                canvas->fullscreen = true;
+                fullscreen_active = True;
+                menubar_apply_fullscreen(true);
+            }
+        } else {
+            // Normal window - add frame decorations
+            calculate_frame_size_from_client_size(event->width, event->height, &frame_changes.width, &frame_changes.height);
+            
+            // If we were fullscreen, exit fullscreen mode
+            if (canvas->fullscreen) {
+                canvas->fullscreen = false;
+                fullscreen_active = False;
+                menubar_apply_fullscreen(false);
+            }
+        }
         
         frame_mask |= (event->value_mask & CWWidth) ? CWWidth : 0;
         frame_mask |= (event->value_mask & CWHeight) ? CWHeight : 0;
     }
     
     // IGNORE position requests from transient windows - WE decide where they go!
-    if (!canvas->is_transient) {
+    // Also skip position handling if we already set it for fullscreen above
+    if (!canvas->is_transient && !(frame_mask & CWX)) {
         if (event->value_mask & CWX) { frame_changes.x = event->x; frame_mask |= CWX; }
         if (event->value_mask & CWY) { frame_changes.y = max(event->y, MENUBAR_HEIGHT); frame_mask |= CWY; }
     }
@@ -2328,7 +2398,10 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
     // Configure client window within frame borders
     // TRUST THE CLIENT: Give it exactly what it requested (like dwm does)
     // The frame has already been resized to accommodate the client's request
-    XWindowChanges client_changes = { .x = BORDER_WIDTH_LEFT, .y = BORDER_HEIGHT_TOP };
+    // For fullscreen, position client at 0,0 (no border offsets)
+    int client_x = canvas->fullscreen ? 0 : BORDER_WIDTH_LEFT;
+    int client_y = canvas->fullscreen ? 0 : BORDER_HEIGHT_TOP;
+    XWindowChanges client_changes = { .x = client_x, .y = client_y };
     unsigned long client_mask = CWX | CWY;
     
     if (event->value_mask & CWWidth) { 
@@ -2431,6 +2504,13 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
 void destroy_canvas(Canvas *canvas) {
     if (!canvas || canvas->type == DESKTOP) return;
     clear_canvas_icons(canvas);
+    
+    // If destroying a fullscreen window, restore menubar
+    if (canvas->fullscreen) {
+        canvas->fullscreen = false;
+        fullscreen_active = False;
+        menubar_apply_fullscreen(false);
+    }
 
     // Clean up dialog-specific structures before destroying canvas
     if (canvas->type == DIALOG) {

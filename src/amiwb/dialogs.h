@@ -6,6 +6,7 @@
 
 #include "config.h"
 #include "intuition.h"
+#include "../toolkit/inputfield.h"
 #include <stdbool.h>
 #include <limits.h>
 
@@ -28,31 +29,33 @@ typedef enum {
 } ProgressOperation;
 
 // Dialog state structure
-typedef struct RenameDialog {
+typedef struct Dialog {
     Canvas *canvas;                    // Regular WINDOW-type canvas
     DialogType dialog_type;            // Type of dialog (rename or delete confirmation)
-    char text_buffer[NAME_SIZE];    // Filename buffer (or message for delete)
-    char original_name[NAME_SIZE];  // Original filename (for display only)
-    int cursor_pos;                    // Current cursor position
-    int selection_start;               // Text selection start (-1 if no selection)
-    int selection_end;                 // Text selection end
-    int visible_start;                 // First visible character (for horizontal scrolling)
-    bool input_has_focus;              // True if input box has focus
+    InputField *input_field;           // Toolkit input field for text entry
+    char original_name[NAME_SIZE];     // Original filename (for display only)
     bool ok_button_pressed;            // True while OK button is pressed
     bool cancel_button_pressed;        // True while Cancel button is pressed
     void (*on_ok)(const char *new_name);     // Success callback
     void (*on_cancel)(void);                 // Cancel callback
-    struct RenameDialog *next;         // For multiple dialogs
+    struct Dialog *next;               // For multiple dialogs
     void *user_data;                   // Optional user data for callbacks
+    XftFont *font;                     // Font for the dialog (shared with InputField)
     
-    // Completion support for execute dialog
-    Canvas *completion_dropdown;       // Dropdown window for completions
-    char **completion_candidates;      // Array of completion strings
-    int completion_count;              // Number of completion candidates
-    int completion_selected;           // Currently selected completion (-1 if none)
-    char completion_prefix[NAME_SIZE];  // The prefix being completed
-    int completion_prefix_len;         // Length of prefix in text buffer
-} RenameDialog;
+    // TEMPORARY - being removed, use InputField instead
+    char text_buffer[NAME_SIZE];       // DEPRECATED
+    int cursor_pos;                    // DEPRECATED
+    int selection_start;               // DEPRECATED  
+    int selection_end;                 // DEPRECATED
+    int visible_start;                 // DEPRECATED
+    bool input_has_focus;              // DEPRECATED
+    Canvas *completion_dropdown;       // DEPRECATED
+    char **completion_candidates;      // DEPRECATED
+    int completion_count;              // DEPRECATED
+    int completion_selected;          // DEPRECATED
+    char completion_prefix[PATH_SIZE]; // DEPRECATED
+    int completion_prefix_len;        // DEPRECATED
+} Dialog;
 
 // Dialog lifecycle
 void init_dialogs(void);
@@ -74,7 +77,7 @@ void show_execute_dialog(void (*on_ok)(const char *command),
                         void (*on_cancel)(void));
 
 // Close specific dialog
-void close_rename_dialog(RenameDialog *dialog);
+void close_dialog(Dialog *dialog);
 void close_dialog_by_canvas(Canvas *canvas);
 
 // Event handlers (called from events.c)
@@ -85,7 +88,7 @@ bool dialogs_handle_motion(XMotionEvent *event);
 
 // Query functions
 bool is_dialog_canvas(Canvas *canvas);
-RenameDialog *get_dialog_for_canvas(Canvas *canvas);
+Dialog *get_dialog_for_canvas(Canvas *canvas);
 
 // Rendering (called from render.c)
 void render_dialog_content(Canvas *canvas);

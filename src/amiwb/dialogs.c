@@ -17,10 +17,10 @@
 #include <signal.h>
 
 // Global dialog list (for multiple dialogs)
-static RenameDialog *g_dialogs = NULL;
+static Dialog *g_dialogs = NULL;
 
 // Forward declarations
-static void hide_completion_dropdown(RenameDialog *dialog);
+// static void hide_completion_dropdown(Dialog *dialog); // DISABLED - InputField handles completion
 
 // Dialog rendering constants
 #define DIALOG_MARGIN 20
@@ -38,7 +38,7 @@ void init_dialogs(void) {
 // Clean up all dialogs
 void cleanup_dialogs(void) {
     while (g_dialogs) {
-        RenameDialog *next = g_dialogs->next;
+        Dialog *next = g_dialogs->next;
         if (g_dialogs->canvas) {
             destroy_canvas(g_dialogs->canvas);
         }
@@ -54,36 +54,42 @@ void show_rename_dialog(const char *old_name,
                        void *user_data) {
     if (!old_name || !on_ok || !on_cancel) return;
     
-    RenameDialog *dialog = malloc(sizeof(RenameDialog));
+    Dialog *dialog = malloc(sizeof(Dialog));
     if (!dialog) return;
     
     // Initialize dialog state
     dialog->dialog_type = DIALOG_RENAME;
-    if (strlen(old_name) >= NAME_SIZE) {
-        log_error("[WARNING] Name too long, will be truncated: %s", old_name);
-    }
-    strncpy(dialog->text_buffer, old_name, NAME_SIZE - 1);
-    dialog->text_buffer[NAME_SIZE - 1] = '\0';
     strncpy(dialog->original_name, old_name, NAME_SIZE - 1);
     dialog->original_name[NAME_SIZE - 1] = '\0';
-    dialog->cursor_pos = strlen(dialog->text_buffer);
-    dialog->selection_start = -1;
-    dialog->selection_end = -1;
-    dialog->visible_start = 0;
-    dialog->input_has_focus = false;
     dialog->ok_button_pressed = false;
     dialog->cancel_button_pressed = false;
     dialog->on_ok = on_ok;
     dialog->on_cancel = on_cancel;
     dialog->user_data = user_data;
     
-    // Initialize completion fields
-    dialog->completion_dropdown = NULL;
-    dialog->completion_candidates = NULL;
-    dialog->completion_count = 0;
-    dialog->completion_selected = -1;
-    dialog->completion_prefix[0] = '\0';
-    dialog->completion_prefix_len = 0;
+    // Get font from render system
+    dialog->font = get_font();
+    if (!dialog->font) {
+        free(dialog);
+        return;
+    }
+    
+    // Create InputField widget for text entry
+    // Position will be set properly in render_dialog_content
+    dialog->input_field = inputfield_create(0, 0, 100, INPUT_HEIGHT, dialog->font);
+    if (!dialog->input_field) {
+        free(dialog);
+        return;
+    }
+    
+    // Set initial text in the input field
+    inputfield_set_text(dialog->input_field, old_name);
+    
+    // Position cursor at end of text
+    dialog->input_field->cursor_pos = strlen(old_name);
+    
+    // Set focus to input field
+    dialog->input_field->has_focus = true;
     
     // Create canvas window (450x160 initial size)  
     dialog->canvas = create_canvas(NULL, 200, 150, 450, 160, DIALOG);
@@ -117,31 +123,40 @@ void show_execute_dialog(void (*on_ok)(const char *command),
                         void (*on_cancel)(void)) {
     if (!on_ok || !on_cancel) return;
     
-    RenameDialog *dialog = malloc(sizeof(RenameDialog));
+    Dialog *dialog = malloc(sizeof(Dialog));
     if (!dialog) return;
     
     // Initialize dialog state
     dialog->dialog_type = DIALOG_EXECUTE_COMMAND;
-    dialog->text_buffer[0] = '\0';  // Start with empty command
     dialog->original_name[0] = '\0';  // Not used for execute dialog
-    dialog->cursor_pos = 0;
-    dialog->selection_start = -1;
-    dialog->selection_end = -1;
-    dialog->visible_start = 0;
-    dialog->input_has_focus = false;
     dialog->ok_button_pressed = false;
     dialog->cancel_button_pressed = false;
     dialog->on_ok = on_ok;
     dialog->on_cancel = on_cancel;
     dialog->user_data = NULL;
     
-    // Initialize completion fields
-    dialog->completion_dropdown = NULL;
-    dialog->completion_candidates = NULL;
-    dialog->completion_count = 0;
-    dialog->completion_selected = -1;
-    dialog->completion_prefix[0] = '\0';
-    dialog->completion_prefix_len = 0;
+    // Get font from render system
+    dialog->font = get_font();
+    if (!dialog->font) {
+        free(dialog);
+        return;
+    }
+    
+    // Create InputField widget for command entry
+    dialog->input_field = inputfield_create(0, 0, 100, INPUT_HEIGHT, dialog->font);
+    if (!dialog->input_field) {
+        free(dialog);
+        return;
+    }
+    
+    // Enable path completion for execute dialog
+    inputfield_enable_path_completion(dialog->input_field, true);
+    
+    // Start with empty text
+    inputfield_set_text(dialog->input_field, "");
+    
+    // Set focus to input field
+    dialog->input_field->has_focus = true;
     
     // Create canvas window (450x160 initial size)
     dialog->canvas = create_canvas(NULL, 200, 150, 450, 160, DIALOG);
@@ -167,14 +182,14 @@ void show_execute_dialog(void (*on_ok)(const char *command),
 }
 
 // Close and cleanup specific dialog
-void close_rename_dialog(RenameDialog *dialog) {
+void close_dialog(Dialog *dialog) {
     if (!dialog) return;
     
     // Remove from dialog list
     if (g_dialogs == dialog) {
         g_dialogs = dialog->next;
     } else {
-        for (RenameDialog *d = g_dialogs; d; d = d->next) {
+        for (Dialog *d = g_dialogs; d; d = d->next) {
             if (d->next == dialog) {
                 d->next = dialog->next;
                 break;
@@ -182,8 +197,15 @@ void close_rename_dialog(RenameDialog *dialog) {
         }
     }
     
-    // Clean up completion dropdown first
-    hide_completion_dropdown(dialog);
+    // Clean up InputField widget and its dropdown
+    if (dialog->input_field) {
+        // Make sure to close any open dropdown first
+        if (dialog->input_field->dropdown_open) {
+            inputfield_hide_completions(dialog->input_field, get_display());
+        }
+        inputfield_destroy(dialog->input_field);
+        dialog->input_field = NULL;
+    }
     
     // Clean up canvas and memory
     if (dialog->canvas) {
@@ -196,13 +218,13 @@ void close_rename_dialog(RenameDialog *dialog) {
 void close_dialog_by_canvas(Canvas *canvas) {
     if (!canvas) return;
     
-    RenameDialog *dialog = get_dialog_for_canvas(canvas);
+    Dialog *dialog = get_dialog_for_canvas(canvas);
     if (dialog) {
         // Remove from dialog list
         if (g_dialogs == dialog) {
             g_dialogs = dialog->next;
         } else {
-            for (RenameDialog *d = g_dialogs; d; d = d->next) {
+            for (Dialog *d = g_dialogs; d; d = d->next) {
                 if (d->next == dialog) {
                     d->next = dialog->next;
                     break;
@@ -210,8 +232,7 @@ void close_dialog_by_canvas(Canvas *canvas) {
             }
         }
         
-        // Clean up completion dropdown first
-        hide_completion_dropdown(dialog);
+        // InputField handles its own completion cleanup
         
         // Don't destroy canvas here - intuition.c will do it
         dialog->canvas = NULL;
@@ -228,9 +249,11 @@ void close_dialog_by_canvas(Canvas *canvas) {
 // ========================
 // Completion Helper Functions
 // ========================
+// NOTE: Completion is now handled by InputField widget
 
+/* DISABLED - InputField handles all completion
 // Free completion candidates
-static void free_completion_candidates(RenameDialog *dialog) {
+static void free_completion_candidates(Dialog *dialog) {
     if (dialog->completion_candidates) {
         for (int i = 0; i < dialog->completion_count; i++) {
             free(dialog->completion_candidates[i]);
@@ -243,7 +266,7 @@ static void free_completion_candidates(RenameDialog *dialog) {
 }
 
 // Hide and destroy completion dropdown
-static void hide_completion_dropdown(RenameDialog *dialog) {
+static void hide_completion_dropdown(Dialog *dialog) {
     if (dialog->completion_dropdown) {
         destroy_canvas(dialog->completion_dropdown);
         dialog->completion_dropdown = NULL;
@@ -282,7 +305,7 @@ static char *expand_tilde(const char *path) {
 }
 
 // Find completions for the given partial path
-static void find_completions(RenameDialog *dialog, const char *partial) {
+static void find_completions(Dialog *dialog, const char *partial) {
     free_completion_candidates(dialog);
     
     // Expand tilde if present
@@ -389,7 +412,7 @@ static void find_completions(RenameDialog *dialog, const char *partial) {
 }
 
 // Apply selected completion to text buffer
-static void apply_completion(RenameDialog *dialog, int index) {
+static void apply_completion(Dialog *dialog, int index) {
     if (index < 0 || index >= dialog->completion_count) return;
     
     // Build the completed path safely
@@ -423,7 +446,7 @@ static void apply_completion(RenameDialog *dialog, int index) {
 }
 
 // Show completion dropdown
-static void show_completion_dropdown(RenameDialog *dialog) {
+static void show_completion_dropdown(Dialog *dialog) {
     if (dialog->completion_count == 0) return;
     
     // If only one completion, apply it directly
@@ -456,29 +479,32 @@ static void show_completion_dropdown(RenameDialog *dialog) {
     XMapRaised(get_display(), dialog->completion_dropdown->win);
     redraw_canvas(dialog->completion_dropdown);
 }
+*/
 
-// Check if canvas is a completion dropdown
+// Check if canvas is a completion dropdown - DISABLED: InputField handles completion
+/*
 bool is_completion_dropdown(Canvas *canvas) {
     if (!canvas || canvas->type != MENU) return false;
-    for (RenameDialog *dialog = g_dialogs; dialog; dialog = dialog->next) {
+    for (Dialog *dialog = g_dialogs; dialog; dialog = dialog->next) {
         if (dialog->completion_dropdown == canvas) return true;
     }
     return false;
 }
+*/
 
 // Check if canvas is a dialog
 bool is_dialog_canvas(Canvas *canvas) {
     if (!canvas) return false;
-    for (RenameDialog *dialog = g_dialogs; dialog; dialog = dialog->next) {
+    for (Dialog *dialog = g_dialogs; dialog; dialog = dialog->next) {
         if (dialog->canvas == canvas) return true;
     }
     return false;
 }
 
 // Get dialog for canvas
-RenameDialog *get_dialog_for_canvas(Canvas *canvas) {
+Dialog *get_dialog_for_canvas(Canvas *canvas) {
     if (!canvas) return NULL;
-    for (RenameDialog *dialog = g_dialogs; dialog; dialog = dialog->next) {
+    for (Dialog *dialog = g_dialogs; dialog; dialog = dialog->next) {
         if (dialog->canvas == canvas) return dialog;
     }
     return NULL;
@@ -527,7 +553,7 @@ static void draw_raised_box(Picture dest, int x, int y, int w, int h, bool press
 }
 
 // Calculate layout positions based on current canvas size
-static void calculate_layout(RenameDialog *dialog, int *input_x, int *input_y, int *input_w,
+static void calculate_layout(Dialog *dialog, int *input_x, int *input_y, int *input_w,
                            int *ok_x, int *ok_y, int *cancel_x, int *cancel_y) {
     Canvas *canvas = dialog->canvas;
     
@@ -569,13 +595,14 @@ static void calculate_layout(RenameDialog *dialog, int *input_x, int *input_y, i
 extern XftFont *get_font(void);
 
 // Forward declarations for internal functions
-static void render_input_text(RenameDialog *dialog, XftFont *font, 
-                             int text_x, int text_y, int text_width);
-static int calculate_visible_end(RenameDialog *dialog, XftFont *font, int available_width);
+// DISABLED - InputField handles its own text rendering
+// static void render_input_text(Dialog *dialog, XftFont *font, 
+//                              int text_x, int text_y, int text_width);
+// static int calculate_visible_end(Dialog *dialog, XftFont *font, int available_width);
 static void draw_checkerboard_pattern(Picture dest, int x, int y, int w, int h);
 
 // Render text content with cursor and selection
-static void render_text_content(RenameDialog *dialog, Picture dest, 
+static void render_text_content(Dialog *dialog, Picture dest, 
                                int input_x, int input_y, int input_w,
                                int ok_x, int ok_y, int cancel_x, int cancel_y) {
     Display *dpy = get_display();
@@ -667,14 +694,16 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, label_x, label_y, 
                          (FcChar8*)"Command:", 8);
         
-        // Render input box text with cursor and selection 
-        // Calculate text Y to center it within the input box
-        int text_y = input_y + (INPUT_HEIGHT + font->ascent) / 2 - 2;  // Move up 2 pixels
-        // Calculate one character width for proper padding
-        XGlyphInfo char_info;
-        XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &char_info);
-        int char_width = char_info.xOff;
-        render_input_text(dialog, font, input_x + char_width + 2, text_y, input_w - (char_width + 2) * 2);
+        // Update InputField position and size if needed
+        if (dialog->input_field) {
+            dialog->input_field->x = input_x;
+            dialog->input_field->y = input_y;
+            dialog->input_field->width = input_w;
+            dialog->input_field->height = INPUT_HEIGHT;
+            
+            // Draw the InputField using toolkit function
+            inputfield_draw(dialog->input_field, canvas->canvas_render, dpy, canvas->xft_draw, dialog->font);
+        }
     } else {
         // For rename dialog, show the original prompt
         char title_text[256];
@@ -699,14 +728,16 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, label_x, label_y, 
                          (FcChar8*)"New Name:", 9);
         
-        // Render input box text with cursor and selection 
-        // Calculate text Y to center it within the input box
-        int text_y = input_y + (INPUT_HEIGHT + font->ascent) / 2 - 2;  // Move up 2 pixels
-        // Calculate one character width for proper padding
-        XGlyphInfo char_info;
-        XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &char_info);
-        int char_width = char_info.xOff;
-        render_input_text(dialog, font, input_x + char_width + 2, text_y, input_w - (char_width + 2) * 2);
+        // Update InputField position and size if needed
+        if (dialog->input_field) {
+            dialog->input_field->x = input_x;
+            dialog->input_field->y = input_y;
+            dialog->input_field->width = input_w;
+            dialog->input_field->height = INPUT_HEIGHT;
+            
+            // Draw the InputField using toolkit function
+            inputfield_draw(dialog->input_field, canvas->canvas_render, dpy, canvas->xft_draw, dialog->font);
+        }
     }
     
     // Draw button labels
@@ -738,8 +769,9 @@ static void render_text_content(RenameDialog *dialog, Picture dest,
     // No need to destroy - using cached XftDraw
 }
 
+/* DISABLED - InputField handles its own text rendering
 // Render input text with cursor position and selection highlighting
-static void render_input_text(RenameDialog *dialog, XftFont *font, 
+static void render_input_text(Dialog *dialog, XftFont *font, 
                              int text_x, int text_y, int text_width) {
     Display *dpy = get_display();
     Canvas *canvas = dialog->canvas;
@@ -809,7 +841,7 @@ static void render_input_text(RenameDialog *dialog, XftFont *font,
 }
 
 // Calculate the last visible character index for horizontal scrolling
-static int calculate_visible_end(RenameDialog *dialog, XftFont *font, int available_width) {
+static int calculate_visible_end(Dialog *dialog, XftFont *font, int available_width) {
     const char *text = dialog->text_buffer;
     int text_len = strlen(text);
     int visible_start = dialog->visible_start;
@@ -829,6 +861,7 @@ static int calculate_visible_end(RenameDialog *dialog, XftFont *font, int availa
     
     return i;
 }
+*/
 
 // Draw checkerboard pattern for delete confirmation dialog
 static void draw_checkerboard_pattern(Picture dest, int x, int y, int w, int h) {
@@ -858,8 +891,8 @@ void render_completion_dropdown(Canvas *canvas) {
     if (!canvas) return;
     
     // Find the dialog that owns this dropdown
-    RenameDialog *dialog = NULL;
-    for (RenameDialog *d = g_dialogs; d; d = d->next) {
+    Dialog *dialog = NULL;
+    for (Dialog *d = g_dialogs; d; d = d->next) {
         if (d->completion_dropdown == canvas) {
             dialog = d;
             break;
@@ -930,7 +963,7 @@ void render_completion_dropdown(Canvas *canvas) {
 
 // Render dialog content
 void render_dialog_content(Canvas *canvas) {
-    RenameDialog *dialog = get_dialog_for_canvas(canvas);
+    Dialog *dialog = get_dialog_for_canvas(canvas);
     if (!dialog) return;
     
     
@@ -1028,192 +1061,83 @@ bool dialogs_handle_key_press(XKeyEvent *event) {
     Canvas *active = get_active_window();
     if (!active || active->type != DIALOG) return false;
     
-    RenameDialog *dialog = get_dialog_for_canvas(active);
+    Dialog *dialog = get_dialog_for_canvas(active);
     if (!dialog) return false;
     
+    // First, let InputField handle the key event
+    if (dialog->input_field) {
+        bool handled = inputfield_handle_key(dialog->input_field, event);
+        if (handled) {
+            redraw_canvas(dialog->canvas);
+            return true;
+        }
+    }
+    
+    // If InputField didn't handle it, check for dialog-level keys
     KeySym keysym = XLookupKeysym(event, 0);
     
-    // Handle keys differently when dropdown is shown
-    if (dialog->completion_dropdown) {
-        if (keysym == XK_Down) {
-            dialog->completion_selected++;
-            if (dialog->completion_selected >= dialog->completion_count) {
-                dialog->completion_selected = 0;
-            }
-            redraw_canvas(dialog->completion_dropdown);
-            return true;
-        } else if (keysym == XK_Up) {
-            dialog->completion_selected--;
-            if (dialog->completion_selected < 0) {
-                dialog->completion_selected = dialog->completion_count - 1;
-            }
-            redraw_canvas(dialog->completion_dropdown);
-            return true;
-        } else if (keysym == XK_Return || keysym == XK_KP_Enter) {
-            // Apply selected completion and close dropdown
-            if (dialog->completion_selected >= 0) {
-                apply_completion(dialog, dialog->completion_selected);
-            }
-            return true;
-        } else if (keysym == XK_Escape) {
-            // Just hide dropdown, don't close dialog
-            hide_completion_dropdown(dialog);
-            redraw_canvas(dialog->canvas);
-            return true;
-        }
-    }
-    
-    // Handle Escape key - cancel dialog (only when dropdown not shown)
+    // Handle Escape key - cancel dialog (only if dropdown is not open)
     if (keysym == XK_Escape) {
+        if (dialog->input_field && dialog->input_field->dropdown_open) {
+            // Let InputField handle Escape to close dropdown
+            return false;
+        }
         if (dialog->on_cancel) dialog->on_cancel();
-        close_rename_dialog(dialog);
+        close_dialog(dialog);
         return true;
     }
     
-    // Handle Enter key - accept dialog (only when dropdown not shown)
+    // Handle Enter key - accept dialog (only if dropdown is not open)
     if (keysym == XK_Return || keysym == XK_KP_Enter) {
-        if (dialog->on_ok) dialog->on_ok(dialog->text_buffer);
-        close_rename_dialog(dialog);
-        return true;
-    }
-    
-    // Only handle input if the input box has focus
-    if (!dialog->input_has_focus) return false;
-    
-    // Handle Tab key for completion (execute dialog only)
-    if (keysym == XK_Tab && dialog->dialog_type == DIALOG_EXECUTE_COMMAND) {
-        // Find completions for current text
-        find_completions(dialog, dialog->text_buffer);
-        show_completion_dropdown(dialog);
-        return true;
-    }
-    
-    // Handle backspace
-    if (keysym == XK_BackSpace) {
-        if (dialog->cursor_pos > 0) {
-            int len = strlen(dialog->text_buffer);
-            // Remove character before cursor
-            memmove(&dialog->text_buffer[dialog->cursor_pos - 1],
-                   &dialog->text_buffer[dialog->cursor_pos],
-                   len - dialog->cursor_pos + 1);
-            dialog->cursor_pos--;
-            redraw_canvas(dialog->canvas);
+        if (dialog->input_field && dialog->input_field->dropdown_open) {
+            // Let InputField handle Enter to apply completion
+            return false;
         }
-        return true;
-    }
-    
-    // Handle delete key
-    if (keysym == XK_Delete) {
-        int len = strlen(dialog->text_buffer);
-        if (dialog->cursor_pos < len) {
-            // Remove character at cursor
-            memmove(&dialog->text_buffer[dialog->cursor_pos],
-                   &dialog->text_buffer[dialog->cursor_pos + 1],
-                   len - dialog->cursor_pos);
-            redraw_canvas(dialog->canvas);
+        if (dialog->input_field && dialog->on_ok) {
+            dialog->on_ok(dialog->input_field->text);
         }
+        close_dialog(dialog);
         return true;
     }
     
-    // Handle left arrow
-    if (keysym == XK_Left) {
-        if (dialog->cursor_pos > 0) {
-            dialog->cursor_pos--;
-            redraw_canvas(dialog->canvas);
-        }
-        return true;
-    }
-    
-    // Handle right arrow
-    if (keysym == XK_Right) {
-        if (dialog->cursor_pos < (int)strlen(dialog->text_buffer)) {
-            dialog->cursor_pos++;
-            redraw_canvas(dialog->canvas);
-        }
-        return true;
-    }
-    
-    // Handle Home key
-    if (keysym == XK_Home) {
-        dialog->cursor_pos = 0;
-        redraw_canvas(dialog->canvas);
-        return true;
-    }
-    
-    // Handle End key
-    if (keysym == XK_End) {
-        dialog->cursor_pos = strlen(dialog->text_buffer);
-        redraw_canvas(dialog->canvas);
-        return true;
-    }
-    
-    // Handle regular text input - use XLookupString to properly handle modifiers
-    char buffer[32];
-    KeySym keysym_ignored;
-    int char_count = XLookupString(event, buffer, sizeof(buffer)-1, &keysym_ignored, NULL);
-    
-    if (char_count > 0) {
-        // Filter out control characters but allow printable chars and common symbols
-        for (int i = 0; i < char_count; i++) {
-            unsigned char ch = (unsigned char)buffer[i];
-            if (ch >= 32 && ch <= 126) {  // Printable ASCII range
-                int len = strlen(dialog->text_buffer);
-                if (len < NAME_SIZE - 1) {  // Don't overflow buffer
-                    // Insert character at cursor position
-                    memmove(&dialog->text_buffer[dialog->cursor_pos + 1],
-                           &dialog->text_buffer[dialog->cursor_pos],
-                           len - dialog->cursor_pos + 1);
-                    dialog->text_buffer[dialog->cursor_pos] = (char)ch;
-                    dialog->cursor_pos++;
-                    
-                    // Hide dropdown when typing
-                    if (dialog->completion_dropdown) {
-                        hide_completion_dropdown(dialog);
-                    }
-                    
-                    redraw_canvas(dialog->canvas);
-                }
-                return true;  // Only handle one character at a time
-            }
-        }
-    }
-    
+    // All other key handling is done by InputField widget
     return false;
 }
 
 bool dialogs_handle_button_press(XButtonEvent *event) {
     if (!event) return false;
     
-    Canvas *canvas = find_canvas(event->window);
-    
-    // Check if this is a click on a completion dropdown
-    if (canvas && is_completion_dropdown(canvas)) {
-        // Find the dialog that owns this dropdown
-        RenameDialog *dialog = NULL;
-        for (RenameDialog *d = g_dialogs; d; d = d->next) {
-            if (d->completion_dropdown == canvas) {
-                dialog = d;
-                break;
-            }
-        }
-        
-        if (dialog) {
-            // Calculate which item was clicked
-            int item_height = 20;
-            int clicked_item = (event->y - 2) / item_height;
+    // First check if this is a click on any InputField's completion dropdown
+    for (Dialog *d = g_dialogs; d; d = d->next) {
+        if (d->input_field && inputfield_is_completion_window(d->input_field, event->window)) {
+            // This is a click on a completion dropdown
             
-            if (clicked_item >= 0 && clicked_item < dialog->completion_count) {
-                // Apply the clicked completion
-                apply_completion(dialog, clicked_item);
-                return true;
+            // Handle scroll wheel events (Button4 = scroll up, Button5 = scroll down)
+            if (event->button == Button4 || event->button == Button5) {
+                // Call InputField's scroll handler
+                int direction = (event->button == Button4) ? -1 : 1;
+                inputfield_handle_dropdown_scroll(d->input_field, direction, get_display());
+                return true;  // Consume the event
             }
+            
+            // Only process left click (Button1)
+            if (event->button == Button1) {
+                if (inputfield_handle_completion_click(d->input_field, event->x, event->y)) {
+                    // Selection was made, hide the dropdown
+                    inputfield_hide_completions(d->input_field, get_display());
+                    redraw_canvas(d->canvas);
+                    return true;
+                }
+            }
+            return false;
         }
-        return false;
     }
+    
+    Canvas *canvas = find_canvas(event->window);
     
     if (!canvas || canvas->type != DIALOG) return false;
     
-    RenameDialog *dialog = get_dialog_for_canvas(canvas);
+    Dialog *dialog = get_dialog_for_canvas(canvas);
     if (!dialog) return false;
     
     
@@ -1267,42 +1191,27 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
     // Check if click is in input box
     if (event->x >= input_x && event->x < input_x + input_w &&
         event->y >= input_y && event->y < input_y + INPUT_HEIGHT) {
-        dialog->input_has_focus = true;
         
-        // Set cursor position based on click location
-        XftFont *font = get_font();
-        if (font) {
-            // Calculate one character width for proper padding (matching render_text_content)
-            XGlyphInfo char_info;
-            XftTextExtentsUtf8(get_display(), font, (FcChar8*)" ", 1, &char_info);
-            int char_width = char_info.xOff;
-            int text_start_x = input_x + char_width + 2;  // Match render_input_text positioning
-            int click_offset = event->x - text_start_x;
+        // Pass click to InputField widget
+        if (dialog->input_field) {
+            // Update InputField position
+            dialog->input_field->x = input_x;
+            dialog->input_field->y = input_y;
+            dialog->input_field->width = input_w;
             
-            if (click_offset <= 0) {
-                dialog->cursor_pos = 0;
-            } else {
-                // Find character position by measuring text width
-                const char *text = dialog->text_buffer;
-                int text_len = strlen(text);
-                int width_so_far = 0;
-                int pos = 0;
-                
-                for (pos = 0; pos < text_len; pos++) {
-                    char ch[2] = {text[pos], '\0'};
-                    XGlyphInfo glyph_info;
-                    XftTextExtentsUtf8(get_display(), font, (FcChar8*)ch, 1, &glyph_info);
-                    
-                    if (width_so_far + glyph_info.xOff/2 > click_offset) {
-                        break;
-                    }
-                    width_so_far += glyph_info.xOff;
-                }
-                dialog->cursor_pos = pos;
+            // Handle click in InputField
+            if (inputfield_handle_click(dialog->input_field, event->x, event->y)) {
+                // Now calculate and set cursor position
+                int pos = inputfield_pos_from_x(dialog->input_field, event->x, 
+                                               get_display(), dialog->font);
+                dialog->input_field->cursor_pos = pos;
+                dialog->input_field->mouse_selecting = true;
+                dialog->input_field->mouse_select_start = pos;
             }
+            
+            redraw_canvas(canvas);
         }
         
-        redraw_canvas(canvas);
         return true;
     }
     
@@ -1316,8 +1225,15 @@ bool dialogs_handle_button_release(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window);
     if (!canvas || canvas->type != DIALOG) return false;
     
-    RenameDialog *dialog = get_dialog_for_canvas(canvas);
+    Dialog *dialog = get_dialog_for_canvas(canvas);
     if (!dialog) return false;
+    
+    // Handle mouse release for InputField selection
+    if (dialog->input_field && dialog->input_field->mouse_selecting) {
+        inputfield_handle_mouse_release(dialog->input_field, event->x, event->y);
+        redraw_canvas(dialog->canvas);
+        return true;
+    }
     
     // Get layout positions
     int input_x, input_y, input_w, ok_x, ok_y, cancel_x, cancel_y;
@@ -1333,7 +1249,7 @@ bool dialogs_handle_button_release(XButtonEvent *event) {
         if (dialog->on_ok) {
             dialog->on_ok(dialog->text_buffer);
         }
-        close_rename_dialog(dialog);
+        close_dialog(dialog);
         return true;  // Return immediately to avoid use-after-free
     }
     
@@ -1345,7 +1261,7 @@ bool dialogs_handle_button_release(XButtonEvent *event) {
         if (dialog->on_cancel) {
             dialog->on_cancel();
         }
-        close_rename_dialog(dialog);
+        close_dialog(dialog);
         return true;  // Return immediately to avoid use-after-free
     }
     
@@ -1361,7 +1277,22 @@ bool dialogs_handle_button_release(XButtonEvent *event) {
 }
 
 bool dialogs_handle_motion(XMotionEvent *event) {
-    // TODO: Implement mouse motion (for text selection)
+    if (!event) return false;
+    
+    Canvas *canvas = find_canvas(event->window);
+    if (!canvas || canvas->type != DIALOG) return false;
+    
+    Dialog *dialog = get_dialog_for_canvas(canvas);
+    if (!dialog) return false;
+    
+    // Handle mouse motion for InputField selection
+    if (dialog->input_field && dialog->input_field->mouse_selecting) {
+        if (inputfield_handle_mouse_motion(dialog->input_field, event->x, event->y, get_display())) {
+            redraw_canvas(dialog->canvas);
+            return true;
+        }
+    }
+    
     return false;
 }
 
@@ -1397,7 +1328,7 @@ void show_delete_confirmation(const char *message,
     g_delete_confirm_callback = on_confirm;
     g_delete_cancel_callback = on_cancel ? on_cancel : delete_confirm_cancel;
     
-    RenameDialog *dialog = malloc(sizeof(RenameDialog));
+    Dialog *dialog = malloc(sizeof(Dialog));
     if (!dialog) return;
     
     // Initialize dialog state for delete confirmation

@@ -490,6 +490,11 @@ void handle_button_press(XButtonEvent *event) {
         }
     }
     
+    // Check if this is a click on an InputField dropdown (not a Canvas)
+    if (dialogs_handle_button_press(event)) {
+        return;  // Event was handled by dialog's InputField
+    }
+    
     int cx = event->x, cy = event->y; // may be rewritten
     Canvas *canvas = find_canvas(event->window);
     // Handle button press
@@ -1038,6 +1043,12 @@ void handle_motion_notify(XMotionEvent *event) {
                 workbench_handle_motion_notify(&ev);
             }
             if (tc && (tc->type == WINDOW || tc->type == DIALOG)) {
+                // Try dialog handler first for InputField selection
+                if (tc->type == DIALOG) {
+                    if (dialogs_handle_motion(&ev)) {
+                        return;
+                    }
+                }
                 intuition_handle_motion_notify(&ev);
             }
         }

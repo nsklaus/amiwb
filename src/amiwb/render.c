@@ -664,18 +664,7 @@ void redraw_canvas(Canvas *canvas) {
     // render menu
     // ===========
     if (canvas->type == MENU) {
-        // Check if this is a completion dropdown
-        extern bool is_completion_dropdown(Canvas *canvas);
-        if (is_completion_dropdown(canvas)) {
-            extern void render_completion_dropdown(Canvas *canvas);
-            render_completion_dropdown(canvas);
-            // Composite the rendered dropdown to the window
-            XRenderComposite(ctx->dpy, PictOpSrc, canvas->canvas_render, None, 
-                           canvas->window_render, 0, 0, 0, 0, 0, 0, 
-                           canvas->width, canvas->height);
-            // XFlush removed - let X11 batch operations for better performance
-            return;
-        }
+        // InputField handles its own completion dropdown rendering
         
         Menu *menu = get_menu_by_canvas(canvas);
         if (!menu) return;

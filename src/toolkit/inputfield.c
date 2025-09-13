@@ -15,6 +15,40 @@
 // Forward declaration for path completion dropdown rendering
 static void draw_completion_dropdown(InputField *field, Display *dpy);
 
+// Helper to get normalized selection range (ensures start < end)
+static void get_selection_range(InputField *field, int *start, int *end) {
+    if (!field || field->selection_start == -1 || field->selection_end == -1) {
+        *start = -1;
+        *end = -1;
+        return;
+    }
+    
+    // Normalize based on cursor position and initial selection point
+    if (field->selection_start == field->selection_end) {
+        // Selection started at this point
+        if (field->cursor_pos < field->selection_start) {
+            *start = field->cursor_pos;
+            *end = field->selection_start;
+        } else {
+            *start = field->selection_start;
+            *end = field->cursor_pos;
+        }
+    } else {
+        // Already have a range, cursor determines which end moves
+        if (field->cursor_pos <= field->selection_start) {
+            *start = field->cursor_pos;
+            *end = field->selection_end;
+        } else if (field->cursor_pos >= field->selection_end) {
+            *start = field->selection_start;
+            *end = field->cursor_pos;
+        } else {
+            // Cursor in middle - shouldn't happen with our logic
+            *start = field->selection_start;
+            *end = field->selection_end;
+        }
+    }
+}
+
 InputField* inputfield_create(int x, int y, int width, int height, XftFont *font) {
     InputField *field = malloc(sizeof(InputField));
     if (!field) {
@@ -39,6 +73,10 @@ InputField* inputfield_create(int x, int y, int width, int height, XftFont *font
     field->on_change = NULL;
     field->user_data = NULL;
     field->font = font;  // Store the font pointer (borrowed from app)
+    
+    // Initialize mouse selection fields
+    field->mouse_selecting = false;
+    field->mouse_select_start = -1;
     
     // Initialize path completion fields
     field->enable_path_completion = false;
@@ -200,9 +238,9 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
                           &white, &white_color);
         
         // Calculate text position (vertically centered, left-aligned with padding)
-        int text_x = x + 8;  // More padding to prevent border touching
+        int text_x = x + 5;  // Consistent padding with inputfield_pos_from_x
         int text_y = y + (h + font->ascent - font->descent) / 2;
-        int available_width = w - 16;  // Leave padding on both sides
+        int available_width = w - 10;  // 5 pixels padding on each side
         
         int text_len = strlen(field->text);
         
@@ -297,79 +335,147 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
             
             field->visible_start = visible_start;
             
-            // Draw text in chunks for proper font rendering
+            // Get selection range
+            int sel_start, sel_end;
+            get_selection_range(field, &sel_start, &sel_end);
             
-            // Draw text before cursor
-            if (field->cursor_pos > visible_start) {
-                int chars_before = field->cursor_pos - visible_start;
-                XftDrawStringUtf8(xft_draw, &black_color, font, text_x, text_y,
-                                 (FcChar8*)&field->text[visible_start], chars_before);
+            // Calculate how much text to draw
+            int draw_len = text_len - visible_start;
+            
+            // Step 1: Draw ALL visible text as one chunk (preserves kerning)
+            if (draw_len > 0) {
+                XftDrawStringUtf8(xft_draw, &black_color, font,
+                                text_x, text_y,
+                                (FcChar8*)&field->text[visible_start], draw_len);
             }
             
-            // Draw cursor character with blue background (if not at end)
-            if (field->has_focus && !field->disabled && field->cursor_pos < text_len) {
-                // Measure position where cursor starts
-                XGlyphInfo before_info;
-                if (field->cursor_pos > visible_start) {
-                    XftTextExtentsUtf8(dpy, font, (FcChar8*)&field->text[visible_start], 
-                                      field->cursor_pos - visible_start, &before_info);
+            // Step 2: Draw selection overlay if there is one
+            if (sel_start != -1 && sel_end > sel_start) {
+                // Calculate positions for selection within visible range
+                if (sel_end > visible_start && sel_start < text_len) {
+                    int vis_sel_start = (sel_start < visible_start) ? visible_start : sel_start;
+                    int vis_sel_end = (sel_end > text_len) ? text_len : sel_end;
+                    
+                    if (vis_sel_start < vis_sel_end) {
+                        // Measure positions in context of full visible string
+                        XGlyphInfo up_to_sel_start, up_to_sel_end;
+                        
+                        // Measure from visible_start to selection start
+                        int sel_x = text_x;
+                        if (vis_sel_start > visible_start) {
+                            XftTextExtentsUtf8(dpy, font,
+                                             (FcChar8*)&field->text[visible_start],
+                                             vis_sel_start - visible_start, &up_to_sel_start);
+                            sel_x += up_to_sel_start.width;
+                        } else {
+                            up_to_sel_start.width = 0;
+                        }
+                        
+                        // Measure from visible_start to selection end
+                        XftTextExtentsUtf8(dpy, font,
+                                         (FcChar8*)&field->text[visible_start],
+                                         vis_sel_end - visible_start, &up_to_sel_end);
+                        
+                        // Selection width is the difference (preserves kerning context)
+                        int sel_width = up_to_sel_end.width - up_to_sel_start.width;
+                        
+                        // Draw blue selection rectangle
+                        XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
+                                           sel_x, y + 3, sel_width, h - 6);
+                        
+                        // Redraw the ENTIRE visible text in white, but clipped to selection area
+                        // This preserves kerning by drawing the full string
+                        XftDrawSetClipRectangles(xft_draw, 0, 0,
+                                                (XRectangle[]){{
+                                                    .x = sel_x,
+                                                    .y = y + 3,
+                                                    .width = sel_width,
+                                                    .height = h - 6
+                                                }}, 1);
+                        
+                        // Draw entire visible text (kerning preserved)
+                        if (draw_len > 0) {
+                            XftDrawStringUtf8(xft_draw, &white_color, font,
+                                            text_x, text_y,
+                                            (FcChar8*)&field->text[visible_start], draw_len);
+                        }
+                        
+                        // Clear clipping
+                        XftDrawSetClip(xft_draw, NULL);
+                    }
+                }
+            }
+            
+            // Step 3: Draw cursor if focused and not disabled
+            if (field->has_focus && !field->disabled) {
+                // Draw cursor
+                if (field->cursor_pos < text_len) {
+                    // Measure text positions in context
+                    XGlyphInfo up_to_cursor, past_cursor;
+                    
+                    // Measure from visible_start to cursor position
+                    if (field->cursor_pos > visible_start) {
+                        XftTextExtentsUtf8(dpy, font,
+                                         (FcChar8*)&field->text[visible_start],
+                                         field->cursor_pos - visible_start, &up_to_cursor);
+                    } else {
+                        up_to_cursor.width = 0;
+                    }
+                    
+                    // Measure from visible_start to position after cursor
+                    XftTextExtentsUtf8(dpy, font,
+                                     (FcChar8*)&field->text[visible_start],
+                                     field->cursor_pos - visible_start + 1, &past_cursor);
+                    
+                    // Calculate cursor position and width
+                    int cursor_x = text_x + up_to_cursor.width;
+                    int cursor_width = past_cursor.width - up_to_cursor.width;
+                    
+                    // Draw blue cursor rectangle
+                    XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
+                                       cursor_x, y + 3, cursor_width, h - 6);
+                    
+                    // Redraw the ENTIRE visible text in white, but clipped to cursor area
+                    // This preserves kerning by drawing the full string
+                    XftDrawSetClipRectangles(xft_draw, 0, 0,
+                                            (XRectangle[]){{
+                                                .x = cursor_x,
+                                                .y = y + 3,
+                                                .width = cursor_width,
+                                                .height = h - 6
+                                            }}, 1);
+                    
+                    // Draw entire visible text (kerning preserved)
+                    if (draw_len > 0) {
+                        XftDrawStringUtf8(xft_draw, &white_color, font,
+                                        text_x, text_y,
+                                        (FcChar8*)&field->text[visible_start], draw_len);
+                    }
+                    
+                    // Clear clipping
+                    XftDrawSetClip(xft_draw, NULL);
                 } else {
-                    before_info.width = 0;
-                }
-                int cursor_x = text_x + before_info.width;
-                
-                // Draw blue background and white character
-                char cursor_ch[2] = {field->text[field->cursor_pos], '\0'};
-                XGlyphInfo cursor_info;
-                XftTextExtentsUtf8(dpy, font, (FcChar8*)cursor_ch, 1, &cursor_info);
-                XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
-                                    cursor_x, y + 3, cursor_info.width, h - 6);
-                XftDrawStringUtf8(xft_draw, &white_color, font,
-                                 cursor_x, text_y, (FcChar8*)cursor_ch, 1);
-            }
-            
-            // Draw text after cursor
-            if (field->cursor_pos + 1 <= text_len) {
-                // Measure where to start
-                XGlyphInfo before_info;
-                int chars_to_skip = field->cursor_pos + 1 - visible_start;
-                if (chars_to_skip > 0) {
-                    XftTextExtentsUtf8(dpy, font, (FcChar8*)&field->text[visible_start],
-                                      chars_to_skip, &before_info);
-                } else {
-                    before_info.width = 0;
-                }
-                int after_x = text_x + before_info.width;
-                
-                // Only draw if there's text after cursor
-                if (field->cursor_pos + 1 < text_len) {
-                    XftDrawStringUtf8(xft_draw, &black_color, font, after_x, text_y,
-                                     (FcChar8*)&field->text[field->cursor_pos + 1],
-                                     text_len - field->cursor_pos - 1);
+                    // Cursor at end of text - draw as a block
+                    int cursor_x = text_x;
+                    if (text_len > visible_start) {
+                        XGlyphInfo text_info;
+                        XftTextExtentsUtf8(dpy, font,
+                                         (FcChar8*)&field->text[visible_start],
+                                         text_len - visible_start, &text_info);
+                        cursor_x += text_info.width;
+                    }
+                    
+                    // Use space width for cursor
+                    XGlyphInfo space_info;
+                    XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
+                    int cursor_width = space_info.width > 0 ? space_info.width : 8;
+                    
+                    XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
+                                       cursor_x, y + 3, cursor_width, h - 6);
                 }
             }
             
-            // Draw cursor at end if it's past the last character
-            if (field->has_focus && !field->disabled && field->cursor_pos == text_len) {
-                // Measure position of cursor at end
-                XGlyphInfo full_info;
-                if (text_len > visible_start) {
-                    XftTextExtentsUtf8(dpy, font, (FcChar8*)&field->text[visible_start],
-                                      text_len - visible_start, &full_info);
-                } else {
-                    full_info.width = 0;
-                }
-                
-                XGlyphInfo space_info;
-                XftTextExtentsUtf8(dpy, font, (FcChar8*)" ", 1, &space_info);
-                // Use minimum width of 8 pixels if space has no width
-                int cursor_width = space_info.width > 0 ? space_info.width : 8;
-                // Add 1 pixel of padding before cursor when at end of text
-                int cursor_x = text_x + full_info.width + (text_len > 0 ? 1 : 0);
-                // Always draw the cursor at the end when field has focus
-                XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
-                                   cursor_x, y + 3, cursor_width, h - 6);
-            }
+            // Note: Cursor at end is already handled in the main rendering above
         }
         
         XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
@@ -377,6 +483,49 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
         XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
                     DefaultColormap(dpy, DefaultScreen(dpy)), &white_color);
     }
+}
+
+// Helper to get character position from X coordinate
+int inputfield_pos_from_x(InputField *field, int x, Display *dpy, XftFont *font) {
+    if (!field || !dpy || !font) {
+        return 0;
+    }
+    
+    // Get relative X within text area
+    int text_x = field->x + 5;  // 5 pixel padding
+    int rel_x = x - text_x;
+    if (rel_x < 0) return field->visible_start;
+    
+    // Find position by measuring text widths
+    int len = strlen(field->text);
+    int best_pos = field->visible_start;
+    int prev_width = 0;
+    
+    for (int i = field->visible_start; i <= len; i++) {
+        XGlyphInfo info;
+        if (i > field->visible_start) {
+            XftTextExtentsUtf8(dpy, font, 
+                             (FcChar8*)&field->text[field->visible_start],
+                             i - field->visible_start, &info);
+        } else {
+            info.width = 0;
+        }
+        
+        // Check if we're closer to this position or the previous one
+        if (info.width > rel_x) {
+            // Closer to previous position if less than halfway
+            if (rel_x - prev_width < info.width - rel_x) {
+                return best_pos;
+            } else {
+                return i;
+            }
+        }
+        
+        best_pos = i;
+        prev_width = info.width;
+    }
+    
+    return len;  // Click was past the end
 }
 
 bool inputfield_handle_click(InputField *field, int click_x, int click_y) {
@@ -392,16 +541,70 @@ bool inputfield_handle_click(InputField *field, int click_x, int click_y) {
     if (click_x >= field->x && click_x < field->x + field->width &&
         click_y >= field->y && click_y < field->y + field->height) {
         field->has_focus = true;
-        // Always position cursor at end when field gets focus from click
-        field->cursor_pos = strlen(field->text);
-        // Reset visible_start to show the end of the text
-        field->visible_start = 0;  // Will be adjusted in draw to show cursor
+        
+        // Position cursor based on click location using stored font
+        // We need Display which we don't have here, so we'll need the caller to set cursor_pos
+        // For now just clear selection and prepare for mouse tracking
+        field->selection_start = -1;
+        field->selection_end = -1;
+        
+        // Don't set mouse_selecting here - caller needs to do it after setting cursor_pos
+        
         return true;
     }
     
-    // Don't remove focus here - let the caller handle that
-    // field->has_focus = false;  // REMOVED - caller should manage focus
     return false;
+}
+
+bool inputfield_handle_mouse_motion(InputField *field, int x, int y, Display *dpy) {
+    if (!field || !field->mouse_selecting || !dpy) {
+        return false;
+    }
+    
+    // Check if still within field bounds vertically
+    if (y >= field->y && y < field->y + field->height) {
+        // Get position from X coordinate
+        int new_pos = inputfield_pos_from_x(field, x, dpy, field->font);
+        
+        // Update cursor position
+        field->cursor_pos = new_pos;
+        
+        // Set selection range from start position to current position
+        if (new_pos != field->mouse_select_start) {
+            // Selection exists - set range properly
+            if (new_pos < field->mouse_select_start) {
+                field->selection_start = new_pos;
+                field->selection_end = field->mouse_select_start;
+            } else {
+                field->selection_start = field->mouse_select_start;
+                field->selection_end = new_pos;
+            }
+        } else {
+            // No selection - cursor at same position as start
+            field->selection_start = -1;
+            field->selection_end = -1;
+        }
+        
+        return true;
+    }
+    
+    return false;
+}
+
+bool inputfield_handle_mouse_release(InputField *field, int x, int y) {
+    if (!field || !field->mouse_selecting) {
+        return false;
+    }
+    
+    field->mouse_selecting = false;
+    
+    // If no selection was made, clear selection
+    if (field->selection_start == field->selection_end) {
+        field->selection_start = -1;
+        field->selection_end = -1;
+    }
+    
+    return true;
 }
 
 bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
@@ -551,22 +754,73 @@ bool inputfield_handle_key(InputField *field, XKeyEvent *event) {
             
         case XK_Left:
         case XK_KP_Left:
-            inputfield_move_cursor(field, -1);
+            if (event->state & ShiftMask) {
+                // Shift+Left: extend selection leftward
+                if (field->selection_start == -1) {
+                    // Start new selection from current cursor
+                    field->selection_start = field->cursor_pos;
+                    field->selection_end = field->cursor_pos;
+                }
+                // Move cursor left and update selection
+                if (field->cursor_pos > 0) {
+                    field->cursor_pos--;
+                }
+            } else {
+                // Normal left arrow: clear selection and move
+                inputfield_move_cursor(field, -1);
+            }
             return true;
             
         case XK_Right:
         case XK_KP_Right:
-            inputfield_move_cursor(field, 1);
+            if (event->state & ShiftMask) {
+                // Shift+Right: extend selection rightward
+                if (field->selection_start == -1) {
+                    // Start new selection from current cursor
+                    field->selection_start = field->cursor_pos;
+                    field->selection_end = field->cursor_pos;
+                }
+                // Move cursor right and update selection
+                int len = strlen(field->text);
+                if (field->cursor_pos < len) {
+                    field->cursor_pos++;
+                }
+            } else {
+                // Normal right arrow: clear selection and move
+                inputfield_move_cursor(field, 1);
+            }
             return true;
             
         case XK_Home:
         case XK_KP_Home:
-            field->cursor_pos = 0;
+            if (event->state & ShiftMask) {
+                // Shift+Home: select from cursor to beginning
+                if (field->selection_start == -1) {
+                    field->selection_start = field->cursor_pos;
+                    field->selection_end = field->cursor_pos;
+                }
+                field->cursor_pos = 0;
+            } else {
+                field->cursor_pos = 0;
+                field->selection_start = -1;
+                field->selection_end = -1;
+            }
             return true;
             
         case XK_End:
         case XK_KP_End:
-            field->cursor_pos = strlen(field->text);
+            if (event->state & ShiftMask) {
+                // Shift+End: select from cursor to end
+                if (field->selection_start == -1) {
+                    field->selection_start = field->cursor_pos;
+                    field->selection_end = field->cursor_pos;
+                }
+                field->cursor_pos = strlen(field->text);
+            } else {
+                field->cursor_pos = strlen(field->text);
+                field->selection_start = -1;
+                field->selection_end = -1;
+            }
             return true;
             
         case XK_Tab:
@@ -673,14 +927,38 @@ void inputfield_delete_char(InputField *field) {
         return;
     }
     
-    int len = strlen(field->text);
-    if (field->cursor_pos < len) {
-        memmove(&field->text[field->cursor_pos],
-                &field->text[field->cursor_pos + 1],
-                len - field->cursor_pos);
+    // Check if we have a selection - if so, delete it
+    int sel_start, sel_end;
+    get_selection_range(field, &sel_start, &sel_end);
+    
+    if (sel_start != -1 && sel_end > sel_start) {
+        // Delete selected text
+        int len = strlen(field->text);
+        memmove(&field->text[sel_start],
+                &field->text[sel_end],
+                len - sel_end + 1);
+        
+        // Move cursor to selection start
+        field->cursor_pos = sel_start;
+        
+        // Clear selection
+        field->selection_start = -1;
+        field->selection_end = -1;
         
         if (field->on_change) {
             field->on_change(field->text, field->user_data);
+        }
+    } else {
+        // No selection - delete character at cursor
+        int len = strlen(field->text);
+        if (field->cursor_pos < len) {
+            memmove(&field->text[field->cursor_pos],
+                    &field->text[field->cursor_pos + 1],
+                    len - field->cursor_pos);
+            
+            if (field->on_change) {
+                field->on_change(field->text, field->user_data);
+            }
         }
     }
 }
@@ -690,15 +968,39 @@ void inputfield_backspace(InputField *field) {
         return;
     }
     
-    if (field->cursor_pos > 0) {
+    // Check if we have a selection - if so, delete it
+    int sel_start, sel_end;
+    get_selection_range(field, &sel_start, &sel_end);
+    
+    if (sel_start != -1 && sel_end > sel_start) {
+        // Delete selected text
         int len = strlen(field->text);
-        memmove(&field->text[field->cursor_pos - 1],
-                &field->text[field->cursor_pos],
-                len - field->cursor_pos + 1);
-        field->cursor_pos--;
+        memmove(&field->text[sel_start],
+                &field->text[sel_end],
+                len - sel_end + 1);
+        
+        // Move cursor to selection start
+        field->cursor_pos = sel_start;
+        
+        // Clear selection
+        field->selection_start = -1;
+        field->selection_end = -1;
         
         if (field->on_change) {
             field->on_change(field->text, field->user_data);
+        }
+    } else {
+        // No selection - backspace character before cursor
+        if (field->cursor_pos > 0) {
+            int len = strlen(field->text);
+            memmove(&field->text[field->cursor_pos - 1],
+                    &field->text[field->cursor_pos],
+                    len - field->cursor_pos + 1);
+            field->cursor_pos--;
+            
+            if (field->on_change) {
+                field->on_change(field->text, field->user_data);
+            }
         }
     }
 }
@@ -1190,13 +1492,60 @@ bool inputfield_handle_completion_click(InputField *field, int x, int y) {
     }
     
     int item_height = 20;
-    int index = (y - 2) / item_height;
     
+    // Calculate the visible window and scroll offset
+    // This must match the logic in draw_completion_dropdown
+    XWindowAttributes attrs;
+    Display *dpy = XOpenDisplay(NULL);
+    if (!dpy) return false;
+    XGetWindowAttributes(dpy, field->completion_window, &attrs);
+    XCloseDisplay(dpy);
+    
+    int height = attrs.height;
+    int max_items = (height - 4) / item_height;
+    int start_item = 0;
+    
+    // Scroll to show selected item if needed (same as draw_completion_dropdown)
+    if (field->completion_selected >= max_items) {
+        start_item = field->completion_selected - max_items + 1;
+    }
+    
+    // Calculate which visible item was clicked
+    int visible_index = (y - 2) / item_height;
+    
+    // Convert to actual item index
+    int actual_index = start_item + visible_index;
     
     // Check if index is valid
-    if (index >= 0 && index < field->completion_count) {
-        inputfield_apply_completion(field, index);
+    if (actual_index >= 0 && actual_index < field->completion_count) {
+        inputfield_apply_completion(field, actual_index);
         return true;
+    }
+    
+    return false;
+}
+
+// Handle mouse wheel scrolling in dropdown
+bool inputfield_handle_dropdown_scroll(InputField *field, int direction, Display *dpy) {
+    if (!field || !field->completion_window || field->completion_count == 0) {
+        return false;
+    }
+    
+    // direction: -1 for up (Button4), +1 for down (Button5)
+    if (direction < 0) {
+        // Scroll up - move selection up
+        if (field->completion_selected > 0) {
+            field->completion_selected--;
+            inputfield_redraw_completion(field, dpy);
+            return true;
+        }
+    } else if (direction > 0) {
+        // Scroll down - move selection down
+        if (field->completion_selected < field->completion_count - 1) {
+            field->completion_selected++;
+            inputfield_redraw_completion(field, dpy);
+            return true;
+        }
     }
     
     return false;

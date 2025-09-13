@@ -1315,6 +1315,12 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
         case ButtonPress:
             // Check if click is on a dropdown window
             if (req->drawer_field && inputfield_is_completion_window(req->drawer_field, event->xbutton.window)) {
+                // Handle scroll wheel on dropdown
+                if (event->xbutton.button == Button4 || event->xbutton.button == Button5) {
+                    int direction = (event->xbutton.button == Button4) ? -1 : 1;
+                    inputfield_handle_dropdown_scroll(req->drawer_field, direction, req->display);
+                    return true;
+                }
                 // Click is on drawer field's dropdown
                 if (inputfield_handle_completion_click(req->drawer_field, 
                                                       event->xbutton.x, event->xbutton.y)) {
@@ -1328,6 +1334,12 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 return true;
             }
             if (req->file_field && inputfield_is_completion_window(req->file_field, event->xbutton.window)) {
+                // Handle scroll wheel on dropdown
+                if (event->xbutton.button == Button4 || event->xbutton.button == Button5) {
+                    int direction = (event->xbutton.button == Button4) ? -1 : 1;
+                    inputfield_handle_dropdown_scroll(req->file_field, direction, req->display);
+                    return true;
+                }
                 // Click is on file field's dropdown
                 if (inputfield_handle_completion_click(req->file_field, 
                                                       event->xbutton.x, event->xbutton.y)) {

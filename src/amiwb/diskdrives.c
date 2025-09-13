@@ -535,6 +535,7 @@ void diskdrives_cleanup(void) {
 
 bool mount_device(const char *device) {
     char cmd[512];
+    // udisksctl automatically mounts with user permissions when run by user
     snprintf(cmd, sizeof(cmd), "udisksctl mount -b %s 2>&1", device);
     
     FILE *fp = popen(cmd, "r");
