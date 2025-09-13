@@ -116,8 +116,7 @@ void resize_begin(Canvas *canvas, int mouse_x, int mouse_y) {
             if (client_attrs.height > expected_height) {
                 int real_min_frame_height = client_attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
                 if (real_min_frame_height > canvas->min_height) {
-                    log_error("[INFO] Client wants %d height but advertised minimum %d - adjusting", 
-                           client_attrs.height, expected_height);
+                    // Client height mismatch - adjusting minimum
                     canvas->min_height = real_min_frame_height;
                 }
             }
@@ -284,13 +283,12 @@ void resize_end(void) {
             
             // GIMP advertises 331 min height but enforces 565 internally
             if (client_attrs.height > expected_height && client_attrs.height > 550 && client_attrs.height < 600) {
-                log_error("[INFO] GIMP detected: wants %d height, advertised %d", 
-                       client_attrs.height, g_resize.canvas->min_height - 40);
+                // GIMP height mismatch detected
                 
                 // Adjust our minimum to match GIMP's reality
                 int real_min_frame_height = client_attrs.height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
                 if (real_min_frame_height > g_resize.canvas->min_height) {
-                    log_error("[INFO] Adjusting frame minimum to %d to match GIMP", real_min_frame_height);
+                    // Adjusting frame minimum to match GIMP requirements
                     g_resize.canvas->min_height = real_min_frame_height;
                 }
             }

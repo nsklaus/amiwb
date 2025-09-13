@@ -97,9 +97,13 @@ void show_rename_dialog(const char *old_name,
     }
     
     // Set dialog properties - create title with filename
-    char title[256];
+    char title[NAME_SIZE];
     snprintf(title, sizeof(title), "Rename '%s'", old_name);
     dialog->canvas->title_base = strdup(title);
+    if (!dialog->canvas->title_base) {
+        log_error("[ERROR] strdup failed for rename dialog title: %s", title);
+        exit(1);
+    }
     dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
     dialog->canvas->bg_color = GRAY;  // Standard dialog gray
     dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
@@ -167,6 +171,10 @@ void show_execute_dialog(void (*on_ok)(const char *command),
     
     // Set dialog properties
     dialog->canvas->title_base = strdup("Execute");
+    if (!dialog->canvas->title_base) {
+        log_error("[ERROR] strdup failed for execute dialog title");
+        exit(1);
+    }
     dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
     dialog->canvas->bg_color = GRAY;  // Standard dialog gray
     dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
@@ -301,11 +309,25 @@ static int completion_compare(const void *a, const void *b) {
 
 // Expand tilde to home directory
 static char *expand_tilde(const char *path) {
-    if (path[0] != '~') return strdup(path);
-    
+    if (path[0] != '~') {
+        char *result = strdup(path);
+        if (!result) {
+            log_error("[ERROR] strdup failed for path: %s", path);
+            exit(1);
+        }
+        return result;
+    }
+
     const char *home = getenv("HOME");
-    if (!home) return strdup(path);
-    
+    if (!home) {
+        char *result = strdup(path);
+        if (!result) {
+            log_error("[ERROR] strdup failed for path: %s", path);
+            exit(1);
+        }
+        return result;
+    }
+
     if (path[1] == '\0' || path[1] == '/') {
         // ~/... or just ~
         size_t home_len = strlen(home);
@@ -313,15 +335,20 @@ static char *expand_tilde(const char *path) {
         char *result = malloc(home_len + path_len + 1);  // +1 for null terminator
         if (!result) {
             log_error("[ERROR] Failed to allocate memory for path expansion");
-            return strdup(path);  // Return original on failure
+            exit(1);  // Exit instead of trying another strdup that could fail
         }
-        
+
         // Safe string copy with snprintf
         snprintf(result, home_len + path_len + 1, "%s%s", home, path + 1);
         return result;
     }
-    
-    return strdup(path);
+
+    char *result = strdup(path);
+    if (!result) {
+        log_error("[ERROR] strdup failed for path: %s", path);
+        exit(1);
+    }
+    return result;
 }
 
 // Find completions for the given partial path
@@ -705,7 +732,7 @@ static void render_text_content(Dialog *dialog, Picture dest,
         }
     } else {
         // For rename dialog, show the original prompt
-        char title_text[256];
+        char title_text[PATH_SIZE];  // May contain file path in message
         int ret = snprintf(title_text, sizeof(title_text), "Enter a new name for '%s'.", 
                  strlen(dialog->original_name) > 0 ? dialog->original_name : "file");
         if (ret >= (int)sizeof(title_text)) {

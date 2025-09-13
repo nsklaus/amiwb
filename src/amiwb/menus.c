@@ -1544,9 +1544,9 @@ void handle_menu_selection(Menu *menu, int item_index) {
 
         case 3:  // Tools
             if (strcmp(item, "Text Editor") == 0) {
-                system("editpad &");
+                launch_with_hook("editpad");
             } else if (strcmp(item, "XCalc") == 0) {
-                system("xcalc &");  // TODO: Handle errors and paths
+                launch_with_hook("xcalc");
             } 
 
             /*
@@ -1731,8 +1731,7 @@ void trigger_parent_action(void) {
     if (active_window && active_window->type == WINDOW && active_window->path) {
         // Get parent directory path
         char parent_path[PATH_SIZE];
-        strncpy(parent_path, active_window->path, sizeof(parent_path) - 1);
-        parent_path[sizeof(parent_path) - 1] = '\0';
+        snprintf(parent_path, sizeof(parent_path), "%s", active_window->path);
         
         // Remove trailing slash if present
         size_t len = strlen(parent_path);
@@ -1859,8 +1858,7 @@ void trigger_open_action(void) {
     if (selected) {
         // Save label before calling open_file_or_directory as it may destroy the icon
         char label_copy[256];
-        strncpy(label_copy, selected->label, sizeof(label_copy) - 1);
-        label_copy[sizeof(label_copy) - 1] = '\0';
+        snprintf(label_copy, sizeof(label_copy), "%s", selected->label);
         
         open_file_or_directory(selected);
         // Use saved label as icon may have been destroyed
@@ -2357,7 +2355,7 @@ void trigger_execute_action(void) {
 // Public function to trigger requester (launch reqasl)
 void trigger_requester_action(void) {
     // Launch reqasl in the background
-    system("reqasl &");
+    launch_with_hook("reqasl");
 }
 
 // Public function to trigger rename action (called from menu or global shortcut)

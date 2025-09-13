@@ -580,7 +580,7 @@ void editpad_load_config(EditPad *ep) {
     snprintf(config_path, sizeof(config_path), "%s/.config/amiwb/editpad/editpadrc", getenv("HOME"));
     f = fopen(config_path, "r");
     if (f) {
-        log_error("[INFO] Opened config file: %s", config_path);
+        // Config file opened successfully
     }
     
     // Fallback to old location
@@ -588,7 +588,7 @@ void editpad_load_config(EditPad *ep) {
         snprintf(config_path, sizeof(config_path), "%s/.config/amiwb/editpadrc", getenv("HOME"));
         f = fopen(config_path, "r");
         if (f) {
-            log_error("[INFO] Opened config file (fallback): %s", config_path);
+            // Config file opened from fallback location
         }
     }
     

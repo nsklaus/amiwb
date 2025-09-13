@@ -97,7 +97,7 @@ void show_icon_info_dialog(FileIcon *icon) {
     // Name field (editable)
     dialog->name_field = inputfield_create(field_x, y_pos, field_width, 20, get_font());
     if (dialog->name_field) {
-        strcpy(dialog->name_field->name, "Filename");
+        snprintf(dialog->name_field->name, sizeof(dialog->name_field->name), "Filename");
         inputfield_set_text(dialog->name_field, icon->label);
     } else {
         log_error("[WARNING] Failed to create name field");
@@ -111,7 +111,7 @@ void show_icon_info_dialog(FileIcon *icon) {
                                             field_width,  // Same width as name field
                                             20, get_font());
     if (dialog->comment_field) {
-        strcpy(dialog->comment_field->name, "Comment");
+        snprintf(dialog->comment_field->name, sizeof(dialog->comment_field->name), "Comment");
         inputfield_set_text(dialog->comment_field, "");  // Empty by default
     }
     
@@ -131,7 +131,7 @@ void show_icon_info_dialog(FileIcon *icon) {
                                           field_width,
                                           20, get_font());
     if (dialog->path_field) {
-        strcpy(dialog->path_field->name, "Filepath");
+        snprintf(dialog->path_field->name, sizeof(dialog->path_field->name), "Filepath");
         // Extract directory path (without filename)
         char dir_path[PATH_SIZE];
         strncpy(dir_path, icon->path, sizeof(dir_path) - 1);
@@ -153,7 +153,7 @@ void show_icon_info_dialog(FileIcon *icon) {
                                          field_width,
                                          20, get_font());
     if (dialog->app_field) {
-        strcpy(dialog->app_field->name, "Run with");
+        snprintf(dialog->app_field->name, sizeof(dialog->app_field->name), "Run with");
     }
     
     // Load file information
@@ -181,7 +181,7 @@ static void load_file_info(IconInfoDialog *dialog) {
         
         // Format size
         if (dialog->is_directory) {
-            strcpy(dialog->size_text, "[Get Size]");
+            snprintf(dialog->size_text, sizeof(dialog->size_text), "[Get Size]");
         } else {
             format_file_size(st.st_size, dialog->size_text, sizeof(dialog->size_text));
         }
@@ -232,7 +232,7 @@ static void load_file_info(IconInfoDialog *dialog) {
     // Path is now displayed as plain text, not an input field
     
     // Try to read comment from extended attributes
-    char comment[1024] = {0};  // Larger buffer for multiple lines
+    char comment[PATH_SIZE] = {0};  // Larger buffer for multiple lines
     ssize_t len = getxattr(dialog->icon->path, "user.comment", comment, sizeof(comment) - 1);
     if (len > 0) {
         comment[len] = '\0';
@@ -257,7 +257,7 @@ static void load_file_info(IconInfoDialog *dialog) {
         
         FILE *fp = popen(cmd, "r");
         if (fp) {
-            char mimetype[256];
+            char mimetype[NAME_SIZE];
             if (fgets(mimetype, sizeof(mimetype), fp)) {
                 // Remove newline
                 size_t len = strlen(mimetype);
@@ -271,7 +271,7 @@ static void load_file_info(IconInfoDialog *dialog) {
                 
                 fp = popen(cmd, "r");
                 if (fp) {
-                    char desktop_file[256];
+                    char desktop_file[NAME_SIZE];
                     if (fgets(desktop_file, sizeof(desktop_file), fp)) {
                         // Remove newline and .desktop extension
                         len = strlen(desktop_file);
@@ -319,7 +319,7 @@ static void save_file_changes(IconInfoDialog *dialog) {
                 
                 // Rename the file
                 if (rename(dialog->icon->path, new_path) == 0) {
-                    log_error("[INFO] Renamed '%s' to '%s'", dialog->icon->path, new_path);
+                    // Rename successful - silent success per logging rules
                     needs_refresh = true;
                 } else {
                     log_error("[WARNING] Failed to rename '%s' to '%s': %s", 
@@ -332,7 +332,7 @@ static void save_file_changes(IconInfoDialog *dialog) {
     // 2. Save comment to extended attributes (combine listview items)
     if (dialog->comment_list && dialog->comment_list->item_count > 0) {
         // Build multi-line comment from listview items
-        char combined_comment[1024] = {0};
+        char combined_comment[PATH_SIZE] = {0};
         size_t offset = 0;
         
         for (int i = 0; i < dialog->comment_list->item_count; i++) {
@@ -343,7 +343,7 @@ static void save_file_changes(IconInfoDialog *dialog) {
                 if (offset > 0) {
                     combined_comment[offset++] = '\n';
                 }
-                strcpy(combined_comment + offset, line);
+                memcpy(combined_comment + offset, line, line_len + 1);  // +1 for null terminator
                 offset += line_len;
             }
         }
@@ -371,7 +371,7 @@ static void save_file_changes(IconInfoDialog *dialog) {
             
             FILE *fp = popen(cmd, "r");
             if (fp) {
-                char mimetype[256];
+                char mimetype[NAME_SIZE];
                 if (fgets(mimetype, sizeof(mimetype), fp)) {
                     // Remove newline
                     size_t len = strlen(mimetype);
@@ -381,7 +381,7 @@ static void save_file_changes(IconInfoDialog *dialog) {
                     
                     // Set default application for this MIME type
                     // Add .desktop extension if not present
-                    char desktop_file[256];
+                    char desktop_file[NAME_SIZE];
                     if (strstr(app, ".desktop")) {
                         snprintf(desktop_file, sizeof(desktop_file), "%s", app);
                     } else {
@@ -392,7 +392,7 @@ static void save_file_changes(IconInfoDialog *dialog) {
                             desktop_file, mimetype);
                     int result = system(cmd);
                     if (result == 0) {
-                        log_error("[INFO] Set default app for %s to %s", mimetype, desktop_file);
+                        // Default app set successfully - silent success
                     } else {
                         log_error("[WARNING] Failed to set default app for %s", mimetype);
                     }
@@ -405,7 +405,7 @@ static void save_file_changes(IconInfoDialog *dialog) {
     // TODO: Refresh the workbench window if needed
     // For now, user needs to manually refresh after rename
     if (needs_refresh) {
-        log_error("[INFO] File renamed - manual refresh may be needed");
+        // File renamed - manual refresh may be needed
     }
 }
 
@@ -684,12 +684,12 @@ bool iconinfo_handle_button_release(XButtonEvent *event) {
             // Start directory size calculation
             dialog->get_size_pressed = false;
             dialog->calculating_size = true;
-            strcpy(dialog->size_text, "Calculating...");
+            snprintf(dialog->size_text, sizeof(dialog->size_text), "Calculating...");
             
             // Start the calculation process
             dialog->size_calc_pid = calculate_directory_size(dialog->icon->path, &dialog->size_pipe_fd);
             if (dialog->size_calc_pid < 0) {
-                strcpy(dialog->size_text, "Error");
+                snprintf(dialog->size_text, sizeof(dialog->size_text), "Error");
                 dialog->calculating_size = false;
                 log_error("[ERROR] Failed to start directory size calculation");
             }

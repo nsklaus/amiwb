@@ -118,20 +118,20 @@ static void add_new_drive(const char *device, const char *mount_point, const cha
     
     // Determine label
     if (strcmp(mount_point, "/") == 0) {
-        strcpy(drive->label, "System");
+        snprintf(drive->label, sizeof(drive->label), "System");
     } else if (strcmp(mount_point, "/home") == 0) {
         // For /home mount, we want to show user's home
-        strcpy(drive->label, "Home");
+        snprintf(drive->label, sizeof(drive->label), "Home");
         // Keep mount_point as /home for tracking, but icon will point to user's home
     } else if (strcmp(mount_point, getenv("HOME")) == 0) {
-        strcpy(drive->label, "Home");
+        snprintf(drive->label, sizeof(drive->label), "Home");
     } else if (strstr(mount_point, "/media/") || strstr(mount_point, "/run/media/")) {
         // Extract last component as label
         const char *label = strrchr(mount_point, '/');
         if (label && *(label+1)) {
             strncpy(drive->label, label+1, sizeof(drive->label)-1);
         } else {
-            strcpy(drive->label, "Drive");
+            snprintf(drive->label, sizeof(drive->label), "Drive");
         }
     } else {
         snprintf(drive->label, sizeof(drive->label), "Drive%d", drive_manager.drive_count);
@@ -164,14 +164,20 @@ static void add_new_drive(const char *device, const char *mount_point, const cha
         // Set icon metadata
         if (icon->path) free(icon->path);
         icon->path = strdup(icon_path);
+        if (!icon->path) {
+            log_error("[ERROR] strdup failed for drive icon path: %s", icon_path);
+            exit(1);
+        }
         if (icon->label) free(icon->label);
         icon->label = strdup(drive->label);
+        if (!icon->label) {
+            log_error("[ERROR] strdup failed for drive label: %s", drive->label);
+            exit(1);
+        }
         icon->type = TYPE_DEVICE;
         drive->icon = icon;
         
-        log_error("[INFO] Added drive: %s at %s (device: %s, removable: %s, icon ptr: %p)",
-                  drive->label, mount_point, device, 
-                  drive->is_removable ? "yes" : "no", (void*)icon);
+        // Drive added successfully - silent per logging rules
     } else {
         log_error("[ERROR] Failed to get icon for drive %s", drive->label);
     }
@@ -193,8 +199,7 @@ static void remove_missing_drives(bool *found) {
         if (!found[i] && drive_manager.drives[i].is_mounted) {
             DiskDrive *drive = &drive_manager.drives[i];
             
-            log_error("[INFO] Drive removed: %s at %s", 
-                      drive->label, drive->mount_point);
+            // Drive removed - silent per logging rules
             
             // Destroy the icon
             if (drive->icon) {
@@ -234,7 +239,7 @@ static void remove_missing_drives(bool *found) {
 // Public functions
 
 void diskdrives_init(void) {
-    log_error("[INFO] Initializing disk drives system");
+    // Initializing disk drives system
     drive_manager.drive_count = 0;
     drive_manager.last_poll = 0;
     
@@ -268,7 +273,7 @@ static void clean_ejected_list(void) {
             }
             new_count++;
         } else {
-            log_error("[INFO] Device %s unplugged, removing from ejected list", ejected_devices[i]);
+            // Device unplugged, removing from ejected list
             // Also remove from seen devices when unplugged
             for (int j = 0; j < seen_count; j++) {
                 if (strcmp(seen_devices[j], ejected_devices[i]) == 0) {
@@ -335,7 +340,7 @@ static void check_sys_block_devices(void) {
         }
         
         if (is_new) {
-            log_error("[INFO] DEVICE PLUGGED IN: /dev/%s (detected in /sys/block)", entry->d_name);
+            // Device plugged in - detected in /sys/block
             // Don't add it here - we'll update our list at the end
         }
     }
@@ -351,7 +356,7 @@ static void check_sys_block_devices(void) {
             }
         }
         if (!still_exists) {
-            log_error("[INFO] DEVICE UNPLUGGED: %s (removed from /sys/block)", sys_block_devices[i]);
+            // Device unplugged - removed from /sys/block
         }
     }
     
@@ -405,7 +410,7 @@ static void try_automount_removable(void) {
             
             // Log ANY new device immediately
             if (!have_seen_device(full_device)) {
-                log_error("[INFO] NEW DEVICE APPEARED: %s", full_device);
+                // New device appeared
                 mark_device_seen(full_device);
             }
         }
@@ -437,10 +442,9 @@ static void try_automount_removable(void) {
                     }
                     
                     // Log detection and attempt mount
-                    log_error("[INFO] Detected unmounted device: %s (fs: %s)", device, fstype);
-                    log_error("[INFO] Attempting to mount %s", device);
+                    // Detected unmounted device with filesystem - attempting mount
                     if (mount_device(device)) {
-                        log_error("[INFO] Successfully mounted %s", device);
+                        // Device mounted successfully
                     } else {
                         log_error("[WARNING] Failed to mount %s", device);
                     }
@@ -460,7 +464,7 @@ static void try_automount_removable(void) {
             }
         }
         if (!still_exists) {
-            log_error("[INFO] DEVICE DISAPPEARED: %s", seen_devices[i]);
+            // Device disappeared
             // Remove from seen list
             for (int j = i; j < seen_count - 1; j++) {
                 strcpy(seen_devices[j], seen_devices[j + 1]);
@@ -547,7 +551,7 @@ bool mount_device(const char *device) {
         // udisksctl outputs: "Mounted /dev/sda1 at /media/user/LABEL"
         if (strstr(result, "Mounted")) {
             success = true;
-            log_error("[INFO] Mounted device: %s", device);
+            // Device mounted successfully
         }
     }
     pclose(fp);
@@ -566,7 +570,7 @@ bool unmount_device(const char *device) {
     while (fgets(result, sizeof(result), fp)) {
         if (strstr(result, "Unmounted")) {
             success = true;
-            log_error("[INFO] Unmounted device: %s", device);
+            // Device unmounted successfully
         }
     }
     pclose(fp);
@@ -583,7 +587,7 @@ void eject_drive(FileIcon *icon) {
             
             // Don't allow ejecting System or Home
             if (strstr(drive->label, "System") || strstr(drive->label, "Home")) {
-                log_error("[INFO] Cannot eject %s - system drive", drive->label);
+                // Cannot eject system drive
                 return;
             }
             
@@ -592,7 +596,7 @@ void eject_drive(FileIcon *icon) {
             
             // Unmount the device
             if (unmount_device(drive->device)) {
-                log_error("[INFO] Drive ejected: %s", drive->label);
+                // Drive ejected successfully
                 
                 // Add to ejected list to prevent auto-remount
                 if (ejected_count < MAX_EJECTED) {

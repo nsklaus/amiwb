@@ -698,7 +698,7 @@ static void end_drag_icon(Canvas *canvas) {
     if (drag_source_canvas && target && target != drag_source_canvas &&
         (target_is_desktop || target_is_valid_dir_window) && can_move_file) {
         // Determine destination directory
-        char dst_dir[1024];
+        char dst_dir[PATH_SIZE];
         if (target_is_desktop) {
             const char *home = getenv("HOME");
             snprintf(dst_dir, sizeof(dst_dir), "%s/Desktop", home ? home : ".");
@@ -821,7 +821,7 @@ static void end_drag_icon(Canvas *canvas) {
 
             // 3) If the source was Desktop directory, also remove the desktop canvas icon
             const char *home = getenv("HOME");
-            char desktop_dir[1024] = {0};
+            char desktop_dir[PATH_SIZE] = {0};
             if (home) snprintf(desktop_dir, sizeof(desktop_dir), "%s/Desktop/", home);
             if (home && strncmp(src_path_abs, desktop_dir, strlen(desktop_dir)) == 0) {
                 Canvas *desktop = get_desktop_canvas();
@@ -2941,7 +2941,7 @@ static bool ends_with(const char *s, const char *suffix) { size_t l = strlen(s),
 void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
     if (!canvas) return;
     // Resolve directory path for canvas
-    char pathbuf[1024];
+    char pathbuf[PATH_SIZE];
     const char *dir = dirpath;
     if (canvas->type == DESKTOP || !dir) {
         const char *home = getenv("HOME");
@@ -2973,7 +2973,7 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
                 continue;
             }
             if (ends_with(entry->d_name, ".info")) {
-                char base[256]; size_t namelen = strlen(entry->d_name);
+                char base[NAME_SIZE]; size_t namelen = strlen(entry->d_name);
                 size_t blen = namelen > 5 ? namelen - 5 : 0; strncpy(base, entry->d_name, blen); base[blen] = '\0';
                 char base_path[PATH_SIZE];
                 ret = snprintf(base_path, sizeof(base_path), "%s/%s", dir, base);
@@ -2989,21 +2989,13 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
                     // Determine file type using helper function
                 int t = determine_file_type_from_path(full_path);
                 // Check for sidecar .info using helper function
-                char info_path[1024];
+                char info_path[PATH_SIZE];
                 build_info_file_path(dir, entry->d_name, info_path, sizeof(info_path));
                 int has_sidecar = check_if_file_exists(info_path);
                 // Choose icon path: sidecar .info, else deficon by type/suffix (drawer or file), else the file itself
                 const char *fallback_def = (!has_sidecar) ? definfo_for_file(entry->d_name, (t == TYPE_DRAWER)) : NULL;
                 const char *icon_path = has_sidecar ? info_path : (fallback_def ? fallback_def : full_path);
                 
-                /*
-                // Debug: show decision for this entry
-                printf("\n[deficons] entry: %s  \n has_sidecar=%s \n  fallback_def=%s  \n chosen=%s\n\n",
-                       full_path,
-                       has_sidecar ? info_path : "(none)",
-                       fallback_def ? fallback_def : "(none)",
-                       icon_path);
-                */
                 // Create at 0,0 - icon_cleanup will position properly
                 create_icon_with_metadata(icon_path, canvas, 0, 0, full_path, entry->d_name, t);
             }
@@ -3258,7 +3250,7 @@ FileIcon* create_iconified_icon(Canvas *c) {
     label = c->title_base ? strdup(c->title_base) : strdup("Untitled");
     
     // Buffer for icon path searches
-    char icon_buffer[512];
+    char icon_buffer[PATH_SIZE];
     
     if (c->client_win == None) { 
         // For workbench windows and dialogs without client
@@ -3301,7 +3293,7 @@ FileIcon* create_iconified_icon(Canvas *c) {
         }
     } else {
         // Try to find a specific icon for this app using the title_base
-        char app_icon_name[256];
+        char app_icon_name[NAME_SIZE];
         snprintf(app_icon_name, sizeof(app_icon_name), "%s.info", c->title_base);
         
         icon_path = find_icon_with_user_override(app_icon_name, icon_buffer, sizeof(icon_buffer));
@@ -3604,8 +3596,7 @@ pid_t calculate_directory_size(const char *path, int *pipe_fd) {
             _exit(1);
         }
         
-        strncpy(stack->path, path, PATH_SIZE - 1);
-        stack->path[PATH_SIZE - 1] = '\0';
+        snprintf(stack->path, PATH_SIZE, "%s", path);
         stack->next = NULL;
         
         while (stack) {
@@ -3815,7 +3806,7 @@ int extract_file_at_path(const char *archive_path, Canvas *canvas) {
         dir_path[dir_len] = '\0';
         strncpy(archive_name, last_slash + 1, NAME_SIZE - 1);
     } else {
-        strcpy(dir_path, ".");
+        snprintf(dir_path, sizeof(dir_path), ".");
         strncpy(archive_name, archive_path, NAME_SIZE - 1);
     }
     archive_name[NAME_SIZE - 1] = '\0';
@@ -4041,8 +4032,7 @@ int extract_file_at_path(const char *archive_path, Canvas *canvas) {
             snprintf(extract_cmd, sizeof(extract_cmd), "bsdtar -xf - -C %s", target_dir);
         }
         
-        // Log which extraction method we're using
-        log_error("[INFO] Extracting %s using command: %.200s", archive_name, extract_cmd);
+        // Extracting archive - silent success per logging rules
         
         // Execute extraction command
         FILE *tar_pipe;
@@ -4126,7 +4116,7 @@ int extract_file_at_path(const char *archive_path, Canvas *canvas) {
             }
             
             // Read output for progress (less accurate but works)
-            char line[256];
+            char line[NAME_SIZE];
             time_t last_update = time(NULL);
             time_t start_time = time(NULL);
             

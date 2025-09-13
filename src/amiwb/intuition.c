@@ -478,7 +478,11 @@ static bool should_frame_window(Window w, XWindowAttributes *a) {
     return true;
 }
 static bool init_render_context(void) {
-    render_context = malloc(sizeof(RenderContext)); if (!render_context) return false;
+    render_context = malloc(sizeof(RenderContext));
+    if (!render_context) {
+        log_error("[ERROR] malloc failed for RenderContext (size=%zu)", sizeof(RenderContext));
+        return false;
+    }
     render_context->dpy = display;
     XVisualInfo vinfo; XMatchVisualInfo(display, screen, depth, TrueColor, &vinfo);
     render_context->fmt = XRenderFindVisualFormat(display, vinfo.visual);
@@ -543,11 +547,39 @@ void deactivate_all_windows(void) {
 
 static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
                                  int x, int y, int w, int h) {
-    *c = (Canvas){0}; c->type = t; c->path = path ? strdup(path) : NULL;
-    c->title_base = path ? strdup(strrchr(path, '/') ? strrchr(path, '/') + 1 : path) : NULL;
+    *c = (Canvas){0}; c->type = t;
+
+    // Duplicate path if provided
+    if (path) {
+        c->path = strdup(path);
+        if (!c->path) {
+            log_error("[ERROR] strdup failed for canvas path: %s", path);
+            exit(1);
+        }
+    } else {
+        c->path = NULL;
+    }
+
+    // Extract and duplicate the title base (filename from path)
+    if (path) {
+        const char *basename = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
+        c->title_base = strdup(basename);
+        if (!c->title_base) {
+            log_error("[ERROR] strdup failed for canvas title_base: %s", basename);
+            exit(1);
+        }
+    } else {
+        c->title_base = NULL;
+    }
+
+    // Handle empty title_base case
     if (c->title_base && strlen(c->title_base) == 0) {
         free(c->title_base);  // Free the empty string before replacing
         c->title_base = strdup("System");
+        if (!c->title_base) {
+            log_error("[ERROR] strdup failed for default title 'System'");
+            exit(1);
+        }
     }
     c->title_change = NULL;  // Workbench windows don't use dynamic titles
     c->x = x; c->y = (t == WINDOW) ? max(y, MENUBAR_HEIGHT) : y;
@@ -863,21 +895,37 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
             // Use res_class as the title (it's usually the proper app name)
             if (ch.res_class) {
                 frame->title_base = strdup(ch.res_class);
+                if (!frame->title_base) {
+                    log_error("[ERROR] strdup failed for frame title_base: %s", ch.res_class);
+                    exit(1);
+                }
             } else if (ch.res_name) {
                 frame->title_base = strdup(ch.res_name);
+                if (!frame->title_base) {
+                    log_error("[ERROR] strdup failed for frame title_base: %s", ch.res_name);
+                    exit(1);
+                }
             } else {
                 frame->title_base = strdup("NoNameApp");
+                if (!frame->title_base) {
+                    log_error("[ERROR] strdup failed for default frame title 'NoNameApp'");
+                    exit(1);
+                }
             }
             frame->title_change = NULL;  // Will be set later if needed
-            
+
             // Also set WM_CLASS on the frame for xprop
             XSetClassHint(display, frame->win, &ch);
-            
+
             // Now free
             if (ch.res_name) XFree(ch.res_name);
             if (ch.res_class) XFree(ch.res_class);
         } else {
             frame->title_base = strdup("NoNameApp");
+            if (!frame->title_base) {
+                log_error("[ERROR] strdup failed for default frame title 'NoNameApp'");
+                exit(1);
+            }
             frame->title_change = NULL;
         }
         

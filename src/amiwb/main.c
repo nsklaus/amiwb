@@ -26,7 +26,7 @@ static Display *g_selection_display = NULL;
 
 // Error logging function - only logs actual errors
 void log_error(const char *format, ...) {
-    char log_path[1024];
+    char log_path[PATH_SIZE];
     const char *cfg = LOG_FILE_PATH;
     
     // Expand leading $HOME in the configured path
@@ -119,7 +119,7 @@ int main(int argc, char *argv[]) {
     // Initialize log file with timestamp header (truncate on each run)
     #if LOGGING_ENABLED
     {
-        char path_buf[1024];
+        char path_buf[PATH_SIZE];
         const char *cfg = LOG_FILE_PATH;
         // Expand leading $HOME in the configured path for fopen()
         if (cfg && strncmp(cfg, "$HOME/", 6) == 0) {
