@@ -71,6 +71,7 @@ void restart_amiwb(void) {
     // Perform minimal cleanup - we're about to exec
     begin_shutdown();
     shutdown_compositor(get_display());
+    cleanup_render();     // Clean up Xft fonts BEFORE closing display
     cleanup_intuition();  // This closes the X display
     
     // Clean up file descriptors before exec to prevent inheritance
@@ -241,9 +242,10 @@ int main(int argc, char *argv[]) {
     cleanup_workbench();
     extern void xdnd_shutdown(Display *dpy);
     xdnd_shutdown(get_display());
-    // Finally close Display and render resources
-    cleanup_intuition();
+    // Clean up render resources BEFORE closing Display (Xft fonts need display)
     cleanup_render();
+    // Finally close Display connection
+    cleanup_intuition();
     
     // Clean up instance selection
     if (g_selection_display && g_selection_window != None) {

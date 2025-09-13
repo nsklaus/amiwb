@@ -42,27 +42,22 @@ all: $(TOOLKIT_LIB) amiwb reqasl editpad $(REQASL_HOOK)
 # Toolkit library (built for installation)
 $(TOOLKIT_LIB): $(TOOLKIT_OBJS)
 	$(AR) rcs $@ $(TOOLKIT_OBJS)
-	@echo "Toolkit library built: $(TOOLKIT_LIB)"
 
 # amiwb window manager
 $(AMIWB_EXEC): $(AMIWB_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(AMIWB_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
-	@echo "amiwb executable built: $(AMIWB_EXEC)"
 
-# ReqASL file requester  
+# ReqASL file requester
 $(REQASL_EXEC): $(REQASL_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(REQASL_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
-	@echo "ReqASL executable built: $(REQASL_EXEC)"
 
 # EditPad text editor
 $(EDITPAD_EXEC): $(EDITPAD_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(EDITPAD_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
-	@echo "EditPad executable built: $(EDITPAD_EXEC)"
 
 # ReqASL hook library for intercepting file dialogs
 $(REQASL_HOOK): $(REQASL_DIR)/reqasl_hook.c
 	$(CC) -fPIC -shared -ldl -Wall -O2 -o $@ $<
-	@echo "ReqASL hook library built: $(REQASL_HOOK)"
 
 # Pattern rules for object files
 $(AMIWB_DIR)/%.o: $(AMIWB_DIR)/%.c

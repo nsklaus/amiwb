@@ -880,14 +880,24 @@ static Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
             frame->resize_y_allowed = true;
         }
         
-        // If initial window is larger than max, shrink it
+        // If initial window is larger than max, shrink both frame and client
+        bool need_resize = false;
         if (frame->width > frame->max_width) {
             frame->width = frame->max_width;
-            XResizeWindow(display, frame->win, frame->width, frame->height);
+            need_resize = true;
         }
         if (frame->height > frame->max_height) {
             frame->height = frame->max_height;
+            need_resize = true;
+        }
+
+        // If we adjusted size, resize both frame and client to match
+        if (need_resize) {
             XResizeWindow(display, frame->win, frame->width, frame->height);
+            // Also resize the client to fit within the adjusted frame
+            int client_width = frame->width - BORDER_WIDTH_LEFT - get_right_border_width(frame);
+            int client_height = frame->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+            XResizeWindow(display, frame->client_win, client_width, client_height);
         }
         
         XClassHint ch;
@@ -2673,19 +2683,30 @@ void destroy_canvas(Canvas *canvas) {
 void cleanup_intuition(void) {
     if (!render_context) return;
     for (int i = 0; i < canvas_count; i++) destroy_canvas(canvas_array[i]);
-    free(canvas_array); 
-    canvas_array = NULL; 
-    canvas_count = 0; 
+    free(canvas_array);
+    canvas_array = NULL;
+    canvas_count = 0;
     canvas_array_size = 0;
 
-    if (root_cursor) 
+    if (root_cursor)
         XFreeCursor(render_context->dpy, root_cursor);
-    
-    if (render_context->desk_img != None) 
+
+    if (render_context->desk_img != None)
         XFreePixmap(render_context->dpy, render_context->desk_img);
 
-    if (render_context->wind_img != None) 
+    if (render_context->wind_img != None)
         XFreePixmap(render_context->dpy, render_context->wind_img);
+
+    // Unregister XRandR event notifications before closing display
+    // This prevents X server confusion during hot restart
+    Window root = DefaultRootWindow(render_context->dpy);
+    XRRSelectInput(render_context->dpy, root, 0);  // 0 = no events
+
+    // Also clear root window event mask to be clean
+    XSelectInput(render_context->dpy, root, 0);
+
+    // Flush any pending X requests before closing
+    XFlush(render_context->dpy);
 
     XCloseDisplay(render_context->dpy);
     free(render_context); render_context = NULL; display = NULL;
