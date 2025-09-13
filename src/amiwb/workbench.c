@@ -132,6 +132,7 @@ static bool dragging_floating = false;     // Render a floating drag image while
 static Window drag_win = None;             // Top-level drag window when composited
 static Window saved_source_window = None;  // Original display_window of the dragged icon
 static int drag_win_w = 120, drag_win_h = 100; // Virtual size to layout icon+label
+static int saved_drag_win_x = 0, saved_drag_win_y = 0; // Position saved before destroy
 static bool drag_active = false;           // becomes true after threshold is passed
 static int drag_orig_x = 0, drag_orig_y = 0; // original icon position for restore
 // Current target we draw into (canvas under pointer)
@@ -510,6 +511,14 @@ static void continue_drag_icon(XMotionEvent *event, Canvas *canvas) {
 static void end_drag_icon(Canvas *canvas) {
     Display *dpy = get_display();
 
+    // Save drag window position BEFORE destroying it
+    saved_drag_win_x = 0; saved_drag_win_y = 0;
+    if (drag_win != None) {
+        Window child;
+        XTranslateCoordinates(dpy, drag_win, DefaultRootWindow(dpy),
+                            0, 0, &saved_drag_win_x, &saved_drag_win_y, &child);
+    }
+
     // Clean up floating drag window if any
     destroy_drag_window();
 
@@ -570,21 +579,40 @@ static void end_drag_icon(Canvas *canvas) {
             // Just reposition the iconified window on desktop, no file operations
             // Only move if drag was actually activated (movement beyond threshold)
             if (drag_active) {
-                // Get current mouse position to determine where to place the icon
+                // Get the ACTUAL position of the drag window
                 Display *dpy = get_display();
-                int rx, ry, wx, wy; unsigned int mask; Window root_ret, child_ret;
-                XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask);
-                
-                // Translate to desktop window coordinates
+                int drag_icon_screen_x = 0, drag_icon_screen_y = 0;
+
+                // Use the saved drag window position (saved before destroy)
+                if (saved_drag_win_x != 0 || saved_drag_win_y != 0) {
+                    drag_icon_screen_x = saved_drag_win_x;
+                    drag_icon_screen_y = saved_drag_win_y;
+
+                    // Calculate where the icon is within the drag window
+                    int dx = (drag_win_w - dragged_icon->width) / 2;
+                    int dy = (drag_win_h - dragged_icon->height - 20) / 2;
+
+                    // Add icon's offset within drag window to get actual icon position
+                    drag_icon_screen_x += dx;
+                    drag_icon_screen_y += dy;
+                } else {
+                    // Fallback if no drag window position was saved
+                    drag_icon_screen_x = last_root_x - 32;
+                    drag_icon_screen_y = last_root_y - 32;
+                }
+
+                // Translate icon's screen position to desktop window coordinates
                 int tx = 0, ty = 0; Window dummy;
                 XTranslateCoordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
-                int local_x = rx - tx;
-                int local_y = ry - ty;
-                
-                // Calculate new position for the icon (centered under cursor)
-                int place_x = max(0, local_x - 32);
-                int place_y = max(0, local_y - 32);
-                
+                int local_x = drag_icon_screen_x - tx;
+                int local_y = drag_icon_screen_y - ty;
+
+
+                // Use exact position where icon was during drag
+                int place_x = max(0, local_x);
+                int place_y = max(0, local_y);
+
+
                 // Move the icon to its new position
                 move_icon(dragged_icon, place_x, place_y);
             }
@@ -638,20 +666,37 @@ static void end_drag_icon(Canvas *canvas) {
             // Just reposition the prime icon on desktop, no file operations
             // Only move if drag was actually activated (movement beyond threshold)
             if (drag_active) {
-                // Get current mouse position to determine where to place the icon
+                // Get the ACTUAL position of the drag window
                 Display *dpy = get_display();
-                int rx, ry, wx, wy; unsigned int mask; Window root_ret, child_ret;
-                XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask);
-                
-                // Translate to desktop window coordinates
+                int drag_icon_screen_x = 0, drag_icon_screen_y = 0;
+
+                // Use the saved drag window position (saved before destroy)
+                if (saved_drag_win_x != 0 || saved_drag_win_y != 0) {
+                    drag_icon_screen_x = saved_drag_win_x;
+                    drag_icon_screen_y = saved_drag_win_y;
+
+                    // Calculate where the icon is within the drag window
+                    int dx = (drag_win_w - dragged_icon->width) / 2;
+                    int dy = (drag_win_h - dragged_icon->height - 20) / 2;
+
+                    // Add icon's offset within drag window to get actual icon position
+                    drag_icon_screen_x += dx;
+                    drag_icon_screen_y += dy;
+                } else {
+                    // Fallback if no drag window position was saved
+                    drag_icon_screen_x = last_root_x - 32;
+                    drag_icon_screen_y = last_root_y - 32;
+                }
+
+                // Translate icon's screen position to desktop window coordinates
                 int tx = 0, ty = 0; Window dummy;
                 XTranslateCoordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
-                int local_x = rx - tx;
-                int local_y = ry - ty;
-                
-                // Calculate new position for the icon (centered under cursor)
-                int place_x = max(0, local_x - 32);
-                int place_y = max(0, local_y - 32);
+                int local_x = drag_icon_screen_x - tx;
+                int local_y = drag_icon_screen_y - ty;
+
+                // Use exact position where icon was during drag
+                int place_x = max(0, local_x);
+                int place_y = max(0, local_y);
                 
                 // Move the icon to its new position
                 move_icon(dragged_icon, place_x, place_y);
@@ -735,18 +780,41 @@ static void end_drag_icon(Canvas *canvas) {
 
         // Calculate icon position for async operation
         Display *dpy = get_display();
-        int rx, ry, wx, wy; unsigned int mask; Window root_ret, child_ret;
-        XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask);
+        // Get the ACTUAL position of the drag window
+        int drag_icon_screen_x = 0, drag_icon_screen_y = 0;
+
+        // Use the saved drag window position (saved before destroy)
+        if (saved_drag_win_x != 0 || saved_drag_win_y != 0) {
+            drag_icon_screen_x = saved_drag_win_x;
+            drag_icon_screen_y = saved_drag_win_y;
+
+            // Calculate where the icon is within the drag window
+            int dx = (drag_win_w - dragged_icon->width) / 2;
+            int dy = (drag_win_h - dragged_icon->height - 20) / 2;
+
+
+            // Add icon's offset within drag window to get actual icon position
+            drag_icon_screen_x += dx;
+            drag_icon_screen_y += dy;
+        } else {
+            // Fallback if no drag window position was saved
+            drag_icon_screen_x = last_root_x - 32;
+            drag_icon_screen_y = last_root_y - 32;
+        }
+
         int tx = 0, ty = 0; Window dummy;
         XTranslateCoordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
-        int local_x = rx - tx;
-        int local_y = ry - ty;
+        int local_x = drag_icon_screen_x - tx;
+        int local_y = drag_icon_screen_y - ty;
+
+
         if (target->type == WINDOW) {
             local_x = max(0, local_x - BORDER_WIDTH_LEFT + target->scroll_x);
             local_y = max(0, local_y - BORDER_HEIGHT_TOP + target->scroll_y);
         }
-        int place_x = max(0, local_x - 32);
-        int place_y = max(0, local_y - 32);
+        int place_x = max(0, local_x);
+        int place_y = max(0, local_y);
+
 
         // Use extended version to handle async cross-filesystem moves
         int moved = move_file_to_directory_ex(dragged_icon->path, dst_dir, dst_path,
@@ -860,20 +928,40 @@ static void end_drag_icon(Canvas *canvas) {
             if (!drag_active) {
                 // No actual drag occurred
             } else if (target == drag_source_canvas) {
-                // Same-canvas drag: place under cursor
+                // Same-canvas drag: use exact drag icon position
                 Display *dpy = get_display();
-                int rx, ry, wx, wy; unsigned int mask; Window root_ret, child_ret;
-                XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask);
+                int drag_icon_screen_x = 0, drag_icon_screen_y = 0;
+
+                // Use the saved drag window position (saved before destroy)
+                if (saved_drag_win_x != 0 || saved_drag_win_y != 0) {
+                    drag_icon_screen_x = saved_drag_win_x;
+                    drag_icon_screen_y = saved_drag_win_y;
+
+                    // Calculate where the icon is within the drag window
+                    int dx = (drag_win_w - dragged_icon->width) / 2;
+                    int dy = (drag_win_h - dragged_icon->height - 20) / 2;
+
+
+                    // Add icon's offset within drag window to get actual icon position
+                    drag_icon_screen_x += dx;
+                    drag_icon_screen_y += dy;
+                } else {
+                    // Fallback if no drag window position was saved
+                    drag_icon_screen_x = last_root_x - 32;
+                    drag_icon_screen_y = last_root_y - 32;
+                }
+
                 int tx = 0, ty = 0; Window dummy;
                 XTranslateCoordinates(dpy, drag_source_canvas->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
-                int local_x = rx - tx;
-                int local_y = ry - ty;
+                int local_x = drag_icon_screen_x - tx;
+                int local_y = drag_icon_screen_y - ty;
+
                 if (drag_source_canvas->type == WINDOW) {
                     local_x = max(0, local_x - BORDER_WIDTH_LEFT + drag_source_canvas->scroll_x);
                     local_y = max(0, local_y - BORDER_HEIGHT_TOP + drag_source_canvas->scroll_y);
                 }
-                int place_x = max(0, local_x - 32);
-                int place_y = max(0, local_y - 32);
+                int place_x = max(0, local_x);
+                int place_y = max(0, local_y);
                 if (saved_source_window != None) dragged_icon->display_window = saved_source_window;
                 move_icon(dragged_icon, place_x, place_y);
             } else {
