@@ -263,7 +263,7 @@ Button* dialog_add_button(Dialog *dialog, int x, int y, int width, int height,
                           const char *label, void (*callback)(void*)) {
     if (!dialog) return NULL;
     
-    Button *button = button_create(x, y, width, height, label);
+    Button *button = button_create(x, y, width, height, label, dialog->font);
     if (!button) return NULL;
     
     if (callback) {
@@ -438,7 +438,7 @@ bool dialog_handle_button_press(Dialog *dialog, XButtonEvent *event) {
     // Check buttons
     for (int i = 0; i < dialog->button_count; i++) {
         if (dialog->buttons[i]) {
-            if (button_handle_click(dialog->buttons[i], event->x, event->y)) {
+            if (button_handle_press(dialog->buttons[i], event->x, event->y)) {
                 dialog_draw(dialog);
                 return true;
             }
@@ -488,8 +488,8 @@ void dialog_draw(Dialog *dialog) {
     
     for (int i = 0; i < dialog->button_count; i++) {
         if (dialog->buttons[i]) {
-            button_draw(dialog->buttons[i], dialog->picture, dialog->display,
-                       dialog->xft_draw, dialog->font);
+            button_render(dialog->buttons[i], dialog->picture, dialog->display,
+                       dialog->xft_draw);
         }
     }
     

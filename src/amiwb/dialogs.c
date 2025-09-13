@@ -61,8 +61,6 @@ void show_rename_dialog(const char *old_name,
     dialog->dialog_type = DIALOG_RENAME;
     strncpy(dialog->original_name, old_name, NAME_SIZE - 1);
     dialog->original_name[NAME_SIZE - 1] = '\0';
-    dialog->ok_button_pressed = false;
-    dialog->cancel_button_pressed = false;
     dialog->on_ok = on_ok;
     dialog->on_cancel = on_cancel;
     dialog->user_data = user_data;
@@ -105,7 +103,11 @@ void show_rename_dialog(const char *old_name,
     dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
     dialog->canvas->bg_color = GRAY;  // Standard dialog gray
     dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
-    
+
+    // Create toolkit buttons
+    dialog->ok_button = button_create(20, 85, BUTTON_WIDTH, BUTTON_HEIGHT, "OK", dialog->font);
+    dialog->cancel_button = button_create(340, 85, BUTTON_WIDTH, BUTTON_HEIGHT, "Cancel", dialog->font);
+
     // Add to dialog list
     dialog->next = g_dialogs;
     g_dialogs = dialog;
@@ -129,8 +131,6 @@ void show_execute_dialog(void (*on_ok)(const char *command),
     // Initialize dialog state
     dialog->dialog_type = DIALOG_EXECUTE_COMMAND;
     dialog->original_name[0] = '\0';  // Not used for execute dialog
-    dialog->ok_button_pressed = false;
-    dialog->cancel_button_pressed = false;
     dialog->on_ok = on_ok;
     dialog->on_cancel = on_cancel;
     dialog->user_data = NULL;
@@ -170,7 +170,11 @@ void show_execute_dialog(void (*on_ok)(const char *command),
     dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
     dialog->canvas->bg_color = GRAY;  // Standard dialog gray
     dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
-    
+
+    // Create toolkit buttons
+    dialog->ok_button = button_create(20, 85, BUTTON_WIDTH, BUTTON_HEIGHT, "OK", dialog->font);
+    dialog->cancel_button = button_create(340, 85, BUTTON_WIDTH, BUTTON_HEIGHT, "Cancel", dialog->font);
+
     // Add to dialog list
     dialog->next = g_dialogs;
     g_dialogs = dialog;
@@ -206,7 +210,23 @@ void close_dialog(Dialog *dialog) {
         inputfield_destroy(dialog->input_field);
         dialog->input_field = NULL;
     }
-    
+
+    // Clean up toolkit buttons
+    if (dialog->ok_button) {
+        button_destroy(dialog->ok_button);
+        dialog->ok_button = NULL;
+    }
+    if (dialog->cancel_button) {
+        button_destroy(dialog->cancel_button);
+        dialog->cancel_button = NULL;
+    }
+
+    // Clean up font
+    if (dialog->font) {
+        XftFontClose(get_display(), dialog->font);
+        dialog->font = NULL;
+    }
+
     // Clean up canvas and memory
     if (dialog->canvas) {
         destroy_canvas(dialog->canvas);
@@ -530,27 +550,6 @@ static void draw_inset_box(Picture dest, int x, int y, int w, int h) {
     XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, x+2, y+2, w-4, h-4);
 }
 
-static void draw_raised_box(Picture dest, int x, int y, int w, int h, bool pressed) {
-    Display *dpy = get_display();
-    
-    if (!pressed) {
-        // Normal raised state
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, x, y, 1, h);        // Left (white)
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, x, y, w, 1);        // Top (white)
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, x+w-1, y, 1, h);    // Right (black)
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, x, y+h-1, w, 1);    // Bottom (black)
-        // Gray fill
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, x+1, y+1, w-2, h-2);
-    } else {
-        // Pressed state - inverted
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, x, y, 1, h);        // Left (black)
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, x, y, w, 1);        // Top (black)
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, x+w-1, y, 1, h);    // Right (white)
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, x, y+h-1, w, 1);    // Bottom (white)
-        // Blue fill when pressed
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLUE, x+1, y+1, w-2, h-2);
-    }
-}
 
 // Calculate layout positions based on current canvas size
 static void calculate_layout(Dialog *dialog, int *input_x, int *input_y, int *input_w,
@@ -740,32 +739,8 @@ static void render_text_content(Dialog *dialog, Picture dest,
         }
     }
     
-    // Draw button labels
-    XRenderColor button_text_color = dialog->ok_button_pressed ? WHITE : BLACK;
-    XftColor xft_button;
-    XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &button_text_color, &xft_button);
-    
-    // Center "OK" in button
-    XGlyphInfo ok_ext;
-    XftTextExtentsUtf8(dpy, font, (FcChar8*)"OK", 2, &ok_ext);
-    int ok_text_x = ok_x + (BUTTON_WIDTH - ok_ext.xOff) / 2;
-    int ok_text_y = ok_y + (BUTTON_HEIGHT + font->ascent) / 2 - 2;
-    XftDrawStringUtf8(canvas->xft_draw, &xft_button, font, ok_text_x, ok_text_y, (FcChar8*)"OK", 2);
-    
-    // Update button text color for Cancel button
-    button_text_color = dialog->cancel_button_pressed ? WHITE : BLACK;
-    XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &button_text_color, &xft_button);
-    
-    // Center "Cancel" in button  
-    XGlyphInfo cancel_ext;
-    XftTextExtentsUtf8(dpy, font, (FcChar8*)"Cancel", 6, &cancel_ext);
-    int cancel_text_x = cancel_x + (BUTTON_WIDTH - cancel_ext.xOff) / 2;
-    int cancel_text_y = cancel_y + (BUTTON_HEIGHT + font->ascent) / 2 - 2;
-    XftDrawStringUtf8(canvas->xft_draw, &xft_button, font, cancel_text_x, cancel_text_y, (FcChar8*)"Cancel", 6);
-    
     // Clean up
     XftColorFree(dpy, canvas->visual, canvas->colormap, &xft_text);
-    XftColorFree(dpy, canvas->visual, canvas->colormap, &xft_button);
     // No need to destroy - using cached XftDraw
 }
 
@@ -888,77 +863,8 @@ static void draw_checkerboard_pattern(Picture dest, int x, int y, int w, int h) 
 
 // Render completion dropdown content
 void render_completion_dropdown(Canvas *canvas) {
-    if (!canvas) return;
-    
-    // Find the dialog that owns this dropdown
-    Dialog *dialog = NULL;
-    for (Dialog *d = g_dialogs; d; d = d->next) {
-        if (d->completion_dropdown == canvas) {
-            dialog = d;
-            break;
-        }
-    }
-    
-    if (!dialog || dialog->completion_count == 0) return;
-    
-    Display *dpy = get_display();
-    Picture dest = canvas->canvas_render;
-    
-    // Clear background to gray (standard Amiga dialog color)
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, 0, 0, canvas->width, canvas->height);
-    
-    // Draw border
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, 0, 0, canvas->width, 1);
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, 0, 0, 1, canvas->height);
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, canvas->width - 1, 0, 1, canvas->height);
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK, 0, canvas->height - 1, canvas->width, 1);
-    
-    // Load font
-    XftFont *font = get_font();
-    if (!font) return;
-    
-    // Use cached XftDraw for text rendering
-    if (!canvas->xft_draw) {
-        log_error("[WARNING] No cached XftDraw for delete dialog");
-        return;
-    }
-    
-    // Render items
-    int item_height = 20;
-    int max_items = (canvas->height - 4) / item_height;
-    int start_item = 0;
-    
-    // Scroll to show selected item if needed
-    if (dialog->completion_selected >= max_items) {
-        start_item = dialog->completion_selected - max_items + 1;
-    }
-    
-    for (int i = 0; i < max_items && start_item + i < dialog->completion_count; i++) {
-        int y = 2 + i * item_height;
-        int item_index = start_item + i;
-        
-        // Highlight selected item
-        if (item_index == dialog->completion_selected) {
-            XRenderFillRectangle(dpy, PictOpSrc, dest, &BLUE, 
-                               2, y, canvas->width - 4, item_height);
-        }
-        
-        // Draw text
-        XRenderColor text_color = (item_index == dialog->completion_selected) ? WHITE : BLACK;
-        XftColor xft_text;
-        XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &text_color, &xft_text);
-        
-        int text_x = 5;
-        int text_y = y + item_height - 5;
-        
-        XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_x, text_y,
-                         (FcChar8*)dialog->completion_candidates[item_index],
-                         strlen(dialog->completion_candidates[item_index]));
-        
-        XftColorFree(dpy, canvas->visual, canvas->colormap, &xft_text);
-    }
-    
-    // No need to destroy - using cached XftDraw
+    // Stub function - completion handled by toolkit InputField
+    (void)canvas;
 }
 
 // Render dialog content
@@ -1047,9 +953,19 @@ void render_dialog_content(Canvas *canvas) {
         draw_inset_box(dest, input_x, input_y, input_w, INPUT_HEIGHT);
     }
     
-    // Draw buttons
-    draw_raised_box(dest, ok_x, ok_y, BUTTON_WIDTH, BUTTON_HEIGHT, dialog->ok_button_pressed);
-    draw_raised_box(dest, cancel_x, cancel_y, BUTTON_WIDTH, BUTTON_HEIGHT, dialog->cancel_button_pressed);
+    // Draw toolkit buttons if they exist, otherwise fall back to old method
+    if (dialog->ok_button && dialog->cancel_button) {
+        // Update button positions based on layout
+        dialog->ok_button->x = ok_x;
+        dialog->ok_button->y = ok_y;
+        dialog->cancel_button->x = cancel_x;
+        dialog->cancel_button->y = cancel_y;
+
+        // Render toolkit buttons
+        Display *dpy = get_display();
+        button_render(dialog->ok_button, dest, dpy, canvas->xft_draw);
+        button_render(dialog->cancel_button, dest, dpy, canvas->xft_draw);
+    }
     
     // Render text and labels
     render_text_content(dialog, dest, input_x, input_y, input_w, ok_x, ok_y, cancel_x, cancel_y);
@@ -1143,50 +1059,35 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
     
     // For delete confirmation dialogs, don't handle input box clicks since there's no input
     if (dialog->dialog_type == DIALOG_DELETE_CONFIRM) {
-        // Only handle button clicks for delete confirmation
-        int ok_x, ok_y, cancel_x, cancel_y;
-        int dummy_x, dummy_y, dummy_w;
-        calculate_layout(dialog, &dummy_x, &dummy_y, &dummy_w, &ok_x, &ok_y, &cancel_x, &cancel_y);
-        
-        // Check if click is on OK button
-        if (event->x >= ok_x && event->x < ok_x + BUTTON_WIDTH &&
-            event->y >= ok_y && event->y < ok_y + BUTTON_HEIGHT) {
-            dialog->ok_button_pressed = true;
+        // Handle button clicks using toolkit
+        if (dialog->ok_button && button_handle_press(dialog->ok_button, event->x, event->y)) {
             redraw_canvas(canvas);
             return true;
         }
-        
-        // Check if click is on Cancel button
-        if (event->x >= cancel_x && event->x < cancel_x + BUTTON_WIDTH &&
-            event->y >= cancel_y && event->y < cancel_y + BUTTON_HEIGHT) {
-            dialog->cancel_button_pressed = true;
+
+        if (dialog->cancel_button && button_handle_press(dialog->cancel_button, event->x, event->y)) {
             redraw_canvas(canvas);
             return true;
         }
-        
+
         // Let other clicks (title bar, resize) go to intuition
         return false;
     }
     
-    // Get layout positions for rename dialog
+    // Handle button clicks using toolkit for all dialog types
+    if (dialog->ok_button && button_handle_press(dialog->ok_button, event->x, event->y)) {
+        redraw_canvas(canvas);
+        return true;
+    }
+
+    if (dialog->cancel_button && button_handle_press(dialog->cancel_button, event->x, event->y)) {
+        redraw_canvas(canvas);
+        return true;
+    }
+
+    // Get layout positions for input field
     int input_x, input_y, input_w, ok_x, ok_y, cancel_x, cancel_y;
     calculate_layout(dialog, &input_x, &input_y, &input_w, &ok_x, &ok_y, &cancel_x, &cancel_y);
-    
-    // Check if click is on OK button
-    if (event->x >= ok_x && event->x < ok_x + BUTTON_WIDTH &&
-        event->y >= ok_y && event->y < ok_y + BUTTON_HEIGHT) {
-        dialog->ok_button_pressed = true;
-        redraw_canvas(canvas);
-        return true;
-    }
-    
-    // Check if click is on Cancel button
-    if (event->x >= cancel_x && event->x < cancel_x + BUTTON_WIDTH &&
-        event->y >= cancel_y && event->y < cancel_y + BUTTON_HEIGHT) {
-        dialog->cancel_button_pressed = true;
-        redraw_canvas(canvas);
-        return true;
-    }
     
     // Check if click is in input box
     if (event->x >= input_x && event->x < input_x + input_w &&
@@ -1221,59 +1122,58 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
 
 bool dialogs_handle_button_release(XButtonEvent *event) {
     if (!event) return false;
-    
+
     Canvas *canvas = find_canvas(event->window);
     if (!canvas || canvas->type != DIALOG) return false;
-    
+
     Dialog *dialog = get_dialog_for_canvas(canvas);
     if (!dialog) return false;
-    
+
     // Handle mouse release for InputField selection
     if (dialog->input_field && dialog->input_field->mouse_selecting) {
         inputfield_handle_mouse_release(dialog->input_field, event->x, event->y);
         redraw_canvas(dialog->canvas);
         return true;
     }
-    
-    // Get layout positions
-    int input_x, input_y, input_w, ok_x, ok_y, cancel_x, cancel_y;
-    calculate_layout(dialog, &input_x, &input_y, &input_w, &ok_x, &ok_y, &cancel_x, &cancel_y);
-    
-    bool handled = false;
-    
-    // Check if release is on OK button while it was pressed
-    if (dialog->ok_button_pressed && 
-        event->x >= ok_x && event->x < ok_x + BUTTON_WIDTH &&
-        event->y >= ok_y && event->y < ok_y + BUTTON_HEIGHT) {
-        dialog->ok_button_pressed = false;
-        if (dialog->on_ok) {
-            dialog->on_ok(dialog->text_buffer);
+
+    // Handle button releases using toolkit
+    if (dialog->ok_button) {
+        if (button_handle_release(dialog->ok_button, event->x, event->y)) {
+            // Button was clicked - check if it's activated
+            if (button_is_clicked(dialog->ok_button)) {
+                if (dialog->on_ok) {
+                    // For dialogs with input fields, pass the text
+                    if (dialog->input_field) {
+                        dialog->on_ok(inputfield_get_text(dialog->input_field));
+                    } else {
+                        // For delete dialog, pass the message
+                        dialog->on_ok(dialog->text_buffer);
+                    }
+                }
+                close_dialog(dialog);
+                return true;
+            }
+            redraw_canvas(canvas);
+            return true;
         }
-        close_dialog(dialog);
-        return true;  // Return immediately to avoid use-after-free
     }
-    
-    // Check if release is on Cancel button while it was pressed
-    else if (dialog->cancel_button_pressed && 
-             event->x >= cancel_x && event->x < cancel_x + BUTTON_WIDTH &&
-             event->y >= cancel_y && event->y < cancel_y + BUTTON_HEIGHT) {
-        dialog->cancel_button_pressed = false;
-        if (dialog->on_cancel) {
-            dialog->on_cancel();
+
+    if (dialog->cancel_button) {
+        if (button_handle_release(dialog->cancel_button, event->x, event->y)) {
+            // Button was clicked - check if it's activated
+            if (button_is_clicked(dialog->cancel_button)) {
+                if (dialog->on_cancel) {
+                    dialog->on_cancel();
+                }
+                close_dialog(dialog);
+                return true;
+            }
+            redraw_canvas(canvas);
+            return true;
         }
-        close_dialog(dialog);
-        return true;  // Return immediately to avoid use-after-free
     }
-    
-    // Reset button states if we had any pressed (only if dialog wasn't closed)
-    if (dialog->ok_button_pressed || dialog->cancel_button_pressed) {
-        dialog->ok_button_pressed = false;
-        dialog->cancel_button_pressed = false;
-        redraw_canvas(canvas);
-        handled = true;
-    }
-    
-    return handled;
+
+    return false;
 }
 
 bool dialogs_handle_motion(XMotionEvent *event) {
@@ -1338,38 +1238,32 @@ void show_delete_confirmation(const char *message,
     }
     strncpy(dialog->text_buffer, message, NAME_SIZE - 1);
     dialog->text_buffer[NAME_SIZE - 1] = '\0';
-    dialog->cursor_pos = 0;
-    dialog->selection_start = -1;
-    dialog->selection_end = -1;
-    dialog->visible_start = 0;
-    dialog->input_has_focus = false;  // No input for delete dialog
-    dialog->ok_button_pressed = false;
-    dialog->cancel_button_pressed = false;
+    dialog->input_field = NULL;  // No input field for delete dialog
     dialog->on_ok = delete_confirm_ok;
     dialog->on_cancel = delete_confirm_cancel;
     dialog->user_data = NULL;
+    dialog->font = NULL;  // Will be set when canvas is created
     
-    // Initialize completion fields (not used for delete dialog, but must be initialized)
-    dialog->completion_dropdown = NULL;
-    dialog->completion_candidates = NULL;
-    dialog->completion_count = 0;
-    dialog->completion_selected = -1;
-    dialog->completion_prefix[0] = '\0';
-    dialog->completion_prefix_len = 0;
-    
-    // Create canvas window (400x219 for delete, taller to fit warning text + checker + decorations)  
+    // Create canvas window (400x219 for delete, taller to fit warning text + checker + decorations)
     dialog->canvas = create_canvas(NULL, 200, 150, 450, 220, DIALOG);
     if (!dialog->canvas) {
         free(dialog);
         return;
     }
-    
+
     // Set dialog properties
     dialog->canvas->title_base = strdup("Delete Confirmation");
     dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
     dialog->canvas->bg_color = GRAY;  // Standard dialog gray
     dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
-    
+
+    // Load font for buttons - use the standard UI font for consistency
+    dialog->font = get_font();
+
+    // Create toolkit buttons
+    dialog->ok_button = button_create(10, 150, BUTTON_WIDTH, BUTTON_HEIGHT, "OK", dialog->font);
+    dialog->cancel_button = button_create(340, 150, BUTTON_WIDTH, BUTTON_HEIGHT, "Cancel", dialog->font);
+
     // Add to dialog list
     dialog->next = g_dialogs;
     g_dialogs = dialog;

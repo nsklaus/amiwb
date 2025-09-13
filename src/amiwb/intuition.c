@@ -1380,6 +1380,9 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
 
     init_scroll(canvas);
 
+    // Don't make our windows XDND-aware - we use internal DND between AmiWB windows
+    // XDND is only for dragging FROM AmiWB to external apps, not receiving
+
     if (type != DESKTOP) {
         if (type == WINDOW ) {
             XSetWindowAttributes attrs = {0};

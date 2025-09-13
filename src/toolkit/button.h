@@ -12,16 +12,19 @@ typedef struct Button {
     char *label;
     bool pressed;
     bool hover;
+    bool clicked;  // True when button was clicked (press and release)
+    XftFont *font;  // Font to use for rendering
     void (*on_click)(void *user_data);
     void *user_data;
 } Button;
 
-Button* button_create(int x, int y, int width, int height, const char *label);
+Button* button_create(int x, int y, int width, int height, const char *label, XftFont *font);
 void button_destroy(Button *button);
 void button_set_callback(Button *button, void (*on_click)(void*), void *user_data);
 void button_set_pressed(Button *button, bool pressed);
-void button_draw(Button *button, Picture dest, Display *dpy, XftDraw *xft_draw, XftFont *font);
-bool button_handle_click(Button *button, int click_x, int click_y);
+void button_render(Button *button, Picture dest, Display *dpy, XftDraw *xft_draw);
+bool button_handle_press(Button *button, int click_x, int click_y);
 bool button_handle_release(Button *button, int click_x, int click_y);
+bool button_is_clicked(Button *button);
 
 #endif

@@ -578,7 +578,7 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
     if (dialog->get_size_button && dialog->is_directory && 
         !dialog->calculating_size && dialog->size_calc_pid <= 0) {
         // Use the button's own hit testing
-        if (button_handle_click(dialog->get_size_button, event->x, event->y)) {
+        if (button_handle_press(dialog->get_size_button, event->x, event->y)) {
             dialog->get_size_pressed = true;
             redraw_canvas(canvas);
             return true;
@@ -586,14 +586,14 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
     }
     
     // Check OK button using toolkit hit testing
-    if (dialog->ok_button && button_handle_click(dialog->ok_button, event->x, event->y)) {
+    if (dialog->ok_button && button_handle_press(dialog->ok_button, event->x, event->y)) {
         dialog->ok_pressed = true;
         redraw_canvas(canvas);
         return true;
     }
     
     // Check Cancel button using toolkit hit testing
-    if (dialog->cancel_button && button_handle_click(dialog->cancel_button, event->x, event->y)) {
+    if (dialog->cancel_button && button_handle_press(dialog->cancel_button, event->x, event->y)) {
         dialog->cancel_pressed = true;
         redraw_canvas(canvas);
         return true;
@@ -990,12 +990,14 @@ void render_iconinfo_content(Canvas *canvas) {
                 && strcmp(dialog->size_text, "[Get Size]") == 0) {
                 // Create/update the button struct if needed
                 if (!dialog->get_size_button) {
+                    XftFont *font = get_font();
                     dialog->get_size_button = button_create(
                         text_x + 50,
                         text_y - 15,
                         70,
                         20,
-                        "Get Size"
+                        "Get Size",
+                        font
                     );
                 } else {
                     // Update position in case window was resized or layout changed
@@ -1005,7 +1007,7 @@ void render_iconinfo_content(Canvas *canvas) {
                 }
                 
                 // Draw the button using toolkit
-                button_draw(dialog->get_size_button, dest, dpy, xft, font);
+                button_render(dialog->get_size_button, dest, dpy, xft);
             } else {
                 // Draw the size text (file size, calculating, or calculated dir size)
                 XftDrawStringUtf8(xft, &color, font, text_x + 50, text_y,
@@ -1163,8 +1165,9 @@ void render_iconinfo_content(Canvas *canvas) {
     
     // Create/update OK button
     if (!dialog->ok_button) {
-        dialog->ok_button = button_create(ok_x, button_y, 
-                                         ICONINFO_BUTTON_WIDTH, ICONINFO_BUTTON_HEIGHT, "OK");
+        XftFont *font = get_font();
+        dialog->ok_button = button_create(ok_x, button_y,
+                                         ICONINFO_BUTTON_WIDTH, ICONINFO_BUTTON_HEIGHT, "OK", font);
     } else {
         // Update position in case window was resized
         dialog->ok_button->x = ok_x;
@@ -1174,8 +1177,9 @@ void render_iconinfo_content(Canvas *canvas) {
     
     // Create/update Cancel button
     if (!dialog->cancel_button) {
+        XftFont *font = get_font();
         dialog->cancel_button = button_create(cancel_x, button_y,
-                                             ICONINFO_BUTTON_WIDTH, ICONINFO_BUTTON_HEIGHT, "Cancel");
+                                             ICONINFO_BUTTON_WIDTH, ICONINFO_BUTTON_HEIGHT, "Cancel", font);
     } else {
         // Update position in case window was resized
         dialog->cancel_button->x = cancel_x;
@@ -1185,7 +1189,7 @@ void render_iconinfo_content(Canvas *canvas) {
     
     XftFont *font = get_font();
     if (font) {
-        button_draw(dialog->ok_button, dest, dpy, xft, font);
-        button_draw(dialog->cancel_button, dest, dpy, xft, font);
+        button_render(dialog->ok_button, dest, dpy, xft);
+        button_render(dialog->cancel_button, dest, dpy, xft);
     }
 }

@@ -7,6 +7,7 @@
 #include "config.h"
 #include "intuition.h"
 #include "../toolkit/inputfield.h"
+#include "../toolkit/button.h"
 #include <stdbool.h>
 #include <limits.h>
 
@@ -33,28 +34,15 @@ typedef struct Dialog {
     Canvas *canvas;                    // Regular WINDOW-type canvas
     DialogType dialog_type;            // Type of dialog (rename or delete confirmation)
     InputField *input_field;           // Toolkit input field for text entry
+    Button *ok_button;                 // Toolkit OK button
+    Button *cancel_button;             // Toolkit Cancel button
     char original_name[NAME_SIZE];     // Original filename (for display only)
-    bool ok_button_pressed;            // True while OK button is pressed
-    bool cancel_button_pressed;        // True while Cancel button is pressed
+    char text_buffer[NAME_SIZE];       // For delete confirmation message
     void (*on_ok)(const char *new_name);     // Success callback
     void (*on_cancel)(void);                 // Cancel callback
     struct Dialog *next;               // For multiple dialogs
     void *user_data;                   // Optional user data for callbacks
     XftFont *font;                     // Font for the dialog (shared with InputField)
-    
-    // TEMPORARY - being removed, use InputField instead
-    char text_buffer[NAME_SIZE];       // DEPRECATED
-    int cursor_pos;                    // DEPRECATED
-    int selection_start;               // DEPRECATED  
-    int selection_end;                 // DEPRECATED
-    int visible_start;                 // DEPRECATED
-    bool input_has_focus;              // DEPRECATED
-    Canvas *completion_dropdown;       // DEPRECATED
-    char **completion_candidates;      // DEPRECATED
-    int completion_count;              // DEPRECATED
-    int completion_selected;          // DEPRECATED
-    char completion_prefix[PATH_SIZE]; // DEPRECATED
-    int completion_prefix_len;        // DEPRECATED
 } Dialog;
 
 // Dialog lifecycle

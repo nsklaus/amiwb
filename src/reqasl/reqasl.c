@@ -901,33 +901,37 @@ static void draw_window(ReqASL *req) {
         .x = open_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
         .label = req->is_save_mode ? "Save" : "Open",
-        .pressed = req->open_button_pressed
+        .pressed = req->open_button_pressed,
+        .font = req->font
     };
-    button_draw(&open_btn, dest, req->display, temp_xft_draw, req->font);
+    button_render(&open_btn, dest, req->display, temp_xft_draw);
     
     Button volumes_btn = {
         .x = volumes_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
         .label = "Volumes",
-        .pressed = req->volumes_button_pressed
+        .pressed = req->volumes_button_pressed,
+        .font = req->font
     };
-    button_draw(&volumes_btn, dest, req->display, temp_xft_draw, req->font);
+    button_render(&volumes_btn, dest, req->display, temp_xft_draw);
     
     Button parent_btn = {
         .x = parent_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
         .label = "Parent",
-        .pressed = req->parent_button_pressed
+        .pressed = req->parent_button_pressed,
+        .font = req->font
     };
-    button_draw(&parent_btn, dest, req->display, temp_xft_draw, req->font);
+    button_render(&parent_btn, dest, req->display, temp_xft_draw);
     
     Button cancel_btn = {
         .x = cancel_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
         .label = "Cancel",
-        .pressed = req->cancel_button_pressed
+        .pressed = req->cancel_button_pressed,
+        .font = req->font
     };
-    button_draw(&cancel_btn, dest, req->display, temp_xft_draw, req->font);
+    button_render(&cancel_btn, dest, req->display, temp_xft_draw);
     
     // Copy to window
     GC gc = XCreateGC(req->display, req->window, 0, NULL);

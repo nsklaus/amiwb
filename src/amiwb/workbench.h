@@ -30,6 +30,7 @@ FileIcon *get_selected_icon_from_canvas(Canvas *canvas);       // Get selected i
 void workbench_handle_button_press(XButtonEvent *event);    // Icon selection/drag start
 void workbench_handle_button_release(XButtonEvent *event);  // Drag/drop end and clicks
 void workbench_handle_motion_notify(XMotionEvent *event);   // Drag update and hover
+void workbench_cleanup_drag_state(void);                    // Clean up drag state after XDND
 
 // Rearrange icons on a canvas into a tidy grid
 void icon_cleanup(Canvas *canvas);
@@ -66,6 +67,9 @@ off_t read_directory_size_result(int pipe_fd);                 // Read result fr
 
 // Progress dialog monitoring (called from event loop)
 void workbench_check_progress_dialogs(void);
+
+// Cache invalidation for performance optimization
+void invalidate_pointer_cache(void);
 
 // Spatial mode control
 bool get_spatial_mode(void);

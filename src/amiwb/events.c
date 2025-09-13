@@ -11,6 +11,7 @@
 #include "render.h"  // For redraw_canvas
 #include "config.h"
 #include "amiwbrc.h"  // For config access
+#include "xdnd.h"    // For XDND protocol support
 #include <X11/extensions/Xrandr.h>
 #include <X11/XF86keysym.h> // media keys
 #include <X11/Xlib.h>
@@ -428,7 +429,37 @@ void handle_events(void) {
                 handle_destroy_notify(&event.xdestroywindow);
                 break;
             case ClientMessage:
-                intuition_handle_client_message(&event.xclient);
+                // Check for XDND messages first
+                if (event.xclient.message_type == xdnd_ctx.XdndEnter) {
+                    xdnd_handle_enter(dpy, &event.xclient);
+                } else if (event.xclient.message_type == xdnd_ctx.XdndPosition) {
+                    xdnd_handle_position(dpy, &event.xclient);
+                } else if (event.xclient.message_type == xdnd_ctx.XdndLeave) {
+                    xdnd_handle_leave(dpy, &event.xclient);
+                } else if (event.xclient.message_type == xdnd_ctx.XdndDrop) {
+                    xdnd_handle_drop(dpy, &event.xclient);
+                } else if (event.xclient.message_type == xdnd_ctx.XdndStatus) {
+                    // Handle status response when we're the source
+                    Window target = event.xclient.data.l[0];
+                    bool accepted = event.xclient.data.l[1] & 1;
+                    xdnd_ctx.target_accepts = accepted;
+                    // Silent operation - no logging in normal flow
+                    (void)target;  // Suppress unused warning
+                } else if (event.xclient.message_type == xdnd_ctx.XdndFinished) {
+                    // Target has finished processing the drop - clean up drag state
+                    workbench_cleanup_drag_state();
+                } else {
+                    // Other client messages (EWMH, etc.)
+                    intuition_handle_client_message(&event.xclient);
+                }
+                break;
+            case SelectionRequest:
+                // Handle selection requests for XDND data transfer
+                xdnd_handle_selection_request(dpy, &event.xselectionrequest);
+                break;
+            case SelectionNotify:
+                // Handle selection notify when receiving XDND data
+                xdnd_handle_selection_notify(dpy, &event.xselection);
                 break;
             default:
                 break;

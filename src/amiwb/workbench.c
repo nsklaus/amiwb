@@ -8,6 +8,7 @@
 #include "config.h"  // Added to include config.h for max/min macros
 #include "events.h"  // For clear_press_target_if_matches
 #include "dialogs.h"  // For progress dialog support
+#include "xdnd.h"     // XDND protocol support
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -82,6 +83,8 @@ typedef struct {
 // Forward declarations for local helpers used later
 static Canvas *canvas_under_pointer(void);
 static int move_file_to_directory(const char *src_path, const char *dst_dir, char *dst_path, size_t dst_sz);
+static int move_file_to_directory_ex(const char *src_path, const char *dst_dir, char *dst_path,
+                                     size_t dst_sz, Canvas *target_canvas, int icon_x, int icon_y);
 static bool is_directory(const char *path);
 static int ensure_parent_dirs(const char *path);
 static int copy_file(const char *src, const char *dst);
@@ -121,7 +124,7 @@ static bool wb_initialized = false;
 static FileIcon **icon_array = NULL;        // Dynamic array of all icons
 static int icon_count = 0;                  // Current number of icons
 static int icon_array_size = 0;             // Allocated size of icon array
-static FileIcon *dragged_icon = NULL;       // Moved from events.c
+FileIcon *dragged_icon = NULL;       // Moved from events.c - exported for XDND
 static int drag_start_x, drag_start_y;      // Moved from events.c
 static int drag_start_root_x, drag_start_root_y; // start position in root coordinates
 static Canvas *drag_source_canvas = NULL;  // Track source canvas for cross-canvas drops
@@ -453,6 +456,8 @@ static void start_drag_icon(FileIcon *icon, int x, int y) {
 // Continue dragging icon during motion
 static void continue_drag_icon(XMotionEvent *event, Canvas *canvas) {
     if (!dragged_icon) return;
+    Display *dpy = event->display;
+
     // Enforce movement threshold before starting drag
     if (!drag_active) {
         int dx = event->x_root - drag_start_root_x;
@@ -472,9 +477,39 @@ static void continue_drag_icon(XMotionEvent *event, Canvas *canvas) {
     if (!dragging_floating) { create_drag_window(); draw_drag_icon(); dragging_floating = true; }
     // Follow the global pointer; don't move icon inside the source canvas
     update_drag_window_position(event->x_root, event->y_root);
+
+    // Check for XDND target under cursor
+    Window xdnd_target = xdnd_find_target(dpy, event->x_root, event->y_root);
+
+    // Handle XDND protocol if we found an external target
+    if (xdnd_target != None && xdnd_target != xdnd_ctx.current_target) {
+        // Leave previous XDND target if any
+        if (xdnd_ctx.current_target != None) {
+            xdnd_send_leave(dpy, canvas->win, xdnd_ctx.current_target);
+        }
+
+        // Enter new XDND target
+        xdnd_send_enter(dpy, canvas->win, xdnd_target);
+        xdnd_ctx.source_window = canvas->win;
+    }
+
+    // Send position updates to current XDND target
+    if (xdnd_ctx.current_target != None) {
+        xdnd_send_position(dpy, canvas->win, xdnd_ctx.current_target,
+                          event->x_root, event->y_root, event->time,
+                          xdnd_ctx.XdndActionCopy);
+    }
+
+    // If we left an XDND target and are back over our own canvas
+    if (xdnd_target == None && xdnd_ctx.current_target != None) {
+        xdnd_send_leave(dpy, canvas->win, xdnd_ctx.current_target);
+        xdnd_ctx.current_target = None;
+    }
 }
 
 static void end_drag_icon(Canvas *canvas) {
+    Display *dpy = get_display();
+
     // Clean up floating drag window if any
     destroy_drag_window();
 
@@ -482,6 +517,46 @@ static void end_drag_icon(Canvas *canvas) {
     if (!dragged_icon) {
         drag_source_canvas = NULL;
         saved_source_window = None;
+        // Clean up any XDND state
+        if (xdnd_ctx.current_target != None) {
+            xdnd_send_leave(dpy, canvas ? canvas->win : None, xdnd_ctx.current_target);
+            xdnd_ctx.current_target = None;
+        }
+        return;
+    }
+
+    // Check if we're dropping on an XDND target
+    if (xdnd_ctx.current_target != None) {
+        // We're dropping on an external XDND-aware window
+        // MUST destroy drag window first before anything else!
+        destroy_drag_window();
+
+        // Set up selection ownership for data transfer
+        Window source_win = canvas ? canvas->win : DefaultRootWindow(dpy);
+        XSetSelectionOwner(dpy, xdnd_ctx.XdndSelection, source_win, CurrentTime);
+
+        // Send the drop message
+        xdnd_send_drop(dpy, source_win, xdnd_ctx.current_target, CurrentTime);
+
+        // Restore icon visibility
+        if (saved_source_window != None) {
+            dragged_icon->display_window = saved_source_window;
+        }
+        if (drag_source_canvas) {
+            refresh_canvas(drag_source_canvas);
+        }
+
+        // Clear most of the drag state
+        drag_active = false;
+        dragging_floating = false;
+        saved_source_window = None;
+
+        // Keep dragged_icon temporarily for selection request handler
+        // But clear the visual drag state immediately
+        // We'll fully clear dragged_icon after a short delay or when selection is done
+
+        // Clear the drag source canvas to stop any visual feedback
+        drag_source_canvas = NULL;
         return;
     }
 
@@ -657,33 +732,56 @@ static void end_drag_icon(Canvas *canvas) {
         // Save absolute source path before moving for potential desktop cleanup
         char src_path_abs[2048];
         snprintf(src_path_abs, sizeof(src_path_abs), "%s", dragged_icon->path ? dragged_icon->path : "");
-        int moved = move_file_to_directory(dragged_icon->path, dst_dir, dst_path, sizeof(dst_path));
-        if (moved == 0) {
-            // Success: manually update icon lists without global re-layout
+
+        // Calculate icon position for async operation
+        Display *dpy = get_display();
+        int rx, ry, wx, wy; unsigned int mask; Window root_ret, child_ret;
+        XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask);
+        int tx = 0, ty = 0; Window dummy;
+        XTranslateCoordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
+        int local_x = rx - tx;
+        int local_y = ry - ty;
+        if (target->type == WINDOW) {
+            local_x = max(0, local_x - BORDER_WIDTH_LEFT + target->scroll_x);
+            local_y = max(0, local_y - BORDER_HEIGHT_TOP + target->scroll_y);
+        }
+        int place_x = max(0, local_x - 32);
+        int place_y = max(0, local_y - 32);
+
+        // Use extended version to handle async cross-filesystem moves
+        int moved = move_file_to_directory_ex(dragged_icon->path, dst_dir, dst_path,
+                                              sizeof(dst_path), target, place_x, place_y);
+        if (moved == 0 || moved == 2) {
+            // Success: moved=0 for sync, moved=2 for async cross-filesystem
             // 1) Remove dragged icon from source canvas
             destroy_icon(dragged_icon);
             dragged_icon = NULL;
 
             // Move sidecar .info file if present to keep custom icon with the file
-            move_sidecar_info_file(src_path_abs, dst_dir, dst_path);
-
-            // 2) Create a new icon on target at drop position
-            // Determine pointer position relative to target content area
-            Display *dpy = get_display();
-            int rx, ry, wx, wy; unsigned int mask; Window root_ret, child_ret;
-            XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask);
-            // Translate target window origin to root
-            int tx = 0, ty = 0; Window dummy;
-            XTranslateCoordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
-            int local_x = rx - tx;
-            int local_y = ry - ty;
-            if (target->type == WINDOW) {
-                local_x = max(0, local_x - BORDER_WIDTH_LEFT + target->scroll_x);
-                local_y = max(0, local_y - BORDER_HEIGHT_TOP + target->scroll_y);
+            // But only for synchronous moves - async will handle it
+            if (moved == 0) {
+                move_sidecar_info_file(src_path_abs, dst_dir, dst_path);
             }
-            // Center icon under cursor
-            int place_x = max(0, local_x - 32);
-            int place_y = max(0, local_y - 32);
+
+            // 2) For sync moves, create icon now. For async, it's created on completion
+            if (moved == 2) {
+                // Async cross-filesystem move - icon will be created by completion handler
+                // Just refresh the canvases
+                if (drag_source_canvas) {
+                    compute_content_bounds(drag_source_canvas);
+                    compute_max_scroll(drag_source_canvas);
+                    redraw_canvas(drag_source_canvas);
+                }
+                if (target) {
+                    compute_content_bounds(target);
+                    compute_max_scroll(target);
+                    redraw_canvas(target);
+                }
+                return;
+            }
+
+            // Synchronous move completed - create icon now
+            // Icon position already calculated above (place_x, place_y)
 
             // Choose icon image path for the new icon:
             // 1) Sidecar .info if present
@@ -925,33 +1023,75 @@ static void destroy_drag_window(void) {
 
 // Missing helpers and API restored
 
+// Cache for canvas_under_pointer to avoid repeated tree walks
+static struct {
+    Canvas *cached_canvas;
+    int cached_x, cached_y;
+    Time cache_time;
+    bool valid;
+} pointer_cache = {NULL, -1, -1, 0, false};
+
 static Canvas *canvas_under_pointer(void) {
     Display *dpy = get_display();
     Window root = DefaultRootWindow(dpy);
     Window root_ret, child_ret; int rx, ry, wx, wy; unsigned int mask;
     if (!XQueryPointer(dpy, root, &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask)) return NULL;
 
-    // Scan root children from topmost to bottom to find the topmost WINDOW under pointer
+    // Check cache - if pointer hasn't moved, return cached result
+    if (pointer_cache.valid && pointer_cache.cached_x == rx && pointer_cache.cached_y == ry) {
+        // Quick validation that cached canvas still exists and is visible
+        if (pointer_cache.cached_canvas) {
+            XWindowAttributes wa;
+            if (XGetWindowAttributes(dpy, pointer_cache.cached_canvas->win, &wa) &&
+                wa.map_state == IsViewable) {
+                return pointer_cache.cached_canvas;
+            }
+        }
+    }
+
+    // Cache miss or invalid - do the expensive tree walk
     Window r, p, *children = NULL; unsigned int n = 0;
     if (!XQueryTree(dpy, root, &r, &p, &children, &n)) return NULL;
+
     Canvas *best = NULL;
+    // Walk from topmost to bottom to find the topmost WINDOW under pointer
     for (int i = (int)n - 1; i >= 0; --i) {
         Window w = children[i];
         Canvas *c = find_canvas(w);
         if (!c) continue;
         if (c->type == MENU) continue; // menus are not drop targets
-        // Get outer geometry of the frame window
-        XWindowAttributes wa; if (!XGetWindowAttributes(dpy, w, &wa)) continue;
-        if (wa.map_state != IsViewable) continue;
-        int x = wa.x, y = wa.y, wdt = wa.width, hgt = wa.height;
-        if (rx >= x && rx < x + wdt && ry >= y && ry < y + hgt) {
-            // Prefer WINDOW over DESKTOP
-            if (c->type == WINDOW) { best = c; break; }
-            if (!best) best = c; // could be DESKTOP
+
+        // Check if pointer is within this canvas
+        // Use cached window attributes if available
+        if (c->x <= rx && rx < c->x + c->width &&
+            c->y <= ry && ry < c->y + c->height) {
+            // Quick visibility check
+            XWindowAttributes wa;
+            if (XGetWindowAttributes(dpy, w, &wa) && wa.map_state == IsViewable) {
+                // Prefer WINDOW over DESKTOP
+                if (c->type == WINDOW) {
+                    best = c;
+                    break;
+                }
+                if (!best) best = c; // could be DESKTOP
+            }
         }
     }
     if (children) XFree(children);
+
+    // Update cache
+    pointer_cache.cached_canvas = best;
+    pointer_cache.cached_x = rx;
+    pointer_cache.cached_y = ry;
+    pointer_cache.cache_time = CurrentTime;
+    pointer_cache.valid = true;
+
     return best;
+}
+
+// Invalidate pointer cache when windows move or change
+void invalidate_pointer_cache(void) {
+    pointer_cache.valid = false;
 }
 
 static bool is_directory(const char *path) {
@@ -1849,7 +1989,9 @@ static int copy_directory_recursive_with_progress(const char *src_dir, const cha
 // Move directory with progress dialog (for cross-filesystem moves)
 
 // returns 0 on success, non-zero on failure
-static int move_file_to_directory(const char *src_path, const char *dst_dir, char *dst_path, size_t dst_sz) {
+// Extended version that returns status codes for async operations
+static int move_file_to_directory_ex(const char *src_path, const char *dst_dir, char *dst_path,
+                                     size_t dst_sz, Canvas *target_canvas, int icon_x, int icon_y) {
     if (!src_path || !dst_dir || !dst_path || !*src_path || !*dst_dir) return -1;
     // Allow moving both files and directories
     // Ensure destination is a directory
@@ -1863,28 +2005,58 @@ static int move_file_to_directory(const char *src_path, const char *dst_dir, cha
     // Check if source is a directory
     struct stat st_src;
     bool is_src_dir = (stat(src_path, &st_src) == 0 && S_ISDIR(st_src.st_mode));
-    
+
     // Overwrite semantics: ensure destination path is free
     if (!is_src_dir) {
         unlink(dst_path);  // For files, remove any existing destination
     } else {
         rmdir(dst_path);   // For directories, try to remove empty destination dir
     }
-    
+
     if (rename(src_path, dst_path) != 0) {
         if (errno == EXDEV) {
-            // Cross-filesystem move
-            // Cross-filesystem move - use generic progress function
-            if (perform_file_operation_with_progress(FILE_OP_MOVE, src_path, dst_path, NULL) != 0) {
+            // Cross-filesystem move - needs async operation with icon metadata
+
+            // Prepare icon metadata for completion handler
+            ProgressMessage icon_meta = {0};
+            icon_meta.create_icon = true;
+            strncpy(icon_meta.dest_path, dst_path, PATH_SIZE - 1);
+            strncpy(icon_meta.dest_dir, dst_dir, PATH_SIZE - 1);
+            icon_meta.icon_x = icon_x;
+            icon_meta.icon_y = icon_y;
+            icon_meta.target_window = target_canvas ? target_canvas->win : None;
+
+            // Check for sidecar .info file
+            char info_src[PATH_SIZE], info_dst[PATH_SIZE];
+            snprintf(info_src, sizeof(info_src), "%s.info", src_path);
+            snprintf(info_dst, sizeof(info_dst), "%s.info", dst_path);
+            struct stat st_info;
+            if (stat(info_src, &st_info) == 0) {
+                icon_meta.has_sidecar = true;
+                strncpy(icon_meta.sidecar_src, info_src, PATH_SIZE - 1);
+                strncpy(icon_meta.sidecar_dst, info_dst, PATH_SIZE - 1);
+            }
+
+            // Start async operation with icon metadata
+            if (perform_file_operation_with_progress_ex(FILE_OP_MOVE, src_path, dst_path,
+                                                        NULL, &icon_meta) != 0) {
                 log_error("[ERROR] Failed to move across filesystem: %s to %s", src_path, dst_path);
                 return -1;
             }
+            return 2; // Special code for async operation started
         } else {
             perror("[amiwb] rename (move) failed");
             return -1;
         }
     }
     return 0;
+}
+
+static int move_file_to_directory(const char *src_path, const char *dst_dir, char *dst_path, size_t dst_sz) {
+    // Legacy version without icon metadata - just calls extended version
+    int result = move_file_to_directory_ex(src_path, dst_dir, dst_path, dst_sz, NULL, 0, 0);
+    // Convert async return code to success for backward compatibility
+    return (result == 2) ? 0 : result;
 }
 
 // ============================================================================
@@ -3303,6 +3475,35 @@ void workbench_handle_motion_notify(XMotionEvent *event) {
 
 void workbench_handle_button_release(XButtonEvent *event) {
     Canvas *canvas = find_canvas(event->window); if (canvas) end_drag_icon(canvas);
+}
+
+void workbench_cleanup_drag_state(void) {
+    // Clean up drag state after XDND transfer completes
+
+    // Destroy the floating drag window
+    destroy_drag_window();
+
+    // Restore icon visibility if it was hidden
+    if (dragged_icon && saved_source_window != None) {
+        dragged_icon->display_window = saved_source_window;
+        saved_source_window = None;
+    }
+
+    // Clear XDND context
+    if (xdnd_ctx.current_target != None) {
+        xdnd_ctx.current_target = None;
+    }
+
+    // Refresh source canvas if needed
+    if (drag_source_canvas) {
+        refresh_canvas(drag_source_canvas);
+    }
+
+    // Clear all drag state
+    dragged_icon = NULL;
+    drag_active = false;
+    dragging_floating = false;
+    drag_source_canvas = NULL;
 }
 
 

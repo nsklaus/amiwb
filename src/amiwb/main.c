@@ -207,7 +207,11 @@ int main(int argc, char *argv[]) {
     
     // Initialize workbench
     init_workbench();
-    
+
+    // Initialize XDND support
+    extern void xdnd_init(Display *dpy);
+    xdnd_init(get_display());
+
     // Initialize disk drives detection
     extern void diskdrives_init(void);
     diskdrives_init();
@@ -235,6 +239,8 @@ int main(int argc, char *argv[]) {
     extern void diskdrives_cleanup(void);
     diskdrives_cleanup();
     cleanup_workbench();
+    extern void xdnd_shutdown(Display *dpy);
+    xdnd_shutdown(get_display());
     // Finally close Display and render resources
     cleanup_intuition();
     cleanup_render();
