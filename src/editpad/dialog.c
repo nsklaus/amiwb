@@ -83,6 +83,11 @@ Dialog* dialog_create(Display *display, Window parent, DialogType type) {
     if (parent) {
         XSetTransientForHint(display, dialog->window, parent);
     }
+
+    // Tag with EditPad's app type for menu persistence
+    Atom app_type_atom = XInternAtom(display, "_AMIWB_APP_TYPE", False);
+    XChangeProperty(display, dialog->window, app_type_atom, XA_STRING, 8,
+                   PropModeReplace, (unsigned char *)"EDITPAD", 7);
     
     // Set window type to dialog
     Atom window_type = XInternAtom(display, "_NET_WM_WINDOW_TYPE", False);

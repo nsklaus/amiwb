@@ -16,28 +16,37 @@ AMIWB_DIR = src/amiwb
 TOOLKIT_DIR = src/toolkit
 REQASL_DIR = src/reqasl
 EDITPAD_DIR = src/editpad
+HOBBLER_DIR = src/hobbler
+IFF_LOADER_DIR = src/iff-loader
 
 # Source files
 AMIWB_SRCS = $(wildcard $(AMIWB_DIR)/*.c)
 TOOLKIT_SRCS = $(wildcard $(TOOLKIT_DIR)/*.c)
 REQASL_SRCS = $(wildcard $(REQASL_DIR)/*.c)
 EDITPAD_SRCS = $(wildcard $(EDITPAD_DIR)/*.c)
+HOBBLER_SRCS = $(wildcard $(HOBBLER_DIR)/*.c)
 
 # Object files
 AMIWB_OBJS = $(AMIWB_SRCS:.c=.o)
 TOOLKIT_OBJS = $(TOOLKIT_SRCS:.c=.o)
 REQASL_OBJS = $(REQASL_SRCS:.c=.o)
 EDITPAD_OBJS = $(EDITPAD_SRCS:.c=.o)
+HOBBLER_OBJS = $(HOBBLER_SRCS:.c=.o)
 
 # Executables
 AMIWB_EXEC = amiwb
 REQASL_EXEC = reqasl
 EDITPAD_EXEC = editpad
+HOBBLER_EXEC = hobbler
 TOOLKIT_LIB = libamiwb-toolkit.a
 REQASL_HOOK = reqasl_hook.so
+IFF_LOADER = libpixbufloader-iff.so
+
+# gdk-pixbuf loader directory
+GDK_PIXBUF_LOADER_DIR = $(shell pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)
 
 # Default target
-all: $(TOOLKIT_LIB) amiwb reqasl editpad $(REQASL_HOOK)
+all: $(TOOLKIT_LIB) amiwb reqasl editpad hobbler $(REQASL_HOOK) iff-loader
 
 # Toolkit library (built for installation)
 $(TOOLKIT_LIB): $(TOOLKIT_OBJS)
@@ -54,6 +63,10 @@ $(REQASL_EXEC): $(REQASL_OBJS) $(TOOLKIT_LIB)
 # EditPad text editor
 $(EDITPAD_EXEC): $(EDITPAD_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(EDITPAD_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
+
+# Hobbler browser - uses WebKit2GTK
+$(HOBBLER_EXEC): $(HOBBLER_OBJS) $(TOOLKIT_LIB)
+	$(CC) $(HOBBLER_OBJS) $(TOOLKIT_LIB) $(LIBS) `pkg-config --libs webkit2gtk-4.0` -o $@
 
 # ReqASL hook library for intercepting file dialogs
 $(REQASL_HOOK): $(REQASL_DIR)/reqasl_hook.c
@@ -72,10 +85,20 @@ $(REQASL_DIR)/%.o: $(REQASL_DIR)/%.c
 $(EDITPAD_DIR)/%.o: $(EDITPAD_DIR)/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -DEDITPAD_BUILD -c $< -o $@
 
+$(HOBBLER_DIR)/%.o: $(HOBBLER_DIR)/%.c
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) `pkg-config --cflags webkit2gtk-4.0` -c $< -o $@
+
+# IFF ILBM loader for gdk-pixbuf
+iff-loader: $(IFF_LOADER)
+
+$(IFF_LOADER): $(IFF_LOADER_DIR)/iff-ilbm-loader.c
+	$(CC) -shared -fPIC $(shell pkg-config --cflags gdk-pixbuf-2.0) \
+		$< -o $@ $(shell pkg-config --libs gdk-pixbuf-2.0)
+
 # Clean targets
 clean:
-	rm -f $(AMIWB_OBJS) $(TOOLKIT_OBJS) $(REQASL_OBJS) $(EDITPAD_OBJS)
-	rm -f $(AMIWB_EXEC) $(REQASL_EXEC) $(EDITPAD_EXEC) $(TOOLKIT_LIB) $(REQASL_HOOK)
+	rm -f $(AMIWB_OBJS) $(TOOLKIT_OBJS) $(REQASL_OBJS) $(EDITPAD_OBJS) $(HOBBLER_OBJS)
+	rm -f $(AMIWB_EXEC) $(REQASL_EXEC) $(EDITPAD_EXEC) $(HOBBLER_EXEC) $(TOOLKIT_LIB) $(REQASL_HOOK) $(IFF_LOADER)
 	rm -f src/*.o  # Clean any stray object files
 	@echo "Clean complete"
 
@@ -91,13 +114,16 @@ clean-reqasl:
 clean-editpad:
 	rm -f $(EDITPAD_OBJS) $(EDITPAD_EXEC)
 
+clean-hobbler:
+	rm -f $(HOBBLER_OBJS) $(HOBBLER_EXEC)
+
 # Install targets
 # Order is important:
 # 1st: toolkit needs to be installed first (amiwb and reqasl depend on it)
 # 2nd: amiwb needs to be installed second (main window manager)
 # 3rd: reqasl needs to be installed third (uses amiwb for window management)
 # 4th: editpad needs to be installed fourth (text editor)
-install: install-toolkit install-amiwb install-reqasl install-editpad
+install: install-toolkit install-amiwb install-reqasl install-editpad install-iff-loader
 
 # 1st: Install toolkit library and headers (required by amiwb and reqasl)
 install-toolkit: $(TOOLKIT_LIB)
@@ -184,6 +210,13 @@ install-editpad: editpad
 	fi
 	@echo "EditPad installed"
 
+# Install IFF ILBM loader for gdk-pixbuf
+install-iff-loader: $(IFF_LOADER)
+	@echo "Installing IFF ILBM loader to $(GDK_PIXBUF_LOADER_DIR)"
+	cp $(IFF_LOADER) $(GDK_PIXBUF_LOADER_DIR)/
+	gdk-pixbuf-query-loaders-64 --update-cache
+	@echo "IFF ILBM support installed - imv and GTK apps can now display IFF files!"
+
 uninstall:
 	rm -f /usr/local/bin/amiwb
 	rm -f /usr/local/bin/reqasl
@@ -192,6 +225,8 @@ uninstall:
 	rm -f /usr/local/lib/reqasl_hook.so
 	rm -rf /usr/local/include/amiwb
 	rm -rf /usr/local/share/amiwb
+	rm -f $(GDK_PIXBUF_LOADER_DIR)/$(IFF_LOADER)
+	gdk-pixbuf-query-loaders-64 --update-cache
 	@echo "AMIWB uninstalled"
 
 # Test targets

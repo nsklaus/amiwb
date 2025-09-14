@@ -817,7 +817,80 @@ const SITE_MODIFICATIONS = {
       }
     }
   },
-  
+
+  'obligement.free.fr': {
+    selectors: {
+      // Main backgrounds
+      'body': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0'
+      },
+      'html': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0'
+      },
+      // Content areas
+      'div, main, article, section': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0'
+      },
+      // Tables
+      'table': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0'
+      },
+      'td, th': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0'
+      },
+      // IMPORTANT: Keep images in table cells visible
+      'td img, th img': {
+        'display': 'inline',
+        'visibility': 'visible',
+        'opacity': '1',
+        'background-color': 'transparent',
+        'background': 'transparent'
+      },
+      // All images should remain visible
+      'img': {
+        'display': 'inline',
+        'visibility': 'visible',
+        'opacity': '1',
+        'background-color': 'transparent',
+        'background': 'transparent'
+      },
+      // Fix text colors for readability
+      'p, span, div, td, th, li, h1, h2, h3, h4, h5, h6, article, section': {
+        'color': '#000000'
+      },
+      // Links
+      'a:not(:visited)': {
+        'color': '#000cda'
+      },
+      'a:visited': {
+        'color': '#551a8b'
+      },
+      // Remove white backgrounds
+      '[style*="background: white" i], [style*="background-color: white" i]': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0'
+      },
+      '[style*="background:#fff" i], [style*="background-color:#fff" i]': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0'
+      },
+      '[style*="background: #fff" i], [style*="background-color: #fff" i]': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0'
+      },
+      // Remove shadows
+      '*': {
+        'box-shadow': 'none',
+        'text-shadow': 'none'
+      }
+    }
+  },
+
   'online-go.com': {
     selectors: {
       // Main backgrounds - replace white with gray

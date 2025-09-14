@@ -147,7 +147,7 @@ bool button_handle_release(Button *button, int click_x, int click_y) {
     }
 
     bool was_pressed = button->pressed;
-    button->pressed = false;
+    button->pressed = false;  // ALWAYS clear pressed state on any release
 
     if (was_pressed &&
         click_x >= button->x && click_x < button->x + button->width &&
@@ -158,7 +158,9 @@ bool button_handle_release(Button *button, int click_x, int click_y) {
         }
         return true;
     }
-    return false;
+
+    // Return true if we cleared pressed state (need redraw)
+    return was_pressed;
 }
 
 bool button_is_clicked(Button *button) {

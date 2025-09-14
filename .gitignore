@@ -46,6 +46,10 @@ amiwb.log
 plan_claude.md
 amiwb_lldb.log
 docs/
+editpad
+editpad.log
+reqasl
+reqasl.log
 
 # Debug files
 *.dSYM/

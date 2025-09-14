@@ -532,27 +532,29 @@ bool inputfield_handle_click(InputField *field, int click_x, int click_y) {
     if (!field) {
         return false;
     }
-    
+
     // Disabled fields cannot receive focus
     if (field->disabled) {
         return false;
     }
-    
+
     if (click_x >= field->x && click_x < field->x + field->width &&
         click_y >= field->y && click_y < field->y + field->height) {
         field->has_focus = true;
-        
+
         // Position cursor based on click location using stored font
         // We need Display which we don't have here, so we'll need the caller to set cursor_pos
         // For now just clear selection and prepare for mouse tracking
         field->selection_start = -1;
         field->selection_end = -1;
-        
+
         // Don't set mouse_selecting here - caller needs to do it after setting cursor_pos
-        
+
         return true;
     }
-    
+
+    // Click outside field - lose focus
+    field->has_focus = false;
     return false;
 }
 

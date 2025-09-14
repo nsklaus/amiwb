@@ -69,6 +69,52 @@ static int system_menu_item_count = 0;     // System menu count backup
 static bool app_menu_active = false;       // True when app menus are shown
 static Window current_app_window = None;   // Window that owns current app menus
 
+// App menu caching system - cache menus by app type for multi-window support
+typedef struct AppMenuCache {
+    char app_type[32];              // App type identifier (e.g., "EDITPAD")
+    char **menu_items;              // Cached menu bar items
+    Menu **submenus;                // Cached submenu structures
+    int menu_item_count;            // Number of menu items
+    struct AppMenuCache *next;      // Linked list next pointer
+} AppMenuCache;
+
+static AppMenuCache *cached_apps = NULL;   // Head of cached app menus list
+
+// Find cached app menus by app type
+static AppMenuCache* find_cached_app(const char *app_type) {
+    AppMenuCache *current = cached_apps;
+    while (current) {
+        if (strcmp(current->app_type, app_type) == 0) {
+            return current;
+        }
+        current = current->next;
+    }
+    return NULL;
+}
+
+// Cache app menus for reuse by multiple instances
+static void cache_app_menus(const char *app_type, char **menu_items, Menu **submenus, int menu_count) {
+    // Check if already cached
+    if (find_cached_app(app_type)) {
+        return;  // Already cached
+    }
+
+    // Create new cache entry
+    AppMenuCache *cache = calloc(1, sizeof(AppMenuCache));
+    if (!cache) {
+        log_error("[ERROR] Failed to allocate memory for app menu cache");
+        exit(1);  // Fatal - can't continue without memory
+    }
+    snprintf(cache->app_type, sizeof(cache->app_type), "%s", app_type);
+    cache->menu_items = menu_items;
+    cache->submenus = submenus;
+    cache->menu_item_count = menu_count;
+
+    // Add to head of list
+    cache->next = cached_apps;
+    cached_apps = cache;
+}
+
 // Resolve menu resources from user config first, then system dir.
 static char *get_resource_path(const char *rel_path) {
     char *home = getenv("HOME");
@@ -2943,7 +2989,10 @@ static void parse_and_switch_app_menus(const char *app_name, const char *menu_da
     }
     
     free(data_copy);
-    
+
+    // Cache the menus for reuse by other instances
+    cache_app_menus(app_name, menu_items, submenus, menu_count);
+
     // Switch to the parsed menus
     switch_to_app_menu(app_name, menu_items, submenus, menu_count, app_window);
 }
@@ -3031,45 +3080,54 @@ void check_for_app_menus(Window win) {
         restore_system_menu();
         return;
     }
-    
+
     Display *dpy = get_display();
     if (!dpy) return;
-    
+
     // Define atoms for app properties
     Atom type_atom = XInternAtom(dpy, "_AMIWB_APP_TYPE", False);
-    Atom menu_atom = XInternAtom(dpy, "_AMIWB_MENU_DATA", False);
     Atom actual_type;
     int actual_format;
     unsigned long nitems, bytes_after;
     unsigned char *app_type = NULL;
-    unsigned char *menu_data = NULL;
-    
+
     // Check if window has _AMIWB_APP_TYPE property
     if (XGetWindowProperty(dpy, win, type_atom, 0, 1024, False,
                           AnyPropertyType, &actual_type, &actual_format,
                           &nitems, &bytes_after, &app_type) == Success && app_type) {
-        
+
         // Found toolkit app
-        
-        // It's a toolkit app! Get menu data
-        if (XGetWindowProperty(dpy, win, menu_atom, 0, 65536, False,
-                              AnyPropertyType, &actual_type, &actual_format,
-                              &nitems, &bytes_after, &menu_data) == Success && menu_data) {
-            
-            // Found menu data
-            
-            // Parse menu data and switch menus
-            parse_and_switch_app_menus((char*)app_type, (char*)menu_data, win);
-            
-            XFree(menu_data);
-            
-            // Also update menu states if available
+
+        // Check if we have cached menus for this app type
+        AppMenuCache *cached = find_cached_app((char*)app_type);
+        if (cached) {
+            // Use cached menus - multiple instances share same menu structure
+            switch_to_app_menu((char*)app_type, cached->menu_items,
+                             cached->submenus, cached->menu_item_count, win);
+
+            // Update menu states if available
             update_app_menu_states(win);
+        } else {
+            // First instance of this app type - need to read menu data
+            Atom menu_atom = XInternAtom(dpy, "_AMIWB_MENU_DATA", False);
+            unsigned char *menu_data = NULL;
+
+            if (XGetWindowProperty(dpy, win, menu_atom, 0, 65536, False,
+                                  AnyPropertyType, &actual_type, &actual_format,
+                                  &nitems, &bytes_after, &menu_data) == Success && menu_data) {
+
+                // Found menu data - parse and cache it
+                parse_and_switch_app_menus((char*)app_type, (char*)menu_data, win);
+
+                XFree(menu_data);
+
+                // Also update menu states if available
+                update_app_menu_states(win);
+            }
         }
         XFree(app_type);
     } else {
         // Not a toolkit app - restore system menus
-        // Not a toolkit app, restoring system menus
         restore_system_menu();
     }
 }
