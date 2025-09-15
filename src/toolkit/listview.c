@@ -266,6 +266,10 @@ bool listview_handle_click_with_time(ListView *lv, int x, int y, unsigned int st
             lv->selected_index = -1;
         }
         lv->needs_redraw = true;
+        // Notify callback that selection was cleared
+        if (lv->on_select) {
+            lv->on_select(-1, NULL, lv->callback_data);
+        }
         return true;
     }
     
@@ -283,6 +287,10 @@ bool listview_handle_click_with_time(ListView *lv, int x, int y, unsigned int st
                 lv->selected_index = -1;
             }
             lv->needs_redraw = true;
+            // Notify callback that selection was cleared
+            if (lv->on_select) {
+                lv->on_select(-1, NULL, lv->callback_data);
+            }
             return true;
         }
         
@@ -302,6 +310,10 @@ bool listview_handle_click_with_time(ListView *lv, int x, int y, unsigned int st
                 lv->selected_index = -1;
             }
             lv->needs_redraw = true;
+            // Notify callback that selection was cleared
+            if (lv->on_select) {
+                lv->on_select(-1, NULL, lv->callback_data);
+            }
             return true;
         }
         

@@ -129,7 +129,8 @@ install: install-toolkit install-amiwb install-reqasl install-editpad install-ho
 # 1st: Install toolkit library and headers (required by amiwb and reqasl)
 install-toolkit: $(TOOLKIT_LIB)
 	mkdir -p /usr/local/lib
-	cp $(TOOLKIT_LIB) /usr/local/lib/
+	cp $(TOOLKIT_LIB) /usr/local/lib/libamiwb-toolkit.a.new
+	mv /usr/local/lib/libamiwb-toolkit.a.new /usr/local/lib/libamiwb-toolkit.a
 	mkdir -p /usr/local/include/amiwb/toolkit
 	cp $(TOOLKIT_DIR)/*.h /usr/local/include/amiwb/toolkit/
 	@echo "Toolkit library installed"
@@ -182,15 +183,18 @@ install-amiwb: amiwb
 # 3rd: Install reqasl file requester (requires toolkit and works with amiwb)
 install-reqasl: reqasl $(REQASL_HOOK)
 	mkdir -p /usr/local/bin
-	cp $(REQASL_EXEC) /usr/local/bin/
+	cp $(REQASL_EXEC) /usr/local/bin/reqasl.new
+	mv /usr/local/bin/reqasl.new /usr/local/bin/reqasl
 	mkdir -p /usr/local/lib
-	cp $(REQASL_HOOK) /usr/local/lib/
+	cp $(REQASL_HOOK) /usr/local/lib/reqasl_hook.so.new
+	mv /usr/local/lib/reqasl_hook.so.new /usr/local/lib/reqasl_hook.so
 	@echo "ReqASL installed"
 
 # 4th: Install editpad text editor
 install-editpad: editpad
 	mkdir -p /usr/local/bin
-	cp $(EDITPAD_EXEC) /usr/local/bin/
+	cp $(EDITPAD_EXEC) /usr/local/bin/editpad.new
+	mv /usr/local/bin/editpad.new /usr/local/bin/editpad
 	# Install desktop file for user
 	@if [ -n "$$SUDO_USER" ]; then \
 		USER_HOME=$$(getent passwd $$SUDO_USER | cut -d: -f6); \
@@ -214,13 +218,15 @@ install-editpad: editpad
 # Install hobbler web browser
 install-hobbler: hobbler
 	mkdir -p /usr/local/bin
-	cp $(HOBBLER_EXEC) /usr/local/bin/
+	cp $(HOBBLER_EXEC) /usr/local/bin/hobbler.new
+	mv /usr/local/bin/hobbler.new /usr/local/bin/hobbler
 	@echo "Hobbler web browser installed"
 
 # Install IFF ILBM loader for gdk-pixbuf
 install-iff-loader: $(IFF_LOADER)
 	@echo "Installing IFF ILBM loader to $(GDK_PIXBUF_LOADER_DIR)"
-	cp $(IFF_LOADER) $(GDK_PIXBUF_LOADER_DIR)/
+	cp $(IFF_LOADER) $(GDK_PIXBUF_LOADER_DIR)/iff-loader.so.new
+	mv $(GDK_PIXBUF_LOADER_DIR)/iff-loader.so.new $(GDK_PIXBUF_LOADER_DIR)/iff-loader.so
 	gdk-pixbuf-query-loaders-64 --update-cache
 	@echo "IFF ILBM support installed - imv and GTK apps can now display IFF files!"
 

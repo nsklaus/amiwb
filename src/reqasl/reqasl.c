@@ -338,12 +338,12 @@ static void reqasl_update_menu_data(ReqASL *req) {
     if (req->show_hidden) {
         // Include checkmark when Show Hidden is on
         snprintf(menu_data, sizeof(menu_data),
-                "File:Open|Edit:New Drawer,Rename,Delete,Add Place,Del Place|View:By Names,By Date,%s Show Hidden",
+                "File:Open|Edit:New Drawer,Rename,Delete,Select Files,Select None|View:By Names,By Date,%s Show Hidden|Locations:Add Place,Del Place",
                 CHECKMARK);
     } else {
         // No checkmark when Show Hidden is off
         snprintf(menu_data, sizeof(menu_data),
-                "File:Open|Edit:New Drawer,Rename,Delete,Add Place,Del Place|View:By Names,By Date,Show Hidden");
+                "File:Open|Edit:New Drawer,Rename,Delete,Select Files,Select None|View:By Names,By Date,Show Hidden|Locations:Add Place,Del Place");
     }
 
     // Update the property
@@ -462,35 +462,47 @@ static void reqasl_update_menu_states(ReqASL *req) {
     // New Drawer (0): Always enabled for now
     // Rename (1): Disabled for now (needs dialog)
     // Delete (2): Disabled for now (needs warning dialog first)
+    // Select Files (3): Enabled when multi-select is on
+    // Select None (4): Enabled when multi-select is on
     written = snprintf(p, remaining, "1,0,1;");  // Edit > New Drawer (enabled)
     p += written;
     remaining -= written;
-    
+
     written = snprintf(p, remaining, "1,1,0;");  // Edit > Rename (disabled)
     p += written;
     remaining -= written;
-    
+
     written = snprintf(p, remaining, "1,2,0;");  // Edit > Delete (disabled)
     p += written;
     remaining -= written;
 
-    // Add Place (3): Enable if not already in user-dirs.dirs and not in Locations view
-    bool can_add_place = !req->showing_locations && !path_exists_in_user_dirs(req->current_path);
-    written = snprintf(p, remaining, "1,3,%d;", can_add_place ? 1 : 0);
+    // Select Files/None are enabled when multi-select is active
+    written = snprintf(p, remaining, "1,3,%d;", req->multi_select_enabled ? 1 : 0);  // Edit > Select Files
     p += written;
     remaining -= written;
 
-    // Del Place (4): Enable if in user-dirs.dirs but NOT a standard XDG directory
-    bool can_del_place = !req->showing_locations &&
-                         path_exists_in_user_dirs(req->current_path) &&
-                         !is_standard_xdg_dir(req->current_path);
-    written = snprintf(p, remaining, "1,4,%d;", can_del_place ? 1 : 0);
+    written = snprintf(p, remaining, "1,4,%d;", req->multi_select_enabled ? 1 : 0);  // Edit > Select None
     p += written;
     remaining -= written;
 
     // View menu (index 2)
     // By Names (0), By Date (1): Both disabled for now (stubs)
-    written = snprintf(p, remaining, "2,0,0;2,1,0");  // View items disabled
+    written = snprintf(p, remaining, "2,0,0;2,1,0;");  // View items disabled
+    p += written;
+    remaining -= written;
+
+    // Locations menu (index 3)
+    // Add Place (0): Enable if not already in user-dirs.dirs and not in Locations view
+    bool can_add_place = !req->showing_locations && !path_exists_in_user_dirs(req->current_path);
+    written = snprintf(p, remaining, "3,0,%d;", can_add_place ? 1 : 0);
+    p += written;
+    remaining -= written;
+
+    // Del Place (1): Enable if in user-dirs.dirs but NOT a standard XDG directory
+    bool can_del_place = !req->showing_locations &&
+                         path_exists_in_user_dirs(req->current_path) &&
+                         !is_standard_xdg_dir(req->current_path);
+    written = snprintf(p, remaining, "3,1,%d", can_del_place ? 1 : 0);
     p += written;
     remaining -= written;
     
@@ -2509,15 +2521,62 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                             // TODO: Delete selected files/directories
                             // TODO: Refresh file list
                             break;
-                        case 3:  // Add Place
-                            add_user_place(req, req->current_path);
-                            // Update menu states after adding place
-                            reqasl_update_menu_states(req);
+                        case 3:  // Select Files
+                            if (req->listview && req->multi_select_enabled) {
+                                // Clear previous selections first
+                                listview_clear_selection(req->listview);
+
+                                // Select only files, not directories
+                                int file_count = 0;
+                                for (int i = 0; i < req->entry_count && i < req->listview->item_count; i++) {
+                                    if (req->entries[i]->type == TYPE_FILE) {
+                                        req->listview->selected[i] = true;
+                                        file_count++;
+                                    }
+                                }
+                                req->listview->selection_count = file_count;
+                                req->listview->needs_redraw = true;
+
+                                // Update file field based on selection
+                                if (file_count > 0) {
+                                    char display_text[NAME_SIZE];
+                                    if (file_count == 1) {
+                                        // Find the single selected file
+                                        for (int i = 0; i < req->entry_count; i++) {
+                                            if (req->entries[i]->type == TYPE_FILE && req->listview->selected[i]) {
+                                                snprintf(display_text, sizeof(display_text), "%s", req->entries[i]->name);
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        snprintf(display_text, sizeof(display_text), "%d files selected", file_count);
+                                    }
+                                    snprintf(req->file_text, PATH_SIZE, "%s", display_text);
+                                    if (req->file_field) {
+                                        inputfield_set_text(req->file_field, display_text);
+                                    }
+                                } else {
+                                    // No files, clear the field
+                                    req->file_text[0] = '\0';
+                                    if (req->file_field) {
+                                        inputfield_set_text(req->file_field, "");
+                                    }
+                                }
+
+                                draw_window(req);
+                            }
                             break;
-                        case 4:  // Del Place
-                            remove_user_place(req, req->current_path);
-                            // Update menu states after removing place
-                            reqasl_update_menu_states(req);
+                        case 4:  // Select None
+                            if (req->listview && req->multi_select_enabled) {
+                                // Clear all selections
+                                listview_clear_selection(req->listview);
+                                // Clear the file field
+                                req->file_text[0] = '\0';
+                                if (req->file_field) {
+                                    inputfield_set_text(req->file_field, "");
+                                }
+                                draw_window(req);
+                            }
                             break;
                     }
                 }
@@ -2540,6 +2599,21 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                             break;
                     }
                 }
+                // Handle Locations menu (index 3)
+                else if (menu_index == 3) {
+                    switch (item_index) {
+                        case 0:  // Add Place
+                            add_user_place(req, req->current_path);
+                            // Update menu states after adding place
+                            reqasl_update_menu_states(req);
+                            break;
+                        case 1:  // Del Place
+                            remove_user_place(req, req->current_path);
+                            // Update menu states after removing place
+                            reqasl_update_menu_states(req);
+                            break;
+                    }
+                }
                 return true;
             }
             break;
@@ -2550,8 +2624,21 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
 
 static void listview_select_callback(int index, const char *text, void *user_data) {
     ReqASL *req = (ReqASL *)user_data;
-    if (!req || index < 0 || index >= req->entry_count) return;
-    
+    if (!req) return;
+
+    // Handle selection cleared (index -1)
+    if (index < 0) {
+        req->selected_index = -1;
+        // Clear the file field
+        req->file_text[0] = '\0';
+        if (req->file_field) {
+            inputfield_set_text(req->file_field, "");
+        }
+        return;
+    }
+
+    if (index >= req->entry_count) return;
+
     req->selected_index = index;
     
     
