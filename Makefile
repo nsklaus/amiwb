@@ -123,7 +123,8 @@ clean-hobbler:
 # 2nd: amiwb needs to be installed second (main window manager)
 # 3rd: reqasl needs to be installed third (uses amiwb for window management)
 # 4th: editpad needs to be installed fourth (text editor)
-install: install-toolkit install-amiwb install-reqasl install-editpad install-iff-loader
+# 5th: hobbler is the web browser
+install: install-toolkit install-amiwb install-reqasl install-editpad install-hobbler install-iff-loader
 
 # 1st: Install toolkit library and headers (required by amiwb and reqasl)
 install-toolkit: $(TOOLKIT_LIB)
@@ -210,6 +211,12 @@ install-editpad: editpad
 	fi
 	@echo "EditPad installed"
 
+# Install hobbler web browser
+install-hobbler: hobbler
+	mkdir -p /usr/local/bin
+	cp $(HOBBLER_EXEC) /usr/local/bin/
+	@echo "Hobbler web browser installed"
+
 # Install IFF ILBM loader for gdk-pixbuf
 install-iff-loader: $(IFF_LOADER)
 	@echo "Installing IFF ILBM loader to $(GDK_PIXBUF_LOADER_DIR)"
@@ -221,6 +228,7 @@ uninstall:
 	rm -f /usr/local/bin/amiwb
 	rm -f /usr/local/bin/reqasl
 	rm -f /usr/local/bin/editpad
+	rm -f /usr/local/bin/hobbler
 	rm -f /usr/local/lib/libamiwb-toolkit.a
 	rm -f /usr/local/lib/reqasl_hook.so
 	rm -rf /usr/local/include/amiwb

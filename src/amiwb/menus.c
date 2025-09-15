@@ -2765,6 +2765,11 @@ void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus
         log_error("[WARNING] switch_to_app_menu called with invalid parameters");
         return;
     }
+
+    // Don't switch menus during shutdown/restart - menubar might be destroyed
+    if (!menubar->canvas) {
+        return;  // Menubar canvas already destroyed, we're shutting down
+    }
     
     // Save system menus on first app menu activation
     if (!system_menu_items && !app_menu_active) {
@@ -2805,6 +2810,11 @@ void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus
 void restore_system_menu(void) {
     if (!app_menu_active || !system_menu_items) {
         return;  // Already showing system menus or not initialized
+    }
+
+    // Don't restore menus during shutdown/restart - menubar might be destroyed
+    if (!menubar || !menubar->canvas) {
+        return;  // Menubar or its canvas already destroyed, we're shutting down
     }
     
     // Restore logo

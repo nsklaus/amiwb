@@ -669,6 +669,9 @@ void redraw_canvas(Canvas *canvas) {
         Menu *menu = get_menu_by_canvas(canvas);
         if (!menu) return;
 
+    // Safety check - font might be NULL during shutdown/restart
+    if (!font) return;
+
     // Use cached XftDraw instead of creating a new one
     if (!canvas->xft_draw) {
         log_error("[WARNING] No cached XftDraw for menu rendering");
