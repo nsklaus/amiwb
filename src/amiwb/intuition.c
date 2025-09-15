@@ -2524,8 +2524,16 @@ void intuition_handle_configure_notify(XConfigureEvent *event) {
 
 // Handle XRandR screen size changes: resize desktop/menubar and reload wallpapers
 void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
+    // CRITICAL: Update the Display structure's cached dimensions
+    // Without this, DisplayWidth()/DisplayHeight() will return stale values
+    XRRUpdateConfiguration((XEvent *)event);
+
     width = event->width;
     height = event->height;
+
+    // Close any open menus since their positions are now invalid
+    extern void close_all_menus(void);
+    close_all_menus();
 
     Canvas *desktop = get_desktop_canvas();
     if (desktop) {
@@ -2635,8 +2643,15 @@ void destroy_canvas(Canvas *canvas) {
 
     // Free X11 resources in safe order
     send_x_command_and_sync();
-    
-    // Skip X11 operations if shutting down or display is invalid
+
+    // Critical: Always clean up XftDraw to prevent crash during XCloseDisplay
+    // XftDraw objects reference fonts, must be freed before font cleanup
+    if (dpy && canvas->xft_draw) {
+        XftDrawDestroy(canvas->xft_draw);
+        canvas->xft_draw = NULL;
+    }
+
+    // Skip other X11 operations if shutting down or display is invalid
     if (!g_shutting_down && dpy) {
         // Free pre-allocated Xft colors
         if (canvas->xft_colors_allocated) {
@@ -2645,12 +2660,6 @@ void destroy_canvas(Canvas *canvas) {
             XftColorFree(dpy, canvas->visual, canvas->colormap, &canvas->xft_blue);
             XftColorFree(dpy, canvas->visual, canvas->colormap, &canvas->xft_gray);
             canvas->xft_colors_allocated = false;
-        }
-        
-        // Free XftDraw if allocated
-        if (canvas->xft_draw) {
-            XftDrawDestroy(canvas->xft_draw);
-            canvas->xft_draw = NULL;
         }
         
         // Free render resources

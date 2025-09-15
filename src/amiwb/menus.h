@@ -40,6 +40,7 @@ void set_app_menu(Menu *app_menu);                              // Set menubar t
 void menu_handle_button_press(XButtonEvent *event);             // Handle button press for dropdown menus
 void menu_handle_menubar_press(XButtonEvent *event);            // Handle button press for menubar
 void close_window_list_if_open(void);                           // Close window list menu if it's open
+void close_all_menus(void);                                     // Close all open menus (resolution change)
 void menu_handle_motion_notify(XMotionEvent *event);            // Handle motion for dropdown menus
 void menu_handle_menubar_motion(XMotionEvent *event);           // Handle motion for menubar
 void menu_handle_button_release(XButtonEvent *event);
