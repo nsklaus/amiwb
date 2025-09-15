@@ -1,0 +1,2 @@
+[binds]
+o = exec sh -c 'files=$(reqasl --mode open --title "Open Images" --pattern "jpg,jpeg,png,gif,iff"); if [ -n "$files" ]; then imv-msg "$imv_pid" "open $files"; fi'

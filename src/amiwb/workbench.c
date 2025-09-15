@@ -851,36 +851,40 @@ static void end_drag_icon(Canvas *canvas) {
             // Synchronous move completed - create icon now
             // Icon position already calculated above (place_x, place_y)
 
-            // Choose icon image path for the new icon:
-            // 1) Sidecar .info if present
-            // 2) def_icons fallback per extension (matches refresh logic)
-            // 3) The file itself (last resort)
-            char info_path[PATH_SIZE];
-            int ret = snprintf(info_path, sizeof(info_path), "%s.info", dst_path);
-            if (ret >= PATH_SIZE) {
-                log_error("[ERROR] Icon path too long, operation cancelled: %s.info", dst_path);
-                return;  // Cancel the operation
-            }
-            
+            // Get the file name for the icon
+            const char *base = strrchr(dst_path, '/');
+            const char *name_only = base ? base + 1 : dst_path;
+
             // Determine the actual file type BEFORE creating the icon
             struct stat dst_stat;
             int file_type = TYPE_FILE;  // Default to file
             if (stat(dst_path, &dst_stat) == 0) {
                 file_type = S_ISDIR(dst_stat.st_mode) ? TYPE_DRAWER : TYPE_FILE;
             }
-            
-            // Get the file name for the icon
-            const char *base = strrchr(dst_path, '/');
-            const char *name_only = base ? base + 1 : dst_path;
-            
-            // Determine which icon image to use
-            struct stat st_info;
+
+            // Choose icon image path for the new icon:
+            // Special case: standalone .info files use themselves as their icon
             const char *img_path = NULL;
-            if (stat(info_path, &st_info) == 0) {
-                img_path = info_path;
+            if (ends_with(name_only, ".info")) {
+                // This is a .info file - use it as its own icon
+                // (matches behavior in refresh_canvas_from_directory)
+                img_path = dst_path;
             } else {
-                const char *fallback_def = definfo_for_file(name_only, file_type == TYPE_DRAWER);
-                img_path = fallback_def ? fallback_def : dst_path;
+                // Regular file - check for sidecar .info
+                char info_path[PATH_SIZE];
+                int ret = snprintf(info_path, sizeof(info_path), "%s.info", dst_path);
+                if (ret >= PATH_SIZE) {
+                    log_error("[ERROR] Icon path too long, operation cancelled: %s.info", dst_path);
+                    return;  // Cancel the operation
+                }
+
+                struct stat st_info;
+                if (stat(info_path, &st_info) == 0) {
+                    img_path = info_path;
+                } else {
+                    const char *fallback_def = definfo_for_file(name_only, file_type == TYPE_DRAWER);
+                    img_path = fallback_def ? fallback_def : dst_path;
+                }
             }
             
             // Use create_icon_with_metadata to properly set all icon properties

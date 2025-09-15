@@ -291,8 +291,8 @@ ReqASL* reqasl_create(Display *display) {
     // Set menu data
     // File > Open: opens selected files (same as OK button)
     // Edit > New Drawer, Rename, Delete: stubs for now
-    // View > By Names, By Date: stubs for sorting options
-    const char *menu_data = "File:Open|Edit:New Drawer,Rename,Delete|View:By Names,By Date";
+    // View > By Names, By Date, Show Hidden: sorting and visibility options
+    const char *menu_data = "File:Open|Edit:New Drawer,Rename,Delete|View:By Names,By Date,Show Hidden";
     XChangeProperty(display, req->window, menu_data_atom,
                    XA_STRING, 8, PropModeReplace,
                    (unsigned char*)menu_data, strlen(menu_data));
@@ -332,6 +332,30 @@ void reqasl_destroy(ReqASL *req) {
     
     free_entries(req);
     free(req);
+}
+
+// Update menu data to show checkmark for Show Hidden toggle
+static void reqasl_update_menu_data(ReqASL *req) {
+    if (!req || !req->display || !req->window) return;
+
+    // Build menu data string with or without checkmark for Show Hidden
+    char menu_data[256];
+    if (req->show_hidden) {
+        // Include checkmark when Show Hidden is on
+        snprintf(menu_data, sizeof(menu_data),
+                "File:Open|Edit:New Drawer,Rename,Delete|View:By Names,By Date,%s Show Hidden",
+                CHECKMARK);
+    } else {
+        // No checkmark when Show Hidden is off
+        snprintf(menu_data, sizeof(menu_data),
+                "File:Open|Edit:New Drawer,Rename,Delete|View:By Names,By Date,Show Hidden");
+    }
+
+    // Update the property
+    Atom menu_data_atom = XInternAtom(req->display, "_AMIWB_MENU_DATA", False);
+    XChangeProperty(req->display, req->window, menu_data_atom,
+                   XA_STRING, 8, PropModeReplace,
+                   (unsigned char*)menu_data, strlen(menu_data));
 }
 
 // Update menu item enable/disable states
@@ -2009,6 +2033,14 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                             break;
                         case 1:  // By Date
                             // TODO: Implement date sorting
+                            break;
+                        case 2:  // Show Hidden
+                            // Toggle show_hidden state
+                            req->show_hidden = !req->show_hidden;
+                            // Update menu to show/hide checkmark
+                            reqasl_update_menu_data(req);
+                            // Refresh directory listing with new hidden state
+                            reqasl_refresh(req);
                             break;
                     }
                 }
