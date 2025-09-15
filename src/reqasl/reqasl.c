@@ -1,5 +1,5 @@
 #include "reqasl.h"
-#include "../amiwb/config.h"
+#include "config.h"
 #include "../toolkit/button.h"
 #include "../toolkit/inputfield.h"
 #include "../toolkit/listview.h"
@@ -20,13 +20,14 @@
 #include <time.h>
 #include <pwd.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 // Initialize log file with timestamp header (overwrites previous log)
 static void reqasl_log_init(void) {
     const char *home = getenv("HOME");
     if (!home) return;
     
-    char log_path[512];
+    char log_path[PATH_SIZE];
     snprintf(log_path, sizeof(log_path), "%s/Sources/amiwb/reqasl.log", home);
     
     FILE *lf = fopen(log_path, "w");  // "w" to overwrite each run
@@ -35,7 +36,7 @@ static void reqasl_log_init(void) {
         time_t now = time(NULL);
         struct tm tm;
         localtime_r(&now, &tm);
-        char ts[128];
+        char ts[NAME_SIZE];
         strftime(ts, sizeof(ts), "%a %d %b %Y - %H:%M", &tm);
         fprintf(lf, "ReqASL log file, started on: %s\n", ts);
         fprintf(lf, "----------------------------------------\n");
@@ -52,7 +53,7 @@ void log_error(const char *format, ...) {
     const char *home = getenv("HOME");
     if (!home) return;
     
-    char log_path[512];
+    char log_path[PATH_SIZE];
     snprintf(log_path, sizeof(log_path), "%s/Sources/amiwb/reqasl.log", home);
     
     FILE *debug_file = fopen(log_path, "a");
@@ -93,6 +94,7 @@ static int compare_entries(const void *a, const void *b);
 static void listview_select_callback(int index, const char *text, void *user_data);
 static void listview_double_click_callback(int index, const char *text, void *user_data);
 static bool reqasl_execute_action(ReqASL *req);
+static void reqasl_update_menu_data(ReqASL *req);
 
 ReqASL* reqasl_create(Display *display) {
     if (!display) return NULL;
@@ -280,23 +282,16 @@ ReqASL* reqasl_create(Display *display) {
     
     // Register with AmiWB for menu substitution
     Atom app_type_atom = XInternAtom(display, "_AMIWB_APP_TYPE", False);
-    Atom menu_data_atom = XInternAtom(display, "_AMIWB_MENU_DATA", False);
-    
+
     // Set app type
     const char *app_type = "ReqASL";
     XChangeProperty(display, req->window, app_type_atom,
                    XA_STRING, 8, PropModeReplace,
                    (unsigned char*)app_type, strlen(app_type));
     
-    // Set menu data
-    // File > Open: opens selected files (same as OK button)
-    // Edit > New Drawer, Rename, Delete: stubs for now
-    // View > By Names, By Date, Show Hidden: sorting and visibility options
-    const char *menu_data = "File:Open|Edit:New Drawer,Rename,Delete|View:By Names,By Date,Show Hidden";
-    XChangeProperty(display, req->window, menu_data_atom,
-                   XA_STRING, 8, PropModeReplace,
-                   (unsigned char*)menu_data, strlen(menu_data));
-    
+    // Set initial menu data using the update function to ensure consistency
+    reqasl_update_menu_data(req);
+
     return req;
 }
 
@@ -339,16 +334,16 @@ static void reqasl_update_menu_data(ReqASL *req) {
     if (!req || !req->display || !req->window) return;
 
     // Build menu data string with or without checkmark for Show Hidden
-    char menu_data[256];
+    char menu_data[NAME_SIZE * 2];  // Menu string buffer
     if (req->show_hidden) {
         // Include checkmark when Show Hidden is on
         snprintf(menu_data, sizeof(menu_data),
-                "File:Open|Edit:New Drawer,Rename,Delete|View:By Names,By Date,%s Show Hidden",
+                "File:Open|Edit:New Drawer,Rename,Delete,Add Place,Del Place|View:By Names,By Date,%s Show Hidden",
                 CHECKMARK);
     } else {
         // No checkmark when Show Hidden is off
         snprintf(menu_data, sizeof(menu_data),
-                "File:Open|Edit:New Drawer,Rename,Delete|View:By Names,By Date,Show Hidden");
+                "File:Open|Edit:New Drawer,Rename,Delete,Add Place,Del Place|View:By Names,By Date,Show Hidden");
     }
 
     // Update the property
@@ -358,13 +353,87 @@ static void reqasl_update_menu_data(ReqASL *req) {
                    (unsigned char*)menu_data, strlen(menu_data));
 }
 
+// Check if path is a standard XDG directory (protected from deletion)
+static bool is_standard_xdg_dir(const char *path) {
+    const char *home = getenv("HOME");
+    if (!home || !path) return false;
+
+    // Standard XDG directories that shouldn't be deleted
+    const char *standard_dirs[] = {
+        "Desktop", "Documents", "Downloads", "Music",
+        "Pictures", "Videos", "Templates", "Public",
+        NULL
+    };
+
+    // Check if path matches any standard directory
+    for (int i = 0; standard_dirs[i]; i++) {
+        char test_path[PATH_SIZE];
+        snprintf(test_path, sizeof(test_path), "%s/%s", home, standard_dirs[i]);
+        if (strcmp(path, test_path) == 0) {
+            return true;  // This is a protected standard directory
+        }
+    }
+    return false;
+}
+
+// Check if path already exists in user-dirs.dirs
+static bool path_exists_in_user_dirs(const char *path) {
+    const char *home = getenv("HOME");
+    if (!home || !path) return false;
+
+    char config_path[PATH_SIZE];
+    snprintf(config_path, sizeof(config_path), "%s/.config/user-dirs.dirs", home);
+
+    FILE *file = fopen(config_path, "r");
+    if (!file) return false;
+
+    char line[FULL_SIZE * 2];  // Line buffer for config file
+    bool found = false;
+
+    while (fgets(line, sizeof(line), file)) {
+        // Skip comments
+        if (line[0] == '#') continue;
+
+        // Parse XDG_xxx_DIR="path" lines
+        char *equals = strchr(line, '=');
+        if (!equals) continue;
+
+        char *value = equals + 1;
+        // Remove quotes and newline
+        if (*value == '"') value++;
+        char *end = strchr(value, '"');
+        if (end) *end = '\0';
+
+        // Build full path from value
+        char full_path[PATH_SIZE];
+        if (strncmp(value, "$HOME/", 6) == 0) {
+            snprintf(full_path, sizeof(full_path), "%s/%s", home, value + 6);
+        } else if (strncmp(value, "$HOME", 5) == 0) {
+            snprintf(full_path, sizeof(full_path), "%s%s", home, value + 5);
+        } else if (value[0] == '/') {
+            snprintf(full_path, sizeof(full_path), "%s", value);
+        } else {
+            snprintf(full_path, sizeof(full_path), "%s/%s", home, value);
+        }
+
+        // Check for exact match
+        if (strcmp(full_path, path) == 0) {
+            found = true;
+            break;
+        }
+    }
+
+    fclose(file);
+    return found;
+}
+
 // Update menu item enable/disable states
 static void reqasl_update_menu_states(ReqASL *req) {
     if (!req) return;
     
     // Build menu state string
     // Format: "menu_index,item_index,enabled;menu_index,item_index,enabled;..."
-    char menu_states[512];
+    char menu_states[PATH_SIZE];  // Menu state string
     char *p = menu_states;
     int remaining = sizeof(menu_states);
     
@@ -404,7 +473,21 @@ static void reqasl_update_menu_states(ReqASL *req) {
     written = snprintf(p, remaining, "1,2,0;");  // Edit > Delete (disabled)
     p += written;
     remaining -= written;
-    
+
+    // Add Place (3): Enable if not already in user-dirs.dirs and not in Locations view
+    bool can_add_place = !req->showing_locations && !path_exists_in_user_dirs(req->current_path);
+    written = snprintf(p, remaining, "1,3,%d;", can_add_place ? 1 : 0);
+    p += written;
+    remaining -= written;
+
+    // Del Place (4): Enable if in user-dirs.dirs but NOT a standard XDG directory
+    bool can_del_place = !req->showing_locations &&
+                         path_exists_in_user_dirs(req->current_path) &&
+                         !is_standard_xdg_dir(req->current_path);
+    written = snprintf(p, remaining, "1,4,%d;", can_del_place ? 1 : 0);
+    p += written;
+    remaining -= written;
+
     // View menu (index 2)
     // By Names (0), By Date (1): Both disabled for now (stubs)
     written = snprintf(p, remaining, "2,0,0;2,1,0");  // View items disabled
@@ -552,6 +635,8 @@ static void navigate_internal(ReqASL *req, const char *path, bool update_env) {
                 listview_clear_selection(req->listview);
             }
         }
+        // Update menu states for Add/Del Place based on new directory
+        reqasl_update_menu_states(req);
         draw_window(req);
     } else {
         // Path not valid
@@ -599,7 +684,7 @@ static bool matches_pattern(const char *filename, const char *pattern) {
     }
     
     // Handle multiple patterns separated by commas
-    char pattern_copy[256];
+    char pattern_copy[NAME_SIZE * 2];  // Pattern buffer
     strncpy(pattern_copy, pattern, sizeof(pattern_copy) - 1);
     pattern_copy[sizeof(pattern_copy) - 1] = '\0';
     
@@ -757,6 +842,389 @@ static void scan_directory(ReqASL *req, const char *path) {
         }
     } else {
         // No entries found
+    }
+}
+
+// Load user places from XDG user-dirs.dirs
+static void load_user_places(ReqASL *req, FileEntry ***entries, int *count) {
+    const char *home = getenv("HOME");
+    if (!home) return;
+
+    // Dynamic array to hold entries from user-dirs.dirs
+    // Start small and grow as needed
+    int capacity = 8;
+    *entries = malloc(capacity * sizeof(FileEntry*));
+    if (!*entries) return;
+    *count = 0;
+
+    // Read user-dirs.dirs if it exists
+    char config_path[PATH_SIZE];
+    snprintf(config_path, sizeof(config_path), "%s/.config/user-dirs.dirs", home);
+
+    FILE *file = fopen(config_path, "r");
+    if (!file) return;  // No file, no places
+
+    char line[FULL_SIZE * 2];  // Line buffer for config file
+    while (fgets(line, sizeof(line), file)) {
+        // Skip comments and empty lines
+        if (line[0] == '#' || line[0] == '\n') continue;
+
+        // Parse XDG_xxx_DIR="path" lines
+        char *equals = strchr(line, '=');
+        if (!equals) continue;
+
+        *equals = '\0';
+        char *var_name = line;
+        char *value = equals + 1;
+
+        // Remove quotes and newline
+        if (*value == '"') value++;
+        char *end = strchr(value, '"');
+        if (end) *end = '\0';
+
+        // Extract label from variable name (XDG_DESKTOP_DIR -> Desktop)
+        char label[NAME_SIZE];
+        if (strncmp(var_name, "XDG_", 4) == 0) {
+            char *name_start = var_name + 4;
+            char *dir_suffix = strstr(name_start, "_DIR");
+            if (dir_suffix) {
+                *dir_suffix = '\0';
+                // Convert from XDG format to display format
+                // DESKTOP -> Desktop
+                // AMIWB_SOURCES -> Amiwb Sources
+                // MY_CUSTOM_DIR -> My Custom Dir
+                snprintf(label, sizeof(label), "%s", name_start);
+
+                // Process the label character by character
+                bool start_of_word = true;
+                int j = 0;
+                for (int i = 0; name_start[i] && j < sizeof(label) - 1; i++) {
+                    if (name_start[i] == '_') {
+                        // Replace underscore with space
+                        label[j++] = ' ';
+                        start_of_word = true;
+                    } else {
+                        // Capitalize first letter of each word, lowercase the rest
+                        if (start_of_word) {
+                            label[j++] = toupper(name_start[i]);
+                            start_of_word = false;
+                        } else {
+                            label[j++] = tolower(name_start[i]);
+                        }
+                    }
+                }
+                label[j] = '\0';
+            } else {
+                continue;  // Not a valid _DIR entry
+            }
+        } else {
+            continue;  // Not an XDG entry
+        }
+
+        // Build full path
+        char full_path[PATH_SIZE];
+        if (strncmp(value, "$HOME/", 6) == 0) {
+            snprintf(full_path, sizeof(full_path), "%s/%s", home, value + 6);
+        } else if (strncmp(value, "$HOME", 5) == 0) {
+            snprintf(full_path, sizeof(full_path), "%s%s", home, value + 5);
+        } else if (value[0] == '/') {
+            snprintf(full_path, sizeof(full_path), "%s", value);
+        } else {
+            snprintf(full_path, sizeof(full_path), "%s/%s", home, value);
+        }
+
+        // Check if directory exists
+        struct stat st;
+        if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            // Grow array if needed
+            if (*count >= capacity) {
+                capacity *= 2;
+                FileEntry **new_entries = realloc(*entries, capacity * sizeof(FileEntry*));
+                if (!new_entries) {
+                    // Keep what we have so far
+                    break;
+                }
+                *entries = new_entries;
+            }
+
+            // Add entry with formatted display (label + full path)
+            FileEntry *entry = malloc(sizeof(FileEntry));
+            if (entry) {
+                // Replace home directory with ~ for display
+                char display_path[PATH_SIZE];
+                if (strncmp(full_path, home, strlen(home)) == 0) {
+                    // Path starts with home directory - replace with ~
+                    snprintf(display_path, sizeof(display_path), "~%s", full_path + strlen(home));
+                } else {
+                    // Not in home directory - show full path
+                    snprintf(display_path, sizeof(display_path), "%s", full_path);
+                }
+
+                // Format: "Label          (~/path)" with consistent spacing
+                char display_name[FULL_SIZE];
+                snprintf(display_name, sizeof(display_name), "%-15s (%s)", label, display_path);
+
+                entry->name = strdup(display_name);
+                entry->path = strdup(full_path);  // Keep full path for navigation
+                entry->type = TYPE_DRAWER;
+                entry->size = 0;
+                entry->modified = st.st_mtime;
+                (*entries)[(*count)++] = entry;
+            }
+        }
+    }
+
+    fclose(file);
+
+    // Sort entries: standard XDG dirs first, then custom entries
+    // Both groups sorted alphabetically
+    if (*count > 1) {
+        // Simple bubble sort is fine for small lists
+        for (int i = 0; i < *count - 1; i++) {
+            for (int j = i + 1; j < *count; j++) {
+                FileEntry *a = (*entries)[i];
+                FileEntry *b = (*entries)[j];
+
+                // Check if either is a standard XDG directory
+                bool a_is_standard = false;
+                bool b_is_standard = false;
+
+                const char *standard_names[] = {
+                    "Desktop ", "Documents ", "Downloads ", "Music ",
+                    "Pictures ", "Videos ", "Templates ", "Public ", NULL
+                };
+
+                for (int k = 0; standard_names[k]; k++) {
+                    if (strncmp(a->name, standard_names[k], strlen(standard_names[k])) == 0) {
+                        a_is_standard = true;
+                    }
+                    if (strncmp(b->name, standard_names[k], strlen(standard_names[k])) == 0) {
+                        b_is_standard = true;
+                    }
+                }
+
+                // Swap if needed (standard dirs come first, then alphabetical within each group)
+                bool should_swap = false;
+                if (a_is_standard && !b_is_standard) {
+                    should_swap = false;  // a is already in right place
+                } else if (!a_is_standard && b_is_standard) {
+                    should_swap = true;   // b should come before a
+                } else {
+                    // Both are same type, sort alphabetically
+                    should_swap = (strcmp(a->name, b->name) > 0);
+                }
+
+                if (should_swap) {
+                    (*entries)[i] = b;
+                    (*entries)[j] = a;
+                }
+            }
+        }
+    }
+}
+
+// Build the Locations view with user places only
+static void build_locations_view(ReqASL *req) {
+    // Free existing entries
+    free_entries(req);
+
+    // Get user places
+    FileEntry **user_places = NULL;
+    int place_count = 0;
+    load_user_places(req, &user_places, &place_count);
+
+    // Just use the user places directly
+    req->entries = user_places;
+    req->entry_count = place_count;
+    req->entry_capacity = place_count;
+    req->showing_locations = true;
+
+    // Reset selection and scroll
+    req->selected_index = -1;
+    req->scroll_offset = 0;
+}
+
+// Add current directory to user places in user-dirs.dirs
+static void add_user_place(ReqASL *req, const char *path) {
+    if (!path || !*path) return;
+
+    const char *home = getenv("HOME");
+    if (!home) return;
+
+    // Get the label - use last component of path
+    const char *last_slash = strrchr(path, '/');
+    const char *label = (last_slash && *(last_slash + 1)) ? last_slash + 1 : path;
+
+    // Don't add standard XDG directories - they're already there
+    const char *standard_dirs[] = {
+        "Desktop", "Documents", "Downloads", "Music", "Pictures", "Videos", NULL
+    };
+    for (int i = 0; standard_dirs[i]; i++) {
+        if (strcmp(label, standard_dirs[i]) == 0) {
+            // Standard directory - silently skip
+            return;
+        }
+    }
+
+    // Read existing user-dirs.dirs
+    char config_path[PATH_SIZE];
+    snprintf(config_path, sizeof(config_path), "%s/.config/user-dirs.dirs", home);
+
+    // Check if this path is already in the file (use proper check)
+    if (path_exists_in_user_dirs(path)) {
+        // Path already exists - silently skip
+        return;
+    }
+
+    // Append new entry
+    FILE *file = fopen(config_path, "a");
+    if (!file) {
+        fprintf(stderr, "[ERROR] Cannot open %s for writing\n", config_path);
+        return;
+    }
+
+    // Create XDG variable name from label (uppercase, replace spaces with underscore)
+    char var_name[NAME_SIZE];
+    snprintf(var_name, sizeof(var_name), "XDG_%s_DIR", label);
+    for (char *p = var_name; *p; p++) {
+        if (*p == ' ' || *p == '-') *p = '_';
+        else *p = toupper(*p);
+    }
+
+    // Write the entry
+    // If path starts with home, make it relative
+    if (strncmp(path, home, strlen(home)) == 0) {
+        const char *rel_path = path + strlen(home);
+        if (*rel_path == '/') rel_path++;  // Skip the slash
+        fprintf(file, "%s=\"$HOME/%s\"\n", var_name, rel_path);
+    } else {
+        fprintf(file, "%s=\"%s\"\n", var_name, path);
+    }
+
+    fclose(file);
+    // Place added successfully
+
+    // If we're in Locations view, refresh it
+    if (req->showing_locations) {
+        build_locations_view(req);
+        if (req->listview) {
+            listview_clear(req->listview);
+            for (int i = 0; i < req->entry_count; i++) {
+                FileEntry *fe = req->entries[i];
+                listview_add_item(req->listview, fe->name,
+                                fe->type == TYPE_DRAWER, fe);
+            }
+        }
+        draw_window(req);
+    }
+}
+
+// Remove current directory from user places
+static void remove_user_place(ReqASL *req, const char *path) {
+    if (!path || !*path) return;
+
+    const char *home = getenv("HOME");
+    if (!home) return;
+
+    // Don't remove standard XDG directories
+    if (is_standard_xdg_dir(path)) {
+        fprintf(stderr, "[WARNING] Cannot remove standard XDG directory: %s\n", path);
+        return;
+    }
+
+    char config_path[PATH_SIZE];
+    snprintf(config_path, sizeof(config_path), "%s/.config/user-dirs.dirs", home);
+
+    // Read existing file
+    FILE *file = fopen(config_path, "r");
+    if (!file) {
+        fprintf(stderr, "[WARNING] Cannot open %s for reading\n", config_path);
+        return;
+    }
+
+    // Create temp file (use FULL_SIZE to ensure room for .tmp suffix)
+    char temp_path[FULL_SIZE];
+    snprintf(temp_path, sizeof(temp_path), "%s.tmp", config_path);
+    FILE *temp = fopen(temp_path, "w");
+    if (!temp) {
+        fclose(file);
+        fprintf(stderr, "[ERROR] Cannot create temp file\n");
+        return;
+    }
+
+    // Copy all lines except the one with our exact path
+    char line[FULL_SIZE * 2];  // Line buffer for config file
+    bool removed = false;
+    while (fgets(line, sizeof(line), file)) {
+        // Always keep comments
+        if (line[0] == '#') {
+            fputs(line, temp);
+            continue;
+        }
+
+        // Parse the line to extract the path
+        char line_copy[FULL_SIZE * 2];  // Copy for parsing
+        snprintf(line_copy, sizeof(line_copy), "%s", line);
+
+        char *equals = strchr(line_copy, '=');
+        if (!equals) {
+            fputs(line, temp);  // Not a valid entry, keep it
+            continue;
+        }
+
+        char *value = equals + 1;
+        // Remove quotes and newline
+        if (*value == '"') value++;
+        char *end = strchr(value, '"');
+        if (end) *end = '\0';
+
+        // Build full path from value
+        char full_path[PATH_SIZE];
+        if (strncmp(value, "$HOME/", 6) == 0) {
+            snprintf(full_path, sizeof(full_path), "%s/%s", home, value + 6);
+        } else if (strncmp(value, "$HOME", 5) == 0) {
+            snprintf(full_path, sizeof(full_path), "%s%s", home, value + 5);
+        } else if (value[0] == '/') {
+            snprintf(full_path, sizeof(full_path), "%s", value);
+        } else {
+            snprintf(full_path, sizeof(full_path), "%s/%s", home, value);
+        }
+
+        // Check for exact match
+        if (strcmp(full_path, path) == 0) {
+            removed = true;  // Skip this line
+            // Place removed successfully
+        } else {
+            fputs(line, temp);  // Keep this line
+        }
+    }
+
+    fclose(file);
+    fclose(temp);
+
+    if (removed) {
+        // Replace original with temp
+        if (rename(temp_path, config_path) != 0) {
+            fprintf(stderr, "[ERROR] Failed to update user-dirs.dirs\n");
+            unlink(temp_path);
+        }
+
+        // If we're in Locations view, refresh it
+        if (req->showing_locations) {
+            build_locations_view(req);
+            if (req->listview) {
+                listview_clear(req->listview);
+            for (int i = 0; i < req->entry_count; i++) {
+                FileEntry *fe = req->entries[i];
+                listview_add_item(req->listview, fe->name,
+                                fe->type == TYPE_DRAWER, fe);
+            }
+            }
+            draw_window(req);
+        }
+    } else {
+        unlink(temp_path);
+        // Path not found - nothing to remove
     }
 }
 
@@ -933,7 +1401,7 @@ static void draw_window(ReqASL *req) {
     Button volumes_btn = {
         .x = volumes_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
-        .label = "Volumes",
+        .label = "Locations",
         .pressed = req->volumes_button_pressed,
         .font = req->font
     };
@@ -1402,48 +1870,49 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 }
             }
             
-            // Handle right-click for HOME/last path toggle
+            // Handle right-click for Locations/current directory toggle
             if (event->xbutton.button == Button3) {
                 // Check if click is in listview area
-                if (req->listview && 
+                if (req->listview &&
                     event->xbutton.x >= req->listview->x &&
                     event->xbutton.x < req->listview->x + req->listview->width &&
                     event->xbutton.y >= req->listview->y &&
                     event->xbutton.y < req->listview->y + req->listview->height) {
-                    
-                    // Get HOME directory
-                    const char *home_dir = getenv("HOME");
-                    if (!home_dir) {
-                        struct passwd *pw = getpwuid(getuid());
-                        if (pw) home_dir = pw->pw_dir;
-                    }
-                    
-                    if (home_dir) {
-                        // Check if we're currently at HOME
-                        if (strcmp(req->current_path, home_dir) == 0) {
-                            // We're at HOME - go back to last non-HOME path from X11 property
-                            Window root = DefaultRootWindow(req->display);
-                            Atom prop = XInternAtom(req->display, "REQASL_LAST_PATH", False);
-                            Atom actual_type;
-                            int actual_format;
-                            unsigned long nitems, bytes_after;
-                            unsigned char *data = NULL;
-                            
-                            if (XGetWindowProperty(req->display, root, prop,
-                                                  0, PATH_SIZE, False, XA_STRING,
-                                                  &actual_type, &actual_format, &nitems, &bytes_after,
-                                                  &data) == Success && data) {
-                                if (strcmp((char *)data, home_dir) != 0) {
-                                    // Navigate to last path WITHOUT updating X11 property
-                                    navigate_internal(req, (char *)data, false);
-                                }
-                                XFree(data);
-                            }
-                        } else {
-                            // Not at HOME - go to HOME without updating env var
-                            navigate_internal(req, home_dir, false);
+
+                    // Toggle between Locations view and current directory
+                    if (req->showing_locations) {
+                        // Return to previous directory
+                        req->showing_locations = false;
+                        snprintf(req->current_path, sizeof(req->current_path), "%s", req->previous_path);
+                        snprintf(req->drawer_text, sizeof(req->drawer_text), "%s", req->previous_path);
+
+                        // Update drawer field
+                        if (req->drawer_field) {
+                            inputfield_set_text(req->drawer_field, req->drawer_text);
+                            inputfield_scroll_to_end(req->drawer_field);
                         }
+
+                        // Refresh the normal directory view
+                        scan_directory(req, req->current_path);
+                    } else {
+                        // Save current path and switch to Locations view
+                        snprintf(req->previous_path, sizeof(req->previous_path), "%s", req->current_path);
+                        build_locations_view(req);
                     }
+
+                    // Update the ListView
+                    if (req->listview) {
+                        listview_clear(req->listview);
+            for (int i = 0; i < req->entry_count; i++) {
+                FileEntry *fe = req->entries[i];
+                listview_add_item(req->listview, fe->name,
+                                fe->type == TYPE_DRAWER, fe);
+            }
+                    }
+
+                    // Update menu states after view change
+                    reqasl_update_menu_states(req);
+                    draw_window(req);
                     return true;
                 }
             }
@@ -1626,7 +2095,24 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     
                     if (x >= volumes_x && x < volumes_x + BUTTON_WIDTH &&
                         y >= button_y && y < button_y + BUTTON_HEIGHT) {
-                        // TODO: Implement volumes functionality
+                        // Save current path and switch to Locations view
+                        if (!req->showing_locations) {
+                            snprintf(req->previous_path, sizeof(req->previous_path), "%s", req->current_path);
+                            build_locations_view(req);
+
+                            // Update the ListView with locations
+                            if (req->listview) {
+                                listview_clear(req->listview);
+            for (int i = 0; i < req->entry_count; i++) {
+                FileEntry *fe = req->entries[i];
+                listview_add_item(req->listview, fe->name,
+                                fe->type == TYPE_DRAWER, fe);
+            }
+                            }
+
+                            // Update menu states after switching to Locations view
+                            reqasl_update_menu_states(req);
+                        }
                         draw_window(req);
                         return true;
                     }
@@ -2023,6 +2509,16 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                             // TODO: Delete selected files/directories
                             // TODO: Refresh file list
                             break;
+                        case 3:  // Add Place
+                            add_user_place(req, req->current_path);
+                            // Update menu states after adding place
+                            reqasl_update_menu_states(req);
+                            break;
+                        case 4:  // Del Place
+                            remove_user_place(req, req->current_path);
+                            // Update menu states after removing place
+                            reqasl_update_menu_states(req);
+                            break;
                     }
                 }
                 // Handle View menu (index 2)
@@ -2123,9 +2619,23 @@ static void listview_select_callback(int index, const char *text, void *user_dat
 static void listview_double_click_callback(int index, const char *text, void *user_data) {
     ReqASL *req = (ReqASL *)user_data;
     if (!req || index < 0 || index >= req->entry_count) return;
-    
+
     FileEntry *entry = req->entries[index];
-    
+
+    // Check if we're in Locations view
+    if (req->showing_locations) {
+        // Skip headers and blank lines (they have path == NULL or size == -1)
+        if (!entry->path || entry->size == -1) {
+            return;  // Headers and separators are not clickable
+        }
+
+        // Navigate to the location
+        req->showing_locations = false;  // Exit Locations view
+        reqasl_navigate_to(req, entry->path);
+        return;
+    }
+
+    // Normal file/directory handling
     if (entry->type == TYPE_DRAWER) {
         // Navigate into directory
         reqasl_navigate_to(req, entry->path);
@@ -2152,8 +2662,8 @@ static void listview_double_click_callback(int index, const char *text, void *us
 void reqasl_set_pattern(ReqASL *req, const char *extensions) {
     if (!req || !extensions) return;
     
-    char pattern_buffer[256] = {0};
-    char ext_copy[256];
+    char pattern_buffer[NAME_SIZE * 2] = {0};  // Pattern input buffer
+    char ext_copy[NAME_SIZE * 2];  // Extension buffer
     strncpy(ext_copy, extensions, sizeof(ext_copy) - 1);
     
     // Parse comma-separated extensions

@@ -83,7 +83,11 @@ typedef struct ReqASL {
     
     // Multi-selection support
     bool multi_select_enabled;
-    
+
+    // Locations view state
+    bool showing_locations;        // true when in Locations view mode
+    char previous_path[PATH_SIZE]; // Path to return to when toggling out of Locations
+
 } ReqASL;
 
 // Public API
