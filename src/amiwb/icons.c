@@ -735,14 +735,36 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
     uint8_t *data;
     long size;
+
+    // Debug logging specifically for AWMWB3/Coms icons
+    if (strstr(icon_path, "AWMWB3/Coms")) {
+        log_error("[DEBUG] create_icon_images: Starting to process %s", icon_path);
+    }
+
     if (load_icon_file(icon_path, &data, &size)) {
+        if (strstr(icon_path, "AWMWB3/Coms")) {
+            log_error("[DEBUG] Failed to load icon file: %s", icon_path);
+        }
         return;
+    }
+
+    if (strstr(icon_path, "AWMWB3/Coms")) {
+        log_error("[DEBUG] Successfully loaded %s, size=%ld bytes", icon_path, size);
     }
     
 
     if (size < 78 || read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
+        if (strstr(icon_path, "AWMWB3/Coms")) {
+            log_error("[DEBUG] Invalid header - size=%ld, magic=0x%04x, ver=%d",
+                      size, size >= 2 ? read_be16(data) : 0,
+                      size >= 4 ? read_be16(data + 2) : 0);
+        }
         free(data);
         return;
+    }
+
+    if (strstr(icon_path, "AWMWB3/Coms")) {
+        log_error("[DEBUG] Header valid, continuing processing");
     }
 
     // Detect icon format
@@ -763,37 +785,205 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     
     // Read the icon header values - but first check depth to see if header is valid
     depth = read_be16(data + header_offset + 8);
-    
-    // If depth is invalid, the entire header is likely garbage
-    if (depth == 0xFFFF || depth == 0 || depth > 8) {
+
+    // Check for extended format (MWB icons without classic image)
+    if (depth == 0xFFFF) {
+        // Extended format: real image data is at offset 0x88
+        // This format is used by some MWB icons to save space
+        // Structure at 0x88: 2 bytes unknown, then width/height/depth
+        int extended_offset = 0x88;  // Fixed offset for extended format
+
+        // Debug logging for extended format
+        if (strstr(icon_path, "AWMWB3/Coms")) {
+            log_error("[DEBUG] Extended format detected for %s", icon_path);
+            log_error("[DEBUG] File size: %ld, required: %d", size, extended_offset + 10 + ICON_HEADER_SIZE);
+        }
+
+        // Verify we have enough data
+        if (size >= extended_offset + 10 + ICON_HEADER_SIZE) {
+            // Read from the extended header (different structure)
+            width = read_be16(data + extended_offset + 2);   // at 0x8A
+            height = read_be16(data + extended_offset + 4);  // at 0x8C
+            depth = read_be16(data + extended_offset + 6);   // at 0x8E
+
+            if (strstr(icon_path, "AWMWB3/Coms")) {
+                log_error("[DEBUG] Extended header: w=%d h=%d d=%d", width, height, depth);
+            }
+
+            // Validate the extended header
+            if (depth > 0 && depth <= 8 && width > 0 && width <= 256 && height > 0 && height <= 256) {
+                // For extended format, the actual image data starts at 0x9A (go back 1 row from 0xa2)
+                // We need to set header_offset such that header_offset + ICON_HEADER_SIZE = 0x9A
+                // ICON_HEADER_SIZE is 20 (0x14), so header_offset = 0x9A - 0x14 = 0x86
+                header_offset = 0x86;  // This will make image data read from 0x9A
+
+                if (strstr(icon_path, "AWMWB3/Coms")) {
+                    log_error("[DEBUG] Using extended format, will read image at 0x%x", header_offset + ICON_HEADER_SIZE);
+                }
+                // Continue with these values
+            } else {
+                // Invalid extended header, will fall back to def_foo
+                if (strstr(icon_path, "AWMWB3/Coms")) {
+                    log_error("[DEBUG] Invalid extended header, falling back");
+                }
+                width = 0;
+                height = 0;
+                depth = 0xFFFF;  // Keep marker for fallback
+            }
+        } else {
+            // Not enough data for extended format
+            if (strstr(icon_path, "AWMWB3/Coms")) {
+                log_error("[DEBUG] Not enough data for extended format");
+            }
+            width = 0;
+            height = 0;
+        }
+    } else if (depth == 0 || depth > 8) {
+        // Invalid classic header
         width = 0;
         height = 0;
     } else {
+        // Valid classic format
         width = read_be16(data + header_offset + 4);
         height = read_be16(data + header_offset + 6);
     }
-    
+
+
     // Check if this is a valid classic icon or just placeholder data
+    if (strstr(icon_path, "AWMWB3/Coms")) {
+        log_error("[DEBUG] Before fallback check: w=%d h=%d d=%d (d==0xFFFF: %d)",
+                  width, height, depth, depth == 0xFFFF);
+    }
     if (depth == 0xFFFF || depth == 0 || depth > 8 || width == 0 || height == 0 || width > 256 || height > 256) {
-        // No valid classic icon
-        icon->normal_picture = None;
-        icon->selected_picture = None;
-    } else {
-        normal_pixmap = None;
-        if (render_icon(ctx->dpy, &normal_pixmap, data + header_offset + ICON_HEADER_SIZE, width, height, depth, format)) {
+            if (strstr(icon_path, "AWMWB3/Coms")) {
+                log_error("[DEBUG] Triggering fallback! depth check: %d",
+                          (depth == 0xFFFF || depth == 0 || depth > 8));
+            }
+            // Free the broken icon data first
             free(data);
-            return;
+
+            // Load def_foo.info data instead
+            uint8_t *fallback_data;
+            long fallback_size;
+            if (load_icon_file(def_tool_path, &fallback_data, &fallback_size)) {
+                // def_foo should always exist as part of installation
+                icon->normal_picture = None;
+                icon->selected_picture = None;
+                return;
+            }
+
+            // Use the fallback data instead
+            data = fallback_data;
+            size = fallback_size;
+
+            // Re-parse the header with def_foo data
+            if (size < 78 || read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
+                free(data);
+                return;
+            }
+
+            // Re-detect format and re-calculate offsets for def_foo
+            format = detect_icon_format(data, size);
+            ic_type = data[0x30];
+            has_drawer_data = (ic_type == 1 || ic_type == 2);
+            header_offset = 78 + (has_drawer_data ? 56 : 0);
+
+            // Re-read dimensions from def_foo
+            depth = read_be16(data + header_offset + 8);
+            if (depth == 0xFFFF || depth == 0 || depth > 8) {
+                // def_foo should be valid!
+                free(data);
+                icon->normal_picture = None;
+                icon->selected_picture = None;
+                return;
+            }
+            width = read_be16(data + header_offset + 4);
+            height = read_be16(data + header_offset + 6);
+    }
+
+    // Now render the icon (either the original or def_foo fallback)
+    normal_pixmap = None;
+    if (strstr(icon_path, "AWMWB3/Coms")) {
+        log_error("[DEBUG] Calling render_icon: offset=%d, w=%d, h=%d, d=%d, fmt=%d",
+                  header_offset + ICON_HEADER_SIZE, width, height, depth, format);
+    }
+    if (render_icon(ctx->dpy, &normal_pixmap, data + header_offset + ICON_HEADER_SIZE, width, height, depth, format)) {
+        if (strstr(icon_path, "AWMWB3/Coms")) {
+            log_error("[DEBUG] render_icon failed!");
         }
-        icon->normal_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);
+        free(data);
+        return;
+    }
+    if (strstr(icon_path, "AWMWB3/Coms")) {
+        log_error("[DEBUG] render_icon succeeded! normal_pixmap=%p", (void*)normal_pixmap);
+    }
+    icon->normal_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);
+    if (strstr(icon_path, "AWMWB3/Coms")) {
+        log_error("[DEBUG] Created normal_picture=%p from pixmap=%p",
+                  (void*)icon->normal_picture, (void*)normal_pixmap);
     }
 
     uint32_t has_selected = read_be32(data + 0x1A);
+    if (strstr(icon_path, "AWMWB3/Coms")) {
+        log_error("[DEBUG] has_selected=0x%08x", has_selected);
+    }
+
+    // For AWMWB3 extended format icons, the selected image is at a different location
+    bool is_extended_format = (header_offset == 0x86) && strstr(icon_path, "AWMWB3/Coms");
+    if (is_extended_format && has_selected) {
+        // Calculate where second image should be
+        int row_bytes = ((width + 15) / 16) * 2;
+        int plane_size = row_bytes * height;
+        int first_image_size = plane_size * depth;
+
+        // In extended format, second image starts at 0x37A
+        // Second image header at 0x370, data would be at 0x382, but go back 1 row
+        // So actual image data: 0x382 - 0x08 = 0x37A
+        int second_image_offset = 0x37A;
+
+        if (strstr(icon_path, "AWMWB3/Coms")) {
+            log_error("[DEBUG] Extended format - looking for second image at 0x%x", second_image_offset);
+        }
+
+        if (second_image_offset + first_image_size <= size) {
+            // We have enough data for a second image
+            Pixmap selected_pixmap;
+            if (render_icon(ctx->dpy, &selected_pixmap, data + second_image_offset, width, height, depth, format) == 0) {
+                icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
+                icon->sel_width = width;
+                icon->sel_height = height;
+                XFreePixmap(ctx->dpy, selected_pixmap);
+                has_selected = 0;  // Don't process again below
+                if (strstr(icon_path, "AWMWB3/Coms")) {
+                    log_error("[DEBUG] Successfully loaded second image from extended format");
+                }
+            } else {
+                if (strstr(icon_path, "AWMWB3/Coms")) {
+                    log_error("[DEBUG] Failed to render second image, will use darkened");
+                }
+                has_selected = 0;  // Force darkening code path below
+            }
+        } else {
+            if (strstr(icon_path, "AWMWB3/Coms")) {
+                log_error("[DEBUG] Not enough data for second image");
+            }
+            has_selected = 0;  // Force darkening code path below
+        }
+    }
+
     if (has_selected && icon->normal_picture) {
         int row_bytes;
         long plane_size, first_data_size;
         calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &first_data_size);
         int second_header_offset = header_offset + ICON_HEADER_SIZE + first_data_size;
+        if (strstr(icon_path, "AWMWB3/Coms")) {
+            log_error("[DEBUG] Checking second header: offset=%d, size=%ld",
+                      second_header_offset + ICON_HEADER_SIZE, size);
+        }
         if (second_header_offset + ICON_HEADER_SIZE > size) {
+            if (strstr(icon_path, "AWMWB3/Coms")) {
+                log_error("[DEBUG] Not enough data for selected image header, cleaning up!");
+            }
             cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
             free(data);
             return;
@@ -801,6 +991,9 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
         uint16_t sel_width, sel_height, sel_depth;
         if (parse_icon_header(data + second_header_offset, size - second_header_offset, &sel_width, &sel_height, &sel_depth)) {
+            if (strstr(icon_path, "AWMWB3/Coms")) {
+                log_error("[DEBUG] Failed to parse selected image header, cleaning up!");
+            }
             cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
             free(data);
             return;

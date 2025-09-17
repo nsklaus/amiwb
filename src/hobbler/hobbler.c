@@ -542,11 +542,11 @@ int main(int argc, char *argv[]) {
     // Register browser menus
     Atom menu_data = XInternAtom(app->x_display, "_AMIWB_MENU_DATA", False);
     const char *menus =
-        "File:New Tab,New Window,----------,Quit|"
-        "Navigate:Back,Forward,Reload,Stop,----------,Home|"
-        "View:Zoom In,Zoom Out,Actual Size,----------,Full Screen|"
+        "File:New Tab,New Window,Quit|"
+        "Navigate:Back,Forward,Reload,Stop,Home|"
+        "View:Zoom In,Zoom Out,Actual Size,Full Screen|"
         "Bookmarks:Add Bookmark,Manage Bookmarks|"
-        "Tools:Developer Tools,View Source,----------,Settings";
+        "Tools:Developer Tools,View Source,Settings";
     XChangeProperty(app->x_display, xid, menu_data, XA_STRING, 8,
                    PropModeReplace, (unsigned char *)menus, strlen(menus));
 

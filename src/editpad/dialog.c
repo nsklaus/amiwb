@@ -1,5 +1,6 @@
 #include "dialog.h"
 #include "editpad.h"  // For log_error
+#include "font_manager.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -112,29 +113,12 @@ Dialog* dialog_create(Display *display, Window parent, DialogType type) {
     
     // Load the system font - same as AmiWB uses
     // Build the font path like AmiWB does
-    char font_path[PATH_SIZE];
-    const char *home = getenv("HOME");
-    
-    // First try user config directory
-    snprintf(font_path, sizeof(font_path), "%s/.config/amiwb/fonts/SourceCodePro-Bold.otf", home);
-    if (access(font_path, F_OK) != 0) {
-        // Fall back to system directory
-        snprintf(font_path, sizeof(font_path), "/usr/local/share/amiwb/fonts/SourceCodePro-Bold.otf");
-    }
-    
-    // Load font with fontconfig like AmiWB does
-    FcPattern *pattern = FcPatternCreate();
-    FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)font_path);
-    FcPatternAddDouble(pattern, FC_SIZE, 12.0);
-    FcPatternAddInteger(pattern, FC_WEIGHT, 200); // bold
-    FcPatternAddDouble(pattern, FC_DPI, 75);
-    FcConfigSubstitute(NULL, pattern, FcMatchPattern);
-    XftDefaultSubstitute(display, screen, pattern);
-    dialog->font = XftFontOpenPattern(display, pattern);
-    
+    // Get font from font manager
+    dialog->font = editpad_font_get();
     if (!dialog->font) {
-        // Fallback to system font
-        dialog->font = XftFontOpenName(display, screen, "fixed");
+        // Fatal error - font system not initialized
+        free(dialog);
+        return NULL;
     }
     
     // Initialize colors - use BLACK and GRAY like AmiWB
@@ -188,9 +172,8 @@ void dialog_destroy(Dialog *dialog) {
         dialog->xft_draw = NULL;
     }
     
-    if (dialog->font) {
-        XftFontClose(dialog->display, dialog->font);
-    }
+    // Font is managed by font_manager - don't close it!
+    dialog->font = NULL;
     
     XftColorFree(dialog->display, DefaultVisual(dialog->display, DefaultScreen(dialog->display)),
                  DefaultColormap(dialog->display, DefaultScreen(dialog->display)), &dialog->fg_color);

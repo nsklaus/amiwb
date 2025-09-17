@@ -1,5 +1,6 @@
 #include "editpad.h"
 #include "find.h"
+#include "font_manager.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -85,35 +86,11 @@ EditPad* editpad_create(Display *display) {
     class_hint->res_class = "EditPad";
     XSetClassHint(display, ep->main_window, class_hint);
     XFree(class_hint);
-    
-    // Create font with 75 DPI (same as reqasl and amiwb)
-    char font_path[PATH_SIZE];
-    snprintf(font_path, sizeof(font_path), "%s/%s", 
-             "/usr/local/share/amiwb", "fonts/SourceCodePro-Bold.otf");
-    
-    FcPattern *pattern = FcPatternCreate();
-    if (pattern) {
-        FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)font_path);
-        FcPatternAddDouble(pattern, FC_SIZE, 12.0);  // Size 12 like reqasl/amiwb
-        // FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);  // No need to specify weight - font file is already Bold variant
-        FcPatternAddDouble(pattern, FC_DPI, 75);  // Force 75 DPI like reqasl/amiwb
-        FcConfigSubstitute(NULL, pattern, FcMatchPattern);
-        XftDefaultSubstitute(display, DefaultScreen(display), pattern);
-        ep->font = XftFontOpenPattern(display, pattern);
-        // Note: pattern is now owned by the font, don't destroy it
-    }
-    
+
+    // Get font from font manager
+    ep->font = editpad_font_get();
     if (!ep->font) {
-        // Fallback to monospace with DPI setting
-        ep->font = XftFontOpen(display, DefaultScreen(display),
-                              XFT_FAMILY, XftTypeString, "monospace",
-                              XFT_SIZE, XftTypeDouble, 12.0,  // Size 12 like reqasl/amiwb
-                              XFT_DPI, XftTypeDouble, 75.0,  // Force 75 DPI
-                              NULL);
-    }
-    
-    if (!ep->font) {
-        log_error("[ERROR] Failed to load font for EditPad");
+        log_error("[ERROR] Font not available from font manager");
         XDestroyWindow(display, ep->main_window);
         free(ep);
         return NULL;
@@ -192,9 +169,8 @@ void editpad_destroy(EditPad *ep) {
         textview_destroy(ep->text_view);
     }
     
-    if (ep->font) {
-        XftFontClose(ep->display, ep->font);
-    }
+    // Font is managed by font_manager - don't close it!
+    ep->font = NULL;
     
     if (ep->main_window) {
         XDestroyWindow(ep->display, ep->main_window);

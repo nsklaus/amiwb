@@ -343,8 +343,9 @@ char* xdnd_create_uri_list(const char **paths, int count) {
     for (int i = 0; i < count; i++) {
         if (!paths[i]) continue;
 
-        // "file://" + path + "\r\n" + null terminator
-        total_size += 7 + strlen(paths[i]) + 2 + 1;
+        // "file://" + PATH_SIZE (max path) + "\r\n" + null terminator
+        // Use PATH_SIZE to be safe for expanded paths from realpath()
+        total_size += 7 + PATH_SIZE + 2 + 1;
     }
 
     if (total_size == 0) return NULL;

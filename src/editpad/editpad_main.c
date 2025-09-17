@@ -1,5 +1,6 @@
 #include "editpad.h"
 #include "find.h"
+#include "font_manager.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -410,7 +411,14 @@ int main(int argc, char *argv[]) {
         log_error("[ERROR] Cannot open X display");
         return 1;
     }
-    
+
+    // Initialize font system
+    if (!editpad_font_init(display)) {
+        log_error("[ERROR] Failed to initialize font system");
+        XCloseDisplay(display);
+        return 1;
+    }
+
     // Create EditPad (this will load config and set log path)
     EditPad *ep = editpad_create(display);
     if (!ep) {
@@ -436,7 +444,8 @@ int main(int argc, char *argv[]) {
     
     // Cleanup
     editpad_destroy(ep);
+    editpad_font_cleanup();
     XCloseDisplay(display);
-    
+
     return 0;
 }

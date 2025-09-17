@@ -312,6 +312,10 @@ void begin_restart(void) {
     g_restarting = true;
 }
 
+bool is_restarting(void) {
+    return g_restarting;
+}
+
 void install_error_handler(void) {
     const char *env = getenv("AMIWB_DEBUG_XERRORS");
     if (env && *env) g_debug_xerrors = true;

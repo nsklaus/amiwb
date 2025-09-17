@@ -1,7 +1,7 @@
 // File: render.c
 #define _POSIX_C_SOURCE 200809L
 #include "render.h"
-#include "intuition.h"
+#include "intuition.h"  // For is_restarting()
 #include "workbench.h"
 #include "config.h"
 #include "amiwbrc.h"  // For config access
@@ -11,32 +11,18 @@
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
-#include <fontconfig/fontconfig.h>
 #include <unistd.h>
 #include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include "resize.h"
+#include "font_manager.h"
 
-// Global font and UI colors. Centralize text style so all drawing
-// uses the same metrics and palette. Font may be NULL early.
-static XftFont *font = NULL;
+// Global UI colors
 static XftColor text_color_black;
 static XftColor  text_color_white;
 
-// Resolve a resource path, preferring per-user config then system dir.
-static char *get_resource_path(const char *rel_path) {
-    char *home = getenv("HOME");
-    char user_path[1024];
-    snprintf(user_path, sizeof(user_path), "%s/%s/%s", home, RESOURCE_DIR_USER, rel_path);
-    if (access(user_path, F_OK) == 0) {
-        return strdup(user_path);
-    }
-    char sys_path[1024];
-    snprintf(sys_path, sizeof(sys_path), "%s/%s", RESOURCE_DIR_SYSTEM, rel_path);
-    return strdup(sys_path);
-}
 
 // Draw up and down arrow controls for vertical scrollbar
 static void draw_vertical_scrollbar_arrows(Display *dpy, Picture dest, Canvas *canvas) {
@@ -274,31 +260,12 @@ void init_render(void) {
         return; 
     }
 
-    // Initialize FontConfig
-    if (!FcInit()) {
-        log_error("[ERROR] Failed to initialize FontConfig");
-        return;
+    // Initialize the unified font system
+    if (!font_manager_init(ctx->dpy)) {
+        log_error("[ERROR] Font manager initialization failed - cannot continue");
+        // Font is critical - we can't render without it
+        exit(1);
     }
-
-    // Load font with DPI
-
-    char *font_path = get_resource_path(SYSFONT);
-
-    FcPattern *pattern = FcPatternCreate();
-    FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)font_path);
-    FcPatternAddDouble(pattern, FC_SIZE, 12.0);
-    // FcPatternAddInteger(pattern, FC_WEIGHT, 200);  // No need to specify weight - font file is already Bold variant
-    FcPatternAddDouble(pattern, FC_DPI, 75);
-    FcConfigSubstitute(NULL, pattern, FcMatchPattern);
-    XftDefaultSubstitute(ctx->dpy, DefaultScreen(ctx->dpy), pattern);
-    font = XftFontOpenPattern(ctx->dpy, pattern);
-    if (!font) {
-        log_error("[ERROR] Failed to load font %s", font_path);
-        FcPatternDestroy(pattern);
-        free(font_path);
-        return;
-    }
-    free(font_path);
 
     // Now that we have a render context and font, load wallpapers and refresh desktop
     render_load_wallpapers();
@@ -315,17 +282,12 @@ void init_render(void) {
 }
 
 int get_text_width(const char *text) {
-    if (!font || !text) return 0;
-    RenderContext *ctx = get_render_context();
-    if (!ctx) return 0;
-    XGlyphInfo extents;
-    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)text, strlen(text), &extents);
-    return extents.xOff;
+    return font_manager_text_width(text);
 }
 
 // Provide access to the loaded UI font
 XftFont *get_font(void) {
-    return font;
+    return font_manager_get();
 }
 
 // Clean up rendering resources
@@ -351,10 +313,7 @@ void cleanup_render(void) {
         ctx->checker_inactive_pixmap = None;
     }
 
-    if (font) {
-        XftFontClose(ctx->dpy, font);
-        font = NULL;
-    }
+    font_manager_cleanup(is_restarting());
     if (text_color_black.pixel) {
         XftColorFree(ctx->dpy, DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)), 
                      DefaultColormap(ctx->dpy, DefaultScreen(ctx->dpy)), &text_color_black);
@@ -363,7 +322,6 @@ void cleanup_render(void) {
         XftColorFree(ctx->dpy, DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)), 
                      DefaultColormap(ctx->dpy, DefaultScreen(ctx->dpy)), &text_color_white);
     }
-    FcFini();
     // Cleanup render resources
 }
 
@@ -372,10 +330,10 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
     //printf("render_icon called\n");
     if (!icon || icon->display_window == None || !icon->current_picture) {
         log_error("[ERROR] render_icon: Invalid icon "
-                "(icon=%p, canvas=%p, picture=%p, filename=%s )", 
-            (void*)icon, 
-            (void*)icon->display_window, 
-            (void*)icon->current_picture,
+                "(icon=%p, window=%p, picture=%p, filename=%s )",
+            (void*)icon,
+            icon ? (void*)icon->display_window : NULL,
+            icon ? (void*)icon->current_picture : NULL,
             (icon && icon->label) ? icon->label : "(null)");
         return;
     }
@@ -385,7 +343,10 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
         log_error("[ERROR] render_icon: No render context");
         return;
     }
-    if (!canvas) { log_error("[ERROR] in render.c, render_icon(), canvas failed"); }
+    if (!canvas) {
+        log_error("[ERROR] in render.c, render_icon(), canvas is NULL");
+        return;
+    }
     int base_x = (canvas->type == WINDOW) ? BORDER_WIDTH_LEFT : 0;
     int base_y = (canvas->type == WINDOW) ? BORDER_HEIGHT_TOP : 0;
     int render_x = base_x + icon->x - canvas->scroll_x;
@@ -396,6 +357,7 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
     XRenderComposite(ctx->dpy, PictOpOver, icon->current_picture, None, canvas->canvas_render,
                      0, 0, 0, 0, render_x, render_y, render_width, render_height);
 
+    XftFont *font = font_manager_get();
     if (!font) {
         log_error("[ERROR] render_icon: Font not loaded");
         return;
@@ -414,13 +376,15 @@ void render_icon(FileIcon *icon, Canvas *canvas) {
     const char *display_label = icon->label;  // Use full label
 
     XftColor label_color;
-    label_color.color = *((canvas->type == DESKTOP) ? &DESKFONTCOL : &WINFONTCOL);
+    XRenderColor render_color = *((canvas->type == DESKTOP) ? &DESKFONTCOL : &WINFONTCOL);
+    XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &render_color, &label_color);
     XGlyphInfo extents;
     XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)display_label, strlen(display_label), &extents);
     int text_x = render_x + (icon->width - extents.xOff) / 2;
     int text_y = render_y + icon->height + font->ascent + 2;
     XftDrawStringUtf8(canvas->xft_draw, &label_color, font, text_x, text_y,
                       (FcChar8 *)display_label, strlen(display_label));
+    XftColorFree(ctx->dpy, canvas->visual, canvas->colormap, &label_color);
 }
 
 // Create cached 4x4 checkerboard pattern pixmaps for tiling
@@ -635,6 +599,7 @@ void redraw_canvas(Canvas *canvas) {
                     if (icon->display_window == canvas->win) {
                         // Calculate actual label width for proper visibility check
                         int label_width = 0;
+                        XftFont *font = get_font();
                         if (icon->label && font) {
                             XGlyphInfo extents;
                             XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)icon->label, 
@@ -670,6 +635,7 @@ void redraw_canvas(Canvas *canvas) {
         if (!menu) return;
 
     // Safety check - font might be NULL during shutdown/restart
+    XftFont *font = font_manager_get();
     if (!font) return;
 
     // Use cached XftDraw instead of creating a new one
@@ -694,6 +660,9 @@ void redraw_canvas(Canvas *canvas) {
     for (int i = 0; i < menu->item_count; i++) {
         const char *label = menu->items[i];
         if (!label) continue;
+
+        // Check if this menu item should show a checkmark
+        bool has_checkmark = (menu->checkmarks && menu->checkmarks[i]);
 
         XGlyphInfo extents;
         XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)label, strlen(label), &extents);
@@ -777,7 +746,18 @@ void redraw_canvas(Canvas *canvas) {
                 // Regular menu item, no modification
                 XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, 10, item_y + y_base, (FcChar8 *)label, strlen(label));
             }
-            
+
+            // Draw checkmark after label if this item has one
+            if (has_checkmark) {
+                XGlyphInfo label_extents;
+                XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)label, strlen(label), &label_extents);
+
+                // Position checkmark 1 character space after the label
+                int checkmark_x = 10 + label_extents.xOff + 10;  // 10px gap after label
+                XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, checkmark_x, item_y + y_base,
+                                (FcChar8 *)CHECKMARK, strlen(CHECKMARK));
+            }
+
             // Draw shortcut if present (e.g., "∷ R" for Rename) - also in gray if disabled
             if (menu->shortcuts && menu->shortcuts[i]) {
                 char shortcut_text[32];
@@ -807,34 +787,6 @@ void redraw_canvas(Canvas *canvas) {
                 XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, indicator_x, item_y + y_base, (FcChar8 *)submenu_indicator, strlen(submenu_indicator));
             }
             
-            // Check if this is a submenu under Window menu (not a custom menu)
-            bool is_window_submenu = menu->parent_menu && 
-                                     menu->parent_menu->parent_menu == get_menubar_menu() &&
-                                     menu->parent_menu->parent_index == 1;  // Window menu is at index 1
-            
-            // For View Modes submenu, show checkmarks for active states
-            if (is_window_submenu && menu->parent_index == 6) {  // View Modes submenu (now at index 6)
-                bool show_checkmark = false;
-                bool is_icons_mode = get_active_view_is_icons();
-                
-                // Handle Icons/Names (mutually exclusive - only one can be checked)
-                if (i == 0) {  // "Icons" menu item
-                    show_checkmark = is_icons_mode;
-                } else if (i == 1) {  // "Names" menu item
-                    show_checkmark = !is_icons_mode;
-                } else if (i == 2) {  // "Hidden" menu item (independent toggle)
-                    show_checkmark = get_global_show_hidden_state();
-                } else if (i == 3) {  // "Spatial" menu item (independent toggle)
-                    show_checkmark = get_spatial_mode();
-                }
-                
-                if (show_checkmark) {
-                    XGlyphInfo check_extents;
-                    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)CHECKMARK, strlen(CHECKMARK), &check_extents);
-                    int check_x = canvas->width - check_extents.xOff - 10;  // Same padding as shortcuts
-                    XftDrawStringUtf8(canvas->xft_draw, &item_fg, font, check_x, item_y + y_base, (FcChar8 *)CHECKMARK, strlen(CHECKMARK));
-                }
-            }
             
             XftColorFree(ctx->dpy, canvas->visual, canvas->colormap, &item_fg);
         }
@@ -1047,32 +999,38 @@ void redraw_canvas(Canvas *canvas) {
         // ==================
         if (canvas->title_base || canvas->title_change) {
 
+            // Properly allocate XftColor for title text
             XftColor text_col;
-            if (canvas->active) {
-                text_col.color = WHITE; 
-            } else {
-                text_col.color = BLACK; 
-            }
-            // case for workbench windows
-            if (font) {
+            XRenderColor render_color = canvas->active ? WHITE : BLACK;
+            XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &render_color, &text_col);
+
+            // Get unified font for title drawing
+            XftFont *title_font = get_font();
+            if (title_font) {
                 // Determine which title to display: title_change if set, otherwise title_base
                 const char *display_title = canvas->title_change ? canvas->title_change : canvas->title_base;
                 if (!display_title) display_title = "Untitled";  // Fallback if both are NULL
-                
+
+                int text_y = (BORDER_HEIGHT_TOP + title_font->ascent - title_font->descent) / 2 + title_font->descent;
+
                 if (canvas->client_win == None) {
-                    // Use cached XftDraw for Workbench windows
+                    // Workbench windows: draw to buffer using cached XftDraw
                     if (canvas->xft_draw) {
-                        int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
-                        XftDrawStringUtf8(canvas->xft_draw, &text_col, font, 50, text_y-4, (FcChar8 *)display_title, strlen(display_title));  // Draw title text.
+                        XftDrawStringUtf8(canvas->xft_draw, &text_col, title_font, 50, text_y-4,
+                                        (FcChar8 *)display_title, strlen(display_title));
+                    }
+                } else {
+                    // Client windows: draw directly to window, not buffer
+                    // Create cached XftDraw for direct window drawing if needed
+                    if (!canvas->xft_draw) {
+                        canvas->xft_draw = XftDrawCreate(ctx->dpy, canvas->win, canvas->visual, canvas->colormap);
+                    }
+                    if (canvas->xft_draw) {
+                        XftDrawStringUtf8(canvas->xft_draw, &text_col, title_font, 50, text_y-4,
+                                        (FcChar8 *)display_title, strlen(display_title));
                     }
                 }
-                // case for client windows
-                if (canvas->client_win != None){
-                    XftDraw *draw = XftDrawCreate(ctx->dpy, canvas->win, canvas->visual, canvas->colormap);
-                    int text_y = (BORDER_HEIGHT_TOP + font->ascent - font->descent) / 2 + font->descent;
-                    XftDrawStringUtf8(draw, &text_col, font, 50, text_y-4, (FcChar8 *)display_title, strlen(display_title));  // Draw title text.
-                    XftDrawDestroy(draw);
-                }
+                XftColorFree(ctx->dpy, canvas->visual, canvas->colormap, &text_col);
             }
         }
         // =============
@@ -1225,11 +1183,22 @@ void render_recreate_canvas_surfaces(Canvas *canvas) {
         XftDrawDestroy(canvas->xft_draw);
         canvas->xft_draw = NULL;
     }
-    canvas->xft_draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer,
-        canvas->visual ? canvas->visual : DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)),
-        canvas->colormap);
+
+    // Client windows draw directly to window, others draw to buffer
+    if (canvas->client_win != None) {
+        // Client window: XftDraw targets the window directly
+        canvas->xft_draw = XftDrawCreate(ctx->dpy, canvas->win,
+            canvas->visual ? canvas->visual : DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)),
+            canvas->colormap);
+    } else {
+        // Workbench/Desktop: XftDraw targets the buffer
+        canvas->xft_draw = XftDrawCreate(ctx->dpy, canvas->canvas_buffer,
+            canvas->visual ? canvas->visual : DefaultVisual(ctx->dpy, DefaultScreen(ctx->dpy)),
+            canvas->colormap);
+    }
+
     if (!canvas->xft_draw) {
-        log_error("[WARNING] Failed to create XftDraw for canvas buffer");
+        log_error("[WARNING] Failed to create XftDraw for canvas");
     }
 
     // For the on-screen window picture, desktop uses root visual

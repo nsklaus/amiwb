@@ -12,9 +12,9 @@
 #include "iconinfo.h"
 #include "events.h"
 #include "icons.h"
+#include "font_manager.h"
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
-#include <fontconfig/fontconfig.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>  // For strcasecmp
@@ -28,9 +28,8 @@
 #include <time.h>
 
 // Static menu resources
-// Menu font and state are global so both menubar and popups share
+// Menu state is global so both menubar and popups share
 // metrics and selection state without passing through every call.
-static XftFont *font = NULL;
 static XftColor text_color;
 static Menu *active_menu = NULL;    // Current dropdown menu (top-level or current)
 static Menu *nested_menu = NULL;    // Currently open nested submenu (child of active_menu)
@@ -53,6 +52,7 @@ static FileIcon *g_rename_icon = NULL;
 
 // Forward declarations for menu substitution
 static void send_menu_selection_to_app(Window app_window, int menu_index, int item_index);
+static void free_menu(Menu *menu);
 
 // Mode-specific arrays
 static char **logo_items = NULL;
@@ -95,8 +95,15 @@ static AppMenuCache* find_cached_app(const char *app_type) {
 // Cache app menus for reuse by multiple instances
 static void cache_app_menus(const char *app_type, char **menu_items, Menu **submenus, int menu_count) {
     // Check if already cached
-    if (find_cached_app(app_type)) {
-        return;  // Already cached
+    AppMenuCache *existing = find_cached_app(app_type);
+    if (existing) {
+        // Update existing cache with new menu data
+        // Don't free the old data - it might still be in use by menubar!
+        // Just update the pointers to the new data
+        existing->menu_items = menu_items;
+        existing->submenus = submenus;
+        existing->menu_item_count = menu_count;
+        return;
     }
 
     // Create new cache entry
@@ -115,16 +122,6 @@ static void cache_app_menus(const char *app_type, char **menu_items, Menu **subm
     cached_apps = cache;
 }
 
-// Resolve menu resources from user config first, then system dir.
-static char *get_resource_path(const char *rel_path) {
-    char *home = getenv("HOME");
-    char user_path[PATH_SIZE];
-    snprintf(user_path, sizeof(user_path), "%s/%s/%s", home, RESOURCE_DIR_USER, rel_path);
-    if (access(user_path, F_OK) == 0) return strdup(user_path);
-    char sys_path[PATH_SIZE];
-    snprintf(sys_path, sizeof(sys_path), "%s/%s", RESOURCE_DIR_SYSTEM, rel_path);
-    return strdup(sys_path);
-}
 
 // Static callback functions for rename dialog (avoid nested function trampolines)
 static void rename_file_ok_callback(const char *new_name) {
@@ -235,29 +232,84 @@ static void init_menu_enabled(Menu *menu) {
     }
 }
 
+// Initialize checkmarks array with all items unchecked
+static void init_menu_checkmarks(Menu *menu) {
+    if (!menu) return;
+    menu->checkmarks = calloc(menu->item_count, sizeof(bool));
+    // calloc already zeros the array, so all items start unchecked
+}
+
+// Update View Modes menu checkmarks based on current state
+void update_view_modes_checkmarks(void) {
+    Menu *menubar_menu = get_menubar_menu();
+    if (!menubar_menu || !menubar_menu->submenus || !menubar_menu->submenus[1]) return;
+
+    Menu *win_menu = menubar_menu->submenus[1];  // Windows menu
+    if (!win_menu->submenus || !win_menu->submenus[6]) return;
+
+    Menu *view_modes = win_menu->submenus[6];  // View Modes submenu
+    if (!view_modes->checkmarks) return;
+
+    // Update checkmarks based on current state
+    bool is_icons = get_active_view_is_icons();
+    view_modes->checkmarks[0] = is_icons;      // Icons
+    view_modes->checkmarks[1] = !is_icons;     // Names
+    view_modes->checkmarks[2] = get_global_show_hidden_state();  // Hidden
+    view_modes->checkmarks[3] = get_spatial_mode();  // Spatial
+}
+
+// Parse menu items for "#" shortcut notation and extract shortcuts
+// Updates the menu's items and shortcuts arrays accordingly
+static void parse_menu_item_shortcuts(Menu *menu) {
+    if (!menu || !menu->items) return;
+
+    for (int i = 0; i < menu->item_count; i++) {
+        if (!menu->items[i]) continue;
+
+        char *item = strdup(menu->items[i]);  // Work with a copy
+        char *delimiter = strchr(item, '#');
+
+        if (delimiter) {
+            // Found "#" - split into name and shortcut
+            *delimiter = '\0';  // Terminate item name at #
+            char *shortcut = delimiter + 1;  // Shortcut is everything after #
+
+            // Trim trailing spaces from item name
+            char *end = item + strlen(item) - 1;
+            while (end > item && *end == ' ') {
+                *end = '\0';
+                end--;
+            }
+
+            // Update the item to just the name (without shortcut)
+            free(menu->items[i]);
+            menu->items[i] = strdup(item);
+
+            // Store the shortcut
+            if (menu->shortcuts && menu->shortcuts[i]) {
+                free(menu->shortcuts[i]);  // Free any existing shortcut
+            }
+            if (menu->shortcuts) {
+                menu->shortcuts[i] = strdup(shortcut);
+            }
+        }
+
+        free(item);  // Free the working copy
+    }
+}
+
 // Initialize menu resources
-// Loads font and builds menubar tree with submenus. The menubar is a
+// Builds menubar tree with submenus. The menubar is a
 // Canvas so it can be redrawn like any other window.
 void init_menus(void) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
 
-    char *font_path = get_resource_path(SYSFONT);
-    FcPattern *pattern = FcPatternCreate();
-    FcPatternAddString(pattern, FC_FILE, (const FcChar8 *)font_path);
-    FcPatternAddDouble(pattern, FC_SIZE, 12.0);
-    FcPatternAddInteger(pattern, FC_WEIGHT, 200); // bold please
-    FcPatternAddDouble(pattern, FC_DPI, 75);
-    FcConfigSubstitute(NULL, pattern, FcMatchPattern);
-    XftDefaultSubstitute(ctx->dpy, DefaultScreen(ctx->dpy), pattern);
-    font = XftFontOpenPattern(ctx->dpy, pattern);
-    if (!font) {
-        log_error("[ERROR] Failed to load font %s", font_path);
-        FcPatternDestroy(pattern);
-        free(font_path);
+    // Font is now loaded by font_manager
+    if (!font_manager_get()) {
+        log_error("[ERROR] Font not initialized - call font_manager_init first");
         return;
     }
-    free(font_path);
 
     text_color.color = (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}; // Black
 
@@ -291,25 +343,20 @@ void init_menus(void) {
     Menu *wb_submenu = calloc(1, sizeof(Menu));  // zeros all fields
     wb_submenu->item_count = 7;
     wb_submenu->items = malloc(wb_submenu->item_count * sizeof(char*));
-    wb_submenu->items[0] = strdup("Execute");
-    wb_submenu->items[1] = strdup("Requester");
+    wb_submenu->items[0] = strdup("Execute #E");
+    wb_submenu->items[1] = strdup("Requester #L");
     wb_submenu->items[2] = strdup("Settings");
     wb_submenu->items[3] = strdup("About");
-    wb_submenu->items[4] = strdup("Suspend");
-    wb_submenu->items[5] = strdup("Restart AmiWB");
-    wb_submenu->items[6] = strdup("Quit AmiWB");
-    
-    // Initialize shortcuts for Workbench menu
-    wb_submenu->shortcuts = malloc(wb_submenu->item_count * sizeof(char*));
-    wb_submenu->shortcuts[0] = strdup("E");  // Execute - Super+E
-    wb_submenu->shortcuts[1] = strdup("L");  // Requester - Super+L
-    wb_submenu->shortcuts[2] = NULL;  // Settings - no shortcut yet
-    wb_submenu->shortcuts[3] = NULL;  // About - no shortcut yet
-    wb_submenu->shortcuts[4] = strdup("^S");  // Suspend - Super+Shift+S
-    wb_submenu->shortcuts[5] = strdup("^R");  // Restart - Super+Shift+R
-    wb_submenu->shortcuts[6] = strdup("^Q");  // Quit - Super+Shift+Q
+    wb_submenu->items[4] = strdup("Suspend #^S");
+    wb_submenu->items[5] = strdup("Restart AmiWB #^R");
+    wb_submenu->items[6] = strdup("Quit AmiWB #^Q");
+
+    // Initialize shortcuts array (will be populated by parsing)
+    wb_submenu->shortcuts = calloc(wb_submenu->item_count, sizeof(char*));
     
     init_menu_enabled(wb_submenu);  // Initialize all items as enabled
+    // Parse the "#" shortcuts from menu items
+    parse_menu_item_shortcuts(wb_submenu);
     // Gray out Settings and About menu items (not implemented yet)
     wb_submenu->enabled[2] = false;  // Settings
     wb_submenu->enabled[3] = false;  // About
@@ -325,24 +372,19 @@ void init_menus(void) {
     Menu *win_submenu = calloc(1, sizeof(Menu));  // zeros all fields
     win_submenu->item_count = 7;  // Added Refresh
     win_submenu->items = malloc(win_submenu->item_count * sizeof(char*));
-    win_submenu->items[0] = strdup("New Drawer");
-    win_submenu->items[1] = strdup("Open Parent");
-    win_submenu->items[2] = strdup("Close");
-    win_submenu->items[3] = strdup("Select Contents");
-    win_submenu->items[4] = strdup("Clean Up");
-    win_submenu->items[5] = strdup("Refresh");
+    win_submenu->items[0] = strdup("New Drawer #N");
+    win_submenu->items[1] = strdup("Open Parent #P");
+    win_submenu->items[2] = strdup("Close #Q");
+    win_submenu->items[3] = strdup("Select Contents #A");
+    win_submenu->items[4] = strdup("Clean Up #;");
+    win_submenu->items[5] = strdup("Refresh #H");
     win_submenu->items[6] = strdup("View Modes");
-    
-    // Initialize shortcuts for Windows menu
-    win_submenu->shortcuts = malloc(win_submenu->item_count * sizeof(char*));
-    win_submenu->shortcuts[0] = strdup("N");  // New Drawer - Super+N
-    win_submenu->shortcuts[1] = strdup("P");  // Open Parent - Super+P
-    win_submenu->shortcuts[2] = strdup("Q");  // Close - Super+Q
-    win_submenu->shortcuts[3] = strdup("A");  // Select Contents - Super+A
-    win_submenu->shortcuts[4] = strdup(";");  // Clean Up - Super+;
-    win_submenu->shortcuts[5] = strdup("H");  // Refresh - Super+H
-    win_submenu->shortcuts[6] = NULL;  // View Modes - no shortcut yet
+
+    // Initialize shortcuts array (will be populated by parsing)
+    win_submenu->shortcuts = calloc(win_submenu->item_count, sizeof(char*));
     init_menu_enabled(win_submenu);  // Initialize all items as enabled
+    // Parse the "#" shortcuts from menu items
+    parse_menu_item_shortcuts(win_submenu);
     win_submenu->selected_item = -1;
     win_submenu->parent_menu = menubar;
     win_submenu->parent_index = 1;
@@ -359,6 +401,12 @@ void init_menus(void) {
     view_by_sub->items[3] = strdup("Spatial");
     init_menu_shortcuts(view_by_sub);  // Initialize all shortcuts to NULL
     init_menu_enabled(view_by_sub);  // Initialize all items as enabled
+    init_menu_checkmarks(view_by_sub);  // Initialize checkmarks array
+    // Set initial checkmark states based on current system state
+    view_by_sub->checkmarks[0] = get_active_view_is_icons();  // Icons checked if in icons mode
+    view_by_sub->checkmarks[1] = !get_active_view_is_icons(); // Names checked if in names mode
+    view_by_sub->checkmarks[2] = get_global_show_hidden_state(); // Hidden checked if showing hidden
+    view_by_sub->checkmarks[3] = get_spatial_mode();  // Spatial checked if in spatial mode
     view_by_sub->selected_item = -1;
     view_by_sub->parent_menu = win_submenu;
     view_by_sub->parent_index = 6;  // Position within Windows submenu (View Modes is at index 6)
@@ -372,25 +420,20 @@ void init_menus(void) {
     Menu *icons_submenu = calloc(1, sizeof(Menu));  // zeros all fields
     icons_submenu->item_count = 7;
     icons_submenu->items = malloc(icons_submenu->item_count * sizeof(char*));
-    icons_submenu->items[0] = strdup("Open");
-    icons_submenu->items[1] = strdup("Copy");
-    icons_submenu->items[2] = strdup("Rename");
-    icons_submenu->items[3] = strdup("Extract");      // NEW - Extract archives
-    icons_submenu->items[4] = strdup("Eject");        // NEW - Eject removable drives
-    icons_submenu->items[5] = strdup("Information");  // Moved down
-    icons_submenu->items[6] = strdup("delete");
-    
-    // Initialize shortcuts array
-    icons_submenu->shortcuts = malloc(icons_submenu->item_count * sizeof(char*));
-    icons_submenu->shortcuts[0] = strdup("O");  // Open - Super+O
-    icons_submenu->shortcuts[1] = strdup("C");  // Copy - Super+C
-    icons_submenu->shortcuts[2] = strdup("R");  // Rename - Super+R
-    icons_submenu->shortcuts[3] = strdup("X");  // Extract - Super+X
-    icons_submenu->shortcuts[4] = strdup("Y");  // Eject - Super+Y
-    icons_submenu->shortcuts[5] = strdup("I");  // Information - Super+I
-    icons_submenu->shortcuts[6] = strdup("D");  // delete - Super+D
+    icons_submenu->items[0] = strdup("Open #O");
+    icons_submenu->items[1] = strdup("Copy #C");
+    icons_submenu->items[2] = strdup("Rename #R");
+    icons_submenu->items[3] = strdup("Extract #X");      // NEW - Extract archives
+    icons_submenu->items[4] = strdup("Eject #Y");        // NEW - Eject removable drives
+    icons_submenu->items[5] = strdup("Information #I");  // Moved down
+    icons_submenu->items[6] = strdup("delete #D");
+
+    // Initialize shortcuts array (will be populated by parsing)
+    icons_submenu->shortcuts = calloc(icons_submenu->item_count, sizeof(char*));
     
     init_menu_enabled(icons_submenu);  // Initialize all items as enabled
+    // Parse the "#" shortcuts from menu items
+    parse_menu_item_shortcuts(icons_submenu);
     icons_submenu->selected_item = -1;
     icons_submenu->parent_menu = menubar;
     icons_submenu->parent_index = 2;
@@ -625,8 +668,7 @@ void cleanup_menus(void) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
 
-    // Release font/color
-    if (font) XftFontClose(ctx->dpy, font);
+    // Release color resources
     if (text_color.pixel) XftColorFree(ctx->dpy, ctx->default_visual, ctx->default_colormap, &text_color);
     
     // Clear active menu reference
@@ -804,7 +846,7 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
     int padding = 20;
     for (int i = 0; i < menubar->item_count; i++) {
         XGlyphInfo extents;
-        XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)menubar->items[i], 
+        XftTextExtentsUtf8(ctx->dpy, font_manager_get(), (FcChar8 *)menubar->items[i], 
             strlen(menubar->items[i]), &extents);
         int item_width = extents.xOff + padding;
         if (event->x >= x_pos && event->x < x_pos + item_width) {
@@ -840,7 +882,7 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
             int submenu_x = 10;
             for (int j = 0; j < menubar->selected_item; j++) {
                 XGlyphInfo extents;
-                XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)menubar->items[j], 
+                XftTextExtentsUtf8(ctx->dpy, font_manager_get(), (FcChar8 *)menubar->items[j], 
                     strlen(menubar->items[j]), &extents);
                 submenu_x += extents.xOff + padding;
             }
@@ -1075,7 +1117,7 @@ static void show_window_list_menu(int x, int y) {
     XGlyphInfo extents;
     // Measure 20 chars worth of typical text (use "M" as average width char)
     char sample_text[21] = "MMMMMMMMMMMMMMMMMMMM";  // 20 Ms for width calculation
-    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)sample_text, 20, &extents);
+    XftTextExtentsUtf8(ctx->dpy, font_manager_get(), (FcChar8 *)sample_text, 20, &extents);
     
     // Add padding: 10px left, 10px right
     int menu_width = extents.xOff + 20;
@@ -1752,7 +1794,7 @@ Menu *get_active_menu(void) {
 // Get submenu width
 // Measure widest label to size the dropdown width, accounting for shortcuts.
 int get_submenu_width(Menu *menu) {
-    if (!menu || !font) return 80;
+    if (!menu || !font_manager_get()) return 80;
     int max_label_width = 0;
     int max_shortcut_width = 0;
     int padding = 20;
@@ -1761,7 +1803,7 @@ int get_submenu_width(Menu *menu) {
     for (int i = 0; i < menu->item_count; i++) {
         // Measure label width
         XGlyphInfo label_extents;
-        XftTextExtentsUtf8(get_render_context()->dpy, font, 
+        XftTextExtentsUtf8(get_render_context()->dpy, font_manager_get(), 
             (FcChar8 *)menu->items[i], strlen(menu->items[i]), &label_extents);
         if (label_extents.xOff > max_label_width) {
             max_label_width = label_extents.xOff;
@@ -1777,7 +1819,7 @@ int get_submenu_width(Menu *menu) {
                 snprintf(shortcut_text, sizeof(shortcut_text), "%s %s", SHORTCUT_SYMBOL, menu->shortcuts[i]);
             }
             XGlyphInfo shortcut_extents;
-            XftTextExtentsUtf8(get_render_context()->dpy, font,
+            XftTextExtentsUtf8(get_render_context()->dpy, font_manager_get(),
                 (FcChar8 *)shortcut_text, strlen(shortcut_text), &shortcut_extents);
             if (shortcut_extents.xOff > max_shortcut_width) {
                 max_shortcut_width = shortcut_extents.xOff;
@@ -2853,153 +2895,6 @@ Window get_app_menu_window(void) {
     return current_app_window;
 }
 
-// TEST FUNCTION: Create hardcoded EditPad menus for testing menu substitution
-static Menu **create_test_editpad_menus(void) {
-    // Create top-level menu array (File, Edit, Search, View)
-    Menu **editpad_menus = calloc(4, sizeof(Menu*));
-    
-    // File menu
-    Menu *file_menu = calloc(1, sizeof(Menu));
-    file_menu->item_count = 8;  // Added test item
-    file_menu->items = calloc(file_menu->item_count, sizeof(char*));
-    file_menu->items[0] = strdup("New");
-    file_menu->items[1] = strdup("Open...");
-    file_menu->items[2] = strdup("Save");
-    file_menu->items[3] = strdup("Save As...");
-    file_menu->items[4] = strdup("----------");
-    file_menu->items[5] = strdup("Quit");
-    file_menu->items[6] = strdup("----------");
-    file_menu->items[7] = strdup("TEST: System Menu");
-    
-    file_menu->shortcuts = calloc(file_menu->item_count, sizeof(char*));
-    file_menu->shortcuts[0] = strdup("N");      // Super+N
-    file_menu->shortcuts[1] = strdup("O");      // Super+O
-    file_menu->shortcuts[2] = strdup("S");      // Super+S
-    file_menu->shortcuts[3] = strdup("^S");     // Super+Shift+S
-    file_menu->shortcuts[4] = NULL;
-    file_menu->shortcuts[5] = strdup("Q");      // Super+Q
-    file_menu->shortcuts[6] = NULL;
-    file_menu->shortcuts[7] = NULL;
-    
-    file_menu->enabled = calloc(file_menu->item_count, sizeof(bool));
-    for (int i = 0; i < file_menu->item_count; i++) {
-        file_menu->enabled[i] = true;
-    }
-    file_menu->selected_item = -1;
-    file_menu->parent_menu = menubar;
-    file_menu->parent_index = 0;
-    file_menu->submenus = NULL;
-    file_menu->canvas = NULL;
-    editpad_menus[0] = file_menu;
-    
-    // Edit menu
-    Menu *edit_menu = calloc(1, sizeof(Menu));
-    edit_menu->item_count = 7;
-    edit_menu->items = calloc(edit_menu->item_count, sizeof(char*));
-    edit_menu->items[0] = strdup("Cut");
-    edit_menu->items[1] = strdup("Copy");
-    edit_menu->items[2] = strdup("Paste");
-    edit_menu->items[3] = strdup("----------");
-    edit_menu->items[4] = strdup("Select All");
-    edit_menu->items[5] = strdup("----------");
-    edit_menu->items[6] = strdup("Undo");
-    
-    edit_menu->shortcuts = calloc(edit_menu->item_count, sizeof(char*));
-    edit_menu->shortcuts[0] = strdup("X");      // Super+X
-    edit_menu->shortcuts[1] = strdup("C");      // Super+C
-    edit_menu->shortcuts[2] = strdup("V");      // Super+V
-    edit_menu->shortcuts[3] = NULL;
-    edit_menu->shortcuts[4] = strdup("A");      // Super+A
-    edit_menu->shortcuts[5] = NULL;
-    edit_menu->shortcuts[6] = strdup("Z");      // Super+Z
-    
-    edit_menu->enabled = calloc(edit_menu->item_count, sizeof(bool));
-    for (int i = 0; i < edit_menu->item_count; i++) {
-        edit_menu->enabled[i] = true;
-    }
-    edit_menu->selected_item = -1;
-    edit_menu->parent_menu = menubar;
-    edit_menu->parent_index = 1;
-    edit_menu->submenus = NULL;
-    edit_menu->canvas = NULL;
-    editpad_menus[1] = edit_menu;
-    
-    // Search menu
-    Menu *search_menu = calloc(1, sizeof(Menu));
-    search_menu->item_count = 4;
-    search_menu->items = calloc(search_menu->item_count, sizeof(char*));
-    search_menu->items[0] = strdup("Find...");
-    search_menu->items[1] = strdup("Find Next");
-    search_menu->items[2] = strdup("Replace...");
-    search_menu->items[3] = strdup("Go to Line...");
-    
-    search_menu->shortcuts = calloc(search_menu->item_count, sizeof(char*));
-    search_menu->shortcuts[0] = strdup("F");      // Super+F
-    search_menu->shortcuts[1] = strdup("G");      // Super+G
-    search_menu->shortcuts[2] = strdup("R");      // Super+R
-    search_menu->shortcuts[3] = strdup("L");      // Super+L
-    
-    search_menu->enabled = calloc(search_menu->item_count, sizeof(bool));
-    for (int i = 0; i < search_menu->item_count; i++) {
-        search_menu->enabled[i] = false;  // Disabled for now (not implemented)
-    }
-    search_menu->selected_item = -1;
-    search_menu->parent_menu = menubar;
-    search_menu->parent_index = 2;
-    search_menu->submenus = NULL;
-    search_menu->canvas = NULL;
-    editpad_menus[2] = search_menu;
-    
-    // View menu
-    Menu *view_menu = calloc(1, sizeof(Menu));
-    view_menu->item_count = 3;
-    view_menu->items = calloc(view_menu->item_count, sizeof(char*));
-    view_menu->items[0] = strdup("Word Wrap");
-    view_menu->items[1] = strdup("----------");
-    view_menu->items[2] = strdup("Syntax Highlighting");
-    
-    view_menu->shortcuts = calloc(view_menu->item_count, sizeof(char*));
-    view_menu->shortcuts[0] = strdup("W");      // Super+W
-    view_menu->shortcuts[1] = NULL;
-    view_menu->shortcuts[2] = strdup("H");      // Super+H
-    
-    view_menu->enabled = calloc(view_menu->item_count, sizeof(bool));
-    view_menu->enabled[0] = false;  // Word wrap not implemented
-    view_menu->enabled[1] = true;   // Separator
-    view_menu->enabled[2] = false;  // Syntax highlighting not implemented
-    view_menu->selected_item = -1;
-    view_menu->parent_menu = menubar;
-    view_menu->parent_index = 3;
-    view_menu->submenus = NULL;
-    view_menu->canvas = NULL;
-    editpad_menus[3] = view_menu;
-    
-    return editpad_menus;
-}
-
-// TEST FUNCTION: Simulate EditPad getting focus
-void test_editpad_menu_substitution(Window test_window) {
-    // TEST: Switching to EditPad menus
-    
-    // Create EditPad menu items
-    char **editpad_items = calloc(4, sizeof(char*));
-    editpad_items[0] = strdup("File");
-    editpad_items[1] = strdup("Edit");
-    editpad_items[2] = strdup("Search");
-    editpad_items[3] = strdup("View");
-    
-    // Create EditPad submenus
-    Menu **editpad_submenus = create_test_editpad_menus();
-    
-    // Switch to EditPad menus
-    switch_to_app_menu("EditPad", editpad_items, editpad_submenus, 4, test_window);
-}
-
-// TEST FUNCTION: Simulate EditPad losing focus
-void test_restore_system_menus(void) {
-    // TEST: Restoring system menus
-    restore_system_menu();
-}
 
 // Parse menu data string and create Menu structures
 // Format: "File:New,Open,Save|Edit:Cut,Copy,Paste|..."
@@ -3051,6 +2946,7 @@ static void parse_and_switch_app_menus(const char *app_name, const char *menu_da
         submenu->items = calloc(item_count, sizeof(char*));
         submenu->shortcuts = calloc(item_count, sizeof(char*));
         submenu->enabled = calloc(item_count, sizeof(bool));
+        submenu->checkmarks = calloc(item_count, sizeof(bool));
         
         // Parse items - use strtok_r for thread safety and to avoid nested strtok issues
         char *saveptr2;
@@ -3058,24 +2954,50 @@ static void parse_and_switch_app_menus(const char *app_name, const char *menu_da
         char *item = strtok_r(items_copy, ",", &saveptr2);
         int item_index = 0;
         while (item && item_index < item_count) {
-            submenu->items[item_index] = strdup(item);
+            // Skip leading spaces
+            while (*item == ' ') item++;
+
+            // Check for checkbox notation [o] = checked, [x] = unchecked
+            if (strncmp(item, "[o]", 3) == 0) {
+                submenu->checkmarks[item_index] = true;  // Checked (on)
+                item += 3;  // Skip "[o]"
+                if (*item == ' ') item++;  // Skip space after checkbox
+            } else if (strncmp(item, "[x]", 3) == 0) {
+                submenu->checkmarks[item_index] = false;  // Unchecked (off)
+                item += 3;  // Skip "[x]"
+                if (*item == ' ') item++;  // Skip space after checkbox
+            }
+            // Items without [o] or [x] are not toggleable
+
+            // Parse menu item with potential "#" shortcut notation
+            char *delimiter = strchr(item, '#');
+            if (delimiter) {
+                // Found "#" - split into name and shortcut
+                *delimiter = '\0';  // Terminate item name at #
+                char *shortcut = delimiter + 1;  // Shortcut is everything after #
+
+                // Strip any trailing spaces from item name
+                char *end = item + strlen(item) - 1;
+                while (end > item && *end == ' ') {
+                    *end = '\0';
+                    end--;
+                }
+
+                // Strip any leading spaces from shortcut
+                while (*shortcut == ' ') {
+                    shortcut++;
+                }
+
+                submenu->items[item_index] = strdup(item);
+                submenu->shortcuts[item_index] = strdup(shortcut);
+            } else {
+                // No "#" delimiter - no shortcut
+                submenu->items[item_index] = strdup(item);
+                submenu->shortcuts[item_index] = NULL;
+            }
+
             submenu->enabled[item_index] = true;
-            submenu->shortcuts[item_index] = NULL;  // Initialize to NULL first
-            
-            // Add shortcuts for known items (EditPad specific for now)
-            if (strcmp(item, "New") == 0) submenu->shortcuts[item_index] = strdup("N");
-            else if (strcmp(item, "Open") == 0) submenu->shortcuts[item_index] = strdup("O");
-            else if (strcmp(item, "Save") == 0) submenu->shortcuts[item_index] = strdup("S");
-            else if (strcmp(item, "Save As") == 0) submenu->shortcuts[item_index] = strdup("^S");
-            else if (strcmp(item, "Quit") == 0) submenu->shortcuts[item_index] = strdup("Q");
-            else if (strcmp(item, "Cut") == 0) submenu->shortcuts[item_index] = strdup("X");
-            else if (strcmp(item, "Copy") == 0) submenu->shortcuts[item_index] = strdup("C");
-            else if (strcmp(item, "Paste") == 0) submenu->shortcuts[item_index] = strdup("V");
-            else if (strcmp(item, "Select All") == 0) submenu->shortcuts[item_index] = strdup("A");
-            else if (strcmp(item, "Undo") == 0) submenu->shortcuts[item_index] = strdup("Z");
-            else if (strcmp(item, "Find") == 0) submenu->shortcuts[item_index] = strdup("F");
-            else if (strcmp(item, "Goto Line") == 0) submenu->shortcuts[item_index] = strdup("L");
-            
+
             item = strtok_r(NULL, ",", &saveptr2);
             item_index++;
         }
@@ -3203,30 +3125,30 @@ void check_for_app_menus(Window win) {
 
         // Found toolkit app
 
-        // Check if we have cached menus for this app type
-        AppMenuCache *cached = find_cached_app((char*)app_type);
-        if (cached) {
-            // Use cached menus - multiple instances share same menu structure
-            switch_to_app_menu((char*)app_type, cached->menu_items,
-                             cached->submenus, cached->menu_item_count, win);
+        // Always read menu data to get current checkmark states
+        Atom menu_atom = XInternAtom(dpy, "_AMIWB_MENU_DATA", False);
+        unsigned char *menu_data = NULL;
 
-            // Update menu states if available
+        if (XGetWindowProperty(dpy, win, menu_atom, 0, 65536, False,
+                              AnyPropertyType, &actual_type, &actual_format,
+                              &nitems, &bytes_after, &menu_data) == Success && menu_data) {
+
+            // Parse menu data - this will update checkmark states
+            parse_and_switch_app_menus((char*)app_type, (char*)menu_data, win);
+
+            XFree(menu_data);
+
+            // Also update menu states if available
             update_app_menu_states(win);
         } else {
-            // First instance of this app type - need to read menu data
-            Atom menu_atom = XInternAtom(dpy, "_AMIWB_MENU_DATA", False);
-            unsigned char *menu_data = NULL;
+            // No menu data available - check if we have cached menus
+            AppMenuCache *cached = find_cached_app((char*)app_type);
+            if (cached) {
+                // Use cached menus as fallback
+                switch_to_app_menu((char*)app_type, cached->menu_items,
+                                 cached->submenus, cached->menu_item_count, win);
 
-            if (XGetWindowProperty(dpy, win, menu_atom, 0, 65536, False,
-                                  AnyPropertyType, &actual_type, &actual_format,
-                                  &nitems, &bytes_after, &menu_data) == Success && menu_data) {
-
-                // Found menu data - parse and cache it
-                parse_and_switch_app_menus((char*)app_type, (char*)menu_data, win);
-
-                XFree(menu_data);
-
-                // Also update menu states if available
+                // Update menu states if available
                 update_app_menu_states(win);
             }
         }

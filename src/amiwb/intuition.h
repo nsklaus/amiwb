@@ -162,6 +162,9 @@ void begin_shutdown(void);
 // Enter global restart mode (preserve clients during restart)
 void begin_restart(void);
 
+// Check if we're in restart mode
+bool is_restarting(void);
+
 // Install the X error handler early; respects AMIWB_DEBUG_XERRORS for verbose suppression logs
 void install_error_handler(void);
 

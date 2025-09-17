@@ -229,11 +229,8 @@ void close_dialog(Dialog *dialog) {
         dialog->cancel_button = NULL;
     }
 
-    // Clean up font
-    if (dialog->font) {
-        XftFontClose(get_display(), dialog->font);
-        dialog->font = NULL;
-    }
+    // Font is managed by font_manager - don't close it!
+    dialog->font = NULL;  // Just clear the reference
 
     // Clean up canvas and memory
     if (dialog->canvas) {

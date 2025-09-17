@@ -5,11 +5,13 @@
 #include <stdbool.h>
 #include <X11/Xlib.h>
 #include "reqasl.h"
+#include "font_manager.h"
 
 static bool files_selected = false;
 
 static void on_file_open(const char *path) {
     printf("%s\n", path);  // Output selected path to stdout
+    fflush(stdout);  // Make sure it's flushed immediately
     files_selected = true;  // Mark that we got at least one file
 }
 
@@ -23,7 +25,14 @@ int main(int argc, char *argv[]) {
         log_error("[ERROR] Cannot open display");
         return 1;
     }
-    
+
+    // Initialize font system
+    if (!reqasl_font_init(display)) {
+        log_error("[ERROR] Failed to initialize font system");
+        XCloseDisplay(display);
+        return 1;
+    }
+
     // Create ReqASL dialog
     ReqASL *req = reqasl_create(display);
     if (!req) {
@@ -106,8 +115,9 @@ int main(int argc, char *argv[]) {
     
     // Cleanup
     reqasl_destroy(req);
+    reqasl_font_cleanup();
     XCloseDisplay(display);
-    
+
     // Return 0 if files were selected, 1 if cancelled
     return files_selected ? 0 : 1;
 }

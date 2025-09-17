@@ -14,6 +14,7 @@ typedef struct Menu {
     char **items;               // Array of menu item labels
     char **shortcuts;           // Array of shortcut keys (e.g., "R" for Rename, NULL if none)
     bool *enabled;              // Array of enabled states (true = enabled, false = grayed out)
+    bool *checkmarks;           // Array of checkmark states (true = show checkmark, false = no checkmark)
     char **commands;            // Array of commands for custom menu items (NULL for system menus)
     int item_count;             // Number of items
     int selected_item;          // Index of selected item (-1 for none)
@@ -87,8 +88,5 @@ bool is_app_menu_active(void);
 Window get_app_menu_window(void);
 void check_for_app_menus(Window win);  // Check X11 properties for app menus
 
-// TEST FUNCTIONS - Remove after menu substitution is complete
-void test_editpad_menu_substitution(Window test_window);
-void test_restore_system_menus(void);
 
 #endif
