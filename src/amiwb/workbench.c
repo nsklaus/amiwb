@@ -2761,13 +2761,17 @@ void create_icon(const char *path, Canvas *canvas, int x, int y) {
 void destroy_icon(FileIcon *icon) {
     if (!icon) return;
 
-    // If this icon is currently being dragged, cancel the drag safely to avoid UAF
+    // If this icon is currently being dragged or referenced, clear it to avoid UAF
     if (icon == dragged_icon) {
-        destroy_drag_window();
+        // If actively dragging, clean up the drag window
+        if (drag_active) {
+            destroy_drag_window();
+            drag_active = false;
+            drag_source_canvas = NULL;
+            saved_source_window = None;
+        }
+        // Always clear the reference to prevent use-after-free
         dragged_icon = NULL;
-        drag_active = false;
-        drag_source_canvas = NULL;
-        saved_source_window = None;
     }
 
     // Free icon resources (XRender pictures)

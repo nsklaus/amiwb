@@ -82,14 +82,13 @@ static Picture create_icon_picture(Display *dpy, Pixmap pixmap, XRenderPictForma
 }
 
 // Helper function to clean up partially loaded icon
-static void cleanup_partial_icon(Display *dpy, FileIcon *icon, Pixmap normal_pixmap) {
+static void cleanup_partial_icon(Display *dpy, FileIcon *icon) {
     if (icon->normal_picture) {
         XRenderFreePicture(dpy, icon->normal_picture);
         icon->normal_picture = None;
     }
-    if (normal_pixmap) {
-        XFreePixmap(dpy, normal_pixmap);
-    }
+    // NOTE: normal_pixmap is freed by the caller at the end of create_icon_images
+    // Do NOT free it here to avoid double-free
 }
 
 // Icon format detection  
@@ -256,7 +255,7 @@ static int render_os13_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *dat
 
 // Convert Amiga planar icon data to an ARGB pixmap the server can use.
 // Colors are basic and can be refined later; keep it fast and simple.
-static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth, AmigaIconFormat format) {
+static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth, AmigaIconFormat format, long data_size) {
     XVisualInfo vinfo;
     if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
         log_error("[ERROR] No %d-bit TrueColor visual found for icon", ICON_RENDER_DEPTH);
@@ -294,11 +293,28 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
     long plane_size, total_data_size;
     calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &total_data_size);
     const uint8_t *planes = data;
+
+    // Calculate required data size to prevent buffer overrun
+    long required_size = plane_size * depth;
+    if (data_size < required_size) {
+        log_error("[ERROR] Icon data too small: have %ld, need %ld bytes", data_size, required_size);
+        XDestroyImage(image);
+        XFreePixmap(dpy, pixmap);
+        return 1;
+    }
+
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             int color = 0;
             for (int p = 0; p < depth; p++) {
                 long offset = p * plane_size + y * row_bytes + (x >> 3);
+                // Safety check to prevent reading beyond buffer
+                if (offset >= data_size) {
+                    log_error("[ERROR] Icon data access out of bounds at offset %ld (max %ld)", offset, data_size);
+                    XDestroyImage(image);
+                    XFreePixmap(dpy, pixmap);
+                    return 1;
+                }
                 uint8_t byte = planes[offset];
                 if (byte & (1 << (7 - (x & 7)))) color |= (1 << p);
             }
@@ -736,36 +752,18 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     uint8_t *data;
     long size;
 
-    // Debug logging specifically for AWMWB3/Coms icons
-    if (strstr(icon_path, "AWMWB3/Coms")) {
-        log_error("[DEBUG] create_icon_images: Starting to process %s", icon_path);
-    }
 
     if (load_icon_file(icon_path, &data, &size)) {
-        if (strstr(icon_path, "AWMWB3/Coms")) {
-            log_error("[DEBUG] Failed to load icon file: %s", icon_path);
-        }
         return;
     }
 
-    if (strstr(icon_path, "AWMWB3/Coms")) {
-        log_error("[DEBUG] Successfully loaded %s, size=%ld bytes", icon_path, size);
-    }
     
 
     if (size < 78 || read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
-        if (strstr(icon_path, "AWMWB3/Coms")) {
-            log_error("[DEBUG] Invalid header - size=%ld, magic=0x%04x, ver=%d",
-                      size, size >= 2 ? read_be16(data) : 0,
-                      size >= 4 ? read_be16(data + 2) : 0);
-        }
         free(data);
         return;
     }
 
-    if (strstr(icon_path, "AWMWB3/Coms")) {
-        log_error("[DEBUG] Header valid, continuing processing");
-    }
 
     // Detect icon format
     AmigaIconFormat format = detect_icon_format(data, size);
@@ -793,11 +791,6 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         // Structure at 0x88: 2 bytes unknown, then width/height/depth
         int extended_offset = 0x88;  // Fixed offset for extended format
 
-        // Debug logging for extended format
-        if (strstr(icon_path, "AWMWB3/Coms")) {
-            log_error("[DEBUG] Extended format detected for %s", icon_path);
-            log_error("[DEBUG] File size: %ld, required: %d", size, extended_offset + 10 + ICON_HEADER_SIZE);
-        }
 
         // Verify we have enough data
         if (size >= extended_offset + 10 + ICON_HEADER_SIZE) {
@@ -806,9 +799,6 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
             height = read_be16(data + extended_offset + 4);  // at 0x8C
             depth = read_be16(data + extended_offset + 6);   // at 0x8E
 
-            if (strstr(icon_path, "AWMWB3/Coms")) {
-                log_error("[DEBUG] Extended header: w=%d h=%d d=%d", width, height, depth);
-            }
 
             // Validate the extended header
             if (depth > 0 && depth <= 8 && width > 0 && width <= 256 && height > 0 && height <= 256) {
@@ -817,24 +807,15 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
                 // ICON_HEADER_SIZE is 20 (0x14), so header_offset = 0x9A - 0x14 = 0x86
                 header_offset = 0x86;  // This will make image data read from 0x9A
 
-                if (strstr(icon_path, "AWMWB3/Coms")) {
-                    log_error("[DEBUG] Using extended format, will read image at 0x%x", header_offset + ICON_HEADER_SIZE);
-                }
                 // Continue with these values
             } else {
                 // Invalid extended header, will fall back to def_foo
-                if (strstr(icon_path, "AWMWB3/Coms")) {
-                    log_error("[DEBUG] Invalid extended header, falling back");
-                }
                 width = 0;
                 height = 0;
                 depth = 0xFFFF;  // Keep marker for fallback
             }
         } else {
             // Not enough data for extended format
-            if (strstr(icon_path, "AWMWB3/Coms")) {
-                log_error("[DEBUG] Not enough data for extended format");
-            }
             width = 0;
             height = 0;
         }
@@ -850,15 +831,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
 
     // Check if this is a valid classic icon or just placeholder data
-    if (strstr(icon_path, "AWMWB3/Coms")) {
-        log_error("[DEBUG] Before fallback check: w=%d h=%d d=%d (d==0xFFFF: %d)",
-                  width, height, depth, depth == 0xFFFF);
-    }
     if (depth == 0xFFFF || depth == 0 || depth > 8 || width == 0 || height == 0 || width > 256 || height > 256) {
-            if (strstr(icon_path, "AWMWB3/Coms")) {
-                log_error("[DEBUG] Triggering fallback! depth check: %d",
-                          (depth == 0xFFFF || depth == 0 || depth > 8));
-            }
             // Free the broken icon data first
             free(data);
 
@@ -903,109 +876,43 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
     // Now render the icon (either the original or def_foo fallback)
     normal_pixmap = None;
-    if (strstr(icon_path, "AWMWB3/Coms")) {
-        log_error("[DEBUG] Calling render_icon: offset=%d, w=%d, h=%d, d=%d, fmt=%d",
-                  header_offset + ICON_HEADER_SIZE, width, height, depth, format);
-    }
-    if (render_icon(ctx->dpy, &normal_pixmap, data + header_offset + ICON_HEADER_SIZE, width, height, depth, format)) {
-        if (strstr(icon_path, "AWMWB3/Coms")) {
-            log_error("[DEBUG] render_icon failed!");
-        }
+    // Calculate how much data is available after the header
+    long first_image_data_size = size - (header_offset + ICON_HEADER_SIZE);
+    if (first_image_data_size < 0) first_image_data_size = 0;
+
+    if (render_icon(ctx->dpy, &normal_pixmap, data + header_offset + ICON_HEADER_SIZE, width, height, depth, format, first_image_data_size)) {
         free(data);
         return;
     }
-    if (strstr(icon_path, "AWMWB3/Coms")) {
-        log_error("[DEBUG] render_icon succeeded! normal_pixmap=%p", (void*)normal_pixmap);
-    }
     icon->normal_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);
-    if (strstr(icon_path, "AWMWB3/Coms")) {
-        log_error("[DEBUG] Created normal_picture=%p from pixmap=%p",
-                  (void*)icon->normal_picture, (void*)normal_pixmap);
-    }
 
     uint32_t has_selected = read_be32(data + 0x1A);
-    if (strstr(icon_path, "AWMWB3/Coms")) {
-        log_error("[DEBUG] has_selected=0x%08x", has_selected);
-    }
-
-    // For extended format MWB icons, the selected image is at a different location
-    // Detect based on format characteristics, not path
-    bool is_extended_format = (header_offset == 0x86);  // Has drawer data
-
-    // Additional check: Extended format icons typically have specific size patterns
-    // Most extended format icons are 1659 bytes, but we should check structure instead
-    if (is_extended_format && has_selected) {
-        // Calculate where second image should be
-        int row_bytes = ((width + 15) / 16) * 2;
-        int plane_size = row_bytes * height;
-        int first_image_size = plane_size * depth;
-
-        // In extended format, second image starts at 0x38A for AWMWB3
-        // The pattern shows actual data begins at 0x38A, not 0x37A
-        int second_image_offset = 0x38A;
-
-        if (strstr(icon_path, "AWMWB3/Coms")) {
-            log_error("[DEBUG] Extended format - looking for second image at 0x%x", second_image_offset);
-        }
-
-        if (second_image_offset + first_image_size <= size) {
-            // We have enough data for a second image
-            Pixmap selected_pixmap;
-            if (render_icon(ctx->dpy, &selected_pixmap, data + second_image_offset, width, height, depth, format) == 0) {
-                icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
-                icon->sel_width = width;
-                icon->sel_height = height;
-                XFreePixmap(ctx->dpy, selected_pixmap);
-                has_selected = 0;  // Don't process again below
-                if (strstr(icon_path, "AWMWB3/Coms")) {
-                    log_error("[DEBUG] Successfully loaded second image from extended format");
-                }
-            } else {
-                if (strstr(icon_path, "AWMWB3/Coms")) {
-                    log_error("[DEBUG] Failed to render second image, will use darkened");
-                }
-                has_selected = 0;  // Force darkening code path below
-            }
-        } else {
-            if (strstr(icon_path, "AWMWB3/Coms")) {
-                log_error("[DEBUG] Not enough data for second image");
-            }
-            has_selected = 0;  // Force darkening code path below
-        }
-    }
-
     if (has_selected && icon->normal_picture) {
         int row_bytes;
         long plane_size, first_data_size;
         calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &first_data_size);
         int second_header_offset = header_offset + ICON_HEADER_SIZE + first_data_size;
-        if (strstr(icon_path, "AWMWB3/Coms")) {
-            log_error("[DEBUG] Checking second header: offset=%d, size=%ld",
-                      second_header_offset + ICON_HEADER_SIZE, size);
-        }
         if (second_header_offset + ICON_HEADER_SIZE > size) {
-            if (strstr(icon_path, "AWMWB3/Coms")) {
-                log_error("[DEBUG] Not enough data for selected image header, cleaning up!");
-            }
-            cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
+            cleanup_partial_icon(ctx->dpy, icon);
             free(data);
             return;
         }
 
         uint16_t sel_width, sel_height, sel_depth;
         if (parse_icon_header(data + second_header_offset, size - second_header_offset, &sel_width, &sel_height, &sel_depth)) {
-            if (strstr(icon_path, "AWMWB3/Coms")) {
-                log_error("[DEBUG] Failed to parse selected image header, cleaning up!");
-            }
-            cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
+            cleanup_partial_icon(ctx->dpy, icon);
             free(data);
             return;
         }
 
         // Allow different sized selected images
         Pixmap selected_pixmap;
-        if (render_icon(ctx->dpy, &selected_pixmap, data + second_header_offset + ICON_HEADER_SIZE, sel_width, sel_height, sel_depth, format)) {
-            cleanup_partial_icon(ctx->dpy, icon, normal_pixmap);
+        // Calculate how much data is available for second image
+        long second_image_data_size = size - (second_header_offset + ICON_HEADER_SIZE);
+        if (second_image_data_size < 0) second_image_data_size = 0;
+
+        if (render_icon(ctx->dpy, &selected_pixmap, data + second_header_offset + ICON_HEADER_SIZE, sel_width, sel_height, sel_depth, format, second_image_data_size)) {
+            cleanup_partial_icon(ctx->dpy, icon);
             free(data);
             return;
         }
@@ -1278,7 +1185,10 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
                     render_result = render_os13_icon(ctx->dpy, &icon_pixmap, bitmap_start, img_width, img_height);
                     } else {
                         // OS3 icon - use standard renderer
-                        render_result = render_icon(ctx->dpy, &icon_pixmap, bitmap_start, img_width, img_height, img_depth, format);
+                        // Calculate available data size for this image
+                        long available_data = size - (bitmap_start - data);
+                        if (available_data < 0) available_data = 0;
+                        render_result = render_icon(ctx->dpy, &icon_pixmap, bitmap_start, img_width, img_height, img_depth, format, available_data);
                     }
                     
                     if (!render_result) {
@@ -1405,7 +1315,10 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
                                         
                                         const uint8_t *sel_bitmap = data + second_img_offset + 20;
                                         Pixmap sel_pixmap = None;
-                                        int sel_result = render_icon(ctx->dpy, &sel_pixmap, sel_bitmap, sel_width, sel_height, sel_depth, format);
+                                        // Calculate available data for selected image
+                                        long sel_data_size = size - (second_img_offset + 20);
+                                        if (sel_data_size < 0) sel_data_size = 0;
+                                        int sel_result = render_icon(ctx->dpy, &sel_pixmap, sel_bitmap, sel_width, sel_height, sel_depth, format, sel_data_size);
                                         
                                         if (!sel_result) {
                                             icon->selected_picture = XRenderCreatePicture(ctx->dpy, sel_pixmap, ctx->fmt, 0, NULL);
