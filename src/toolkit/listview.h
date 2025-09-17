@@ -6,7 +6,7 @@
 #include <X11/Xft/Xft.h>
 #include <stdbool.h>
 
-#define LISTVIEW_MAX_ITEMS 1000
+#define LISTVIEW_INITIAL_CAPACITY 16
 #define LISTVIEW_ITEM_HEIGHT 20
 #define LISTVIEW_SCROLLBAR_WIDTH 20
 #define LISTVIEW_ARROW_HEIGHT 17
@@ -22,9 +22,10 @@ typedef struct ListView {
     int x, y;
     int width, height;
     
-    // Items
-    ListViewItem items[LISTVIEW_MAX_ITEMS];
+    // Items (dynamic allocation)
+    ListViewItem *items;
     int item_count;
+    int capacity;  // Allocated capacity
     
     // Selection and scrolling
     int selected_index;
@@ -33,7 +34,7 @@ typedef struct ListView {
     
     // Multi-selection support
     bool multi_select_enabled;
-    bool selected[LISTVIEW_MAX_ITEMS];  // Selection state for each item
+    bool *selected;  // Selection state for each item (dynamic)
     int selection_count;
     
     // Scrollbar state

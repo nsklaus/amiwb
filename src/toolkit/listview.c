@@ -48,16 +48,26 @@ ListView* listview_create(int x, int y, int width, int height) {
     lv->y = y;
     lv->width = width;
     lv->height = height;
-    
+
+    // Initialize dynamic arrays
+    lv->capacity = LISTVIEW_INITIAL_CAPACITY;
+    lv->items = calloc(lv->capacity, sizeof(ListViewItem));
+    lv->selected = calloc(lv->capacity, sizeof(bool));
+    if (!lv->items || !lv->selected) {
+        free(lv->items);
+        free(lv->selected);
+        free(lv);
+        return NULL;
+    }
+
     lv->item_count = 0;
     lv->selected_index = -1;
     lv->scroll_offset = 0;
     lv->visible_items = 0;
-    
+
     // Multi-selection support
     lv->multi_select_enabled = false;
     lv->selection_count = 0;
-    memset(lv->selected, 0, sizeof(lv->selected));
     
     lv->scrollbar_knob_y = 0;
     lv->scrollbar_knob_height = 0;
@@ -80,21 +90,67 @@ ListView* listview_create(int x, int y, int width, int height) {
 }
 
 void listview_destroy(ListView *lv) {
-    if (lv) free(lv);
+    if (lv) {
+        free(lv->items);
+        free(lv->selected);
+        free(lv);
+    }
 }
 
 void listview_clear(ListView *lv) {
     if (!lv) return;
+
+    // Shrink array if it's too large (but keep a reasonable minimum)
+    if (lv->capacity > 64 && lv->item_count < lv->capacity / 4) {
+        int new_capacity = lv->capacity / 2;
+        if (new_capacity < LISTVIEW_INITIAL_CAPACITY) {
+            new_capacity = LISTVIEW_INITIAL_CAPACITY;
+        }
+
+        ListViewItem *new_items = realloc(lv->items, new_capacity * sizeof(ListViewItem));
+        bool *new_selected = realloc(lv->selected, new_capacity * sizeof(bool));
+
+        if (new_items && new_selected) {
+            lv->items = new_items;
+            lv->selected = new_selected;
+            lv->capacity = new_capacity;
+        }
+        // If realloc fails, keep the old arrays
+    }
+
     lv->item_count = 0;
     lv->selected_index = -1;
     lv->scroll_offset = 0;
+    lv->selection_count = 0;
+    memset(lv->selected, 0, lv->capacity * sizeof(bool));
     lv->needs_redraw = true;
     listview_update_scrollbar(lv);
 }
 
 void listview_add_item(ListView *lv, const char *text, bool is_directory, void *user_data) {
-    if (!lv || !text || lv->item_count >= LISTVIEW_MAX_ITEMS) return;
-    
+    if (!lv || !text) return;
+
+    // Grow array if needed
+    if (lv->item_count >= lv->capacity) {
+        int new_capacity = lv->capacity * 2;
+        ListViewItem *new_items = realloc(lv->items, new_capacity * sizeof(ListViewItem));
+        bool *new_selected = realloc(lv->selected, new_capacity * sizeof(bool));
+
+        if (!new_items || !new_selected) {
+            // Allocation failed - keep original arrays
+            if (new_items && new_items != lv->items) free(new_items);
+            if (new_selected && new_selected != lv->selected) free(new_selected);
+            return;
+        }
+
+        lv->items = new_items;
+        lv->selected = new_selected;
+
+        // Clear the new selection flags
+        memset(&lv->selected[lv->capacity], 0, (new_capacity - lv->capacity) * sizeof(bool));
+        lv->capacity = new_capacity;
+    }
+
     strncpy(lv->items[lv->item_count].text, text, 255);
     lv->items[lv->item_count].text[255] = '\0';
     lv->items[lv->item_count].is_directory = is_directory;
@@ -106,9 +162,32 @@ void listview_add_item(ListView *lv, const char *text, bool is_directory, void *
 
 void listview_set_items(ListView *lv, ListViewItem *items, int count) {
     if (!lv || !items) return;
-    
+
+    // Ensure we have enough capacity
+    if (count > lv->capacity) {
+        int new_capacity = lv->capacity;
+        while (new_capacity < count) {
+            new_capacity *= 2;
+        }
+
+        ListViewItem *new_items = realloc(lv->items, new_capacity * sizeof(ListViewItem));
+        bool *new_selected = realloc(lv->selected, new_capacity * sizeof(bool));
+
+        if (!new_items || !new_selected) {
+            // Allocation failed - add as many as we can
+            if (new_items && new_items != lv->items) free(new_items);
+            if (new_selected && new_selected != lv->selected) free(new_selected);
+            count = lv->capacity;
+        } else {
+            lv->items = new_items;
+            lv->selected = new_selected;
+            memset(&lv->selected[lv->capacity], 0, (new_capacity - lv->capacity) * sizeof(bool));
+            lv->capacity = new_capacity;
+        }
+    }
+
     lv->item_count = 0;
-    for (int i = 0; i < count && i < LISTVIEW_MAX_ITEMS; i++) {
+    for (int i = 0; i < count; i++) {
         lv->items[i] = items[i];
         lv->item_count++;
     }
@@ -175,7 +254,7 @@ void listview_toggle_selection(ListView *lv, int index) {
 
 void listview_clear_selection(ListView *lv) {
     if (!lv) return;
-    memset(lv->selected, 0, sizeof(lv->selected));
+    memset(lv->selected, 0, lv->capacity * sizeof(bool));
     lv->selection_count = 0;
     lv->needs_redraw = true;
 }

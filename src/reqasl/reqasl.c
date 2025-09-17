@@ -1545,22 +1545,7 @@ static void handle_list_double_click(ReqASL *req, int y) {
 static bool reqasl_execute_action(ReqASL *req) {
     if (!req) return false;
 
-    log_error("[DEBUG] execute_action: on_open=%p, multi_select=%d, selection_count=%d, selected_index=%d",
-              req->on_open, req->multi_select_enabled,
-              req->listview ? req->listview->selection_count : -1,
-              req->selected_index);
-
-    // Debug: Check listview selected items
-    if (req->listview && req->listview->selection_count > 0) {
-        int selected[10];
-        int count = listview_get_selected_items(req->listview, selected, 10);
-        log_error("[DEBUG] ListView has %d selected items", count);
-        for (int i = 0; i < count && i < 3; i++) {
-            if (selected[i] < req->entry_count) {
-                log_error("[DEBUG]   Item %d: %s", selected[i], req->entries[selected[i]]->name);
-            }
-        }
-    }
+    // Function called - debug removed per logging_system.md
 
     // Check if we should skip File field due to multi-selection
     bool is_multi_selection = (req->listview && req->multi_select_enabled && req->listview->selection_count > 1);
@@ -1612,8 +1597,9 @@ static bool reqasl_execute_action(ReqASL *req) {
     
     // Priority 2: Check multi-selection
     if (req->listview && req->multi_select_enabled && req->listview->selection_count > 0) {
-        int selected_indices[LISTVIEW_MAX_ITEMS];
-        int count = listview_get_selected_items(req->listview, selected_indices, LISTVIEW_MAX_ITEMS);
+        int *selected_indices = malloc(req->listview->capacity * sizeof(int));
+        if (!selected_indices) return false;
+        int count = listview_get_selected_items(req->listview, selected_indices, req->listview->capacity);
 
 
         if (count > 0) {
@@ -1633,6 +1619,7 @@ static bool reqasl_execute_action(ReqASL *req) {
                         req->on_open(req->entries[selected_indices[i]]->path);
                     }
                     reqasl_hide(req);
+                    free(selected_indices);
                     return true;
                 } else {
                     // Standalone mode - check if all files use same xdg-open app
@@ -1831,6 +1818,7 @@ static bool reqasl_execute_action(ReqASL *req) {
 
                     // Parent process
                     reqasl_hide(req);
+                    free(selected_indices);
                     return true;
                 }
             } else if (count == 1 && req->entries[selected_indices[0]]->type == TYPE_DRAWER) {
@@ -1838,15 +1826,17 @@ static bool reqasl_execute_action(ReqASL *req) {
                 FileEntry *entry = req->entries[selected_indices[0]];
                 Atom amiwb_open_dir = XInternAtom(req->display, "AMIWB_OPEN_DIRECTORY", False);
                 Window root = DefaultRootWindow(req->display);
-                
+
                 XChangeProperty(req->display, root, amiwb_open_dir,
                               XA_STRING, 8, PropModeReplace,
                               (unsigned char *)entry->path, strlen(entry->path));
                 XFlush(req->display);
                 reqasl_hide(req);
+                free(selected_indices);
                 return true;
             }
             // Mixed selection or multiple directories - do nothing
+            free(selected_indices);
             return false;
         }
     }
@@ -1856,10 +1846,7 @@ static bool reqasl_execute_action(ReqASL *req) {
         req->selected_index < req->entry_count) {
         FileEntry *entry = req->entries[req->selected_index];
 
-        log_error("[DEBUG] Priority 3: selected_index=%d, entry_type=%d, path=%s, on_open=%p",
-                  req->selected_index, entry->type, entry->path, req->on_open);
-
-        if (entry->type == TYPE_DRAWER) {
+if (entry->type == TYPE_DRAWER) {
             // Directory - open in workbench
             Atom amiwb_open_dir = XInternAtom(req->display, "AMIWB_OPEN_DIRECTORY", False);
             Window root = DefaultRootWindow(req->display);
@@ -1870,12 +1857,9 @@ static bool reqasl_execute_action(ReqASL *req) {
             XFlush(req->display);
         } else {
             // File - open with xdg-open or callback
-            log_error("[DEBUG] File selected, calling callback or xdg-open");
             if (req->on_open) {
-                log_error("[DEBUG] Calling on_open callback with path: %s", entry->path);
                 req->on_open(entry->path);
             } else {
-                log_error("[DEBUG] No callback, using xdg-open");
                 pid_t pid = fork();
                 if (pid == 0) {
                     execlp("xdg-open", "xdg-open", entry->path, (char *)NULL);
@@ -1888,8 +1872,7 @@ static bool reqasl_execute_action(ReqASL *req) {
     }
     
     // Priority 4: Nothing selected - open current directory
-    log_error("[DEBUG] Priority 4: Nothing selected, opening current directory");
-    Atom amiwb_open_dir = XInternAtom(req->display, "AMIWB_OPEN_DIRECTORY", False);
+Atom amiwb_open_dir = XInternAtom(req->display, "AMIWB_OPEN_DIRECTORY", False);
     Window root = DefaultRootWindow(req->display);
 
     XChangeProperty(req->display, root, amiwb_open_dir,
@@ -2130,8 +2113,7 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 
                 if (y >= button_y && y < button_y + BUTTON_HEIGHT) {
                     if (x >= open_x && x < open_x + BUTTON_WIDTH) {
-                        log_error("[DEBUG] Open button pressed at x=%d y=%d", x, y);
-                        req->open_button_pressed = true;
+req->open_button_pressed = true;
                         draw_window(req);
                         return true;
                     } else if (x >= volumes_x && x < volumes_x + BUTTON_WIDTH) {
@@ -2194,14 +2176,9 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     req->open_button_pressed = false;
                     need_redraw = true;
 
-                    log_error("[DEBUG] Open button released at x=%d y=%d, button bounds: x=%d-%d y=%d-%d",
-                              x, y, open_x, open_x + BUTTON_WIDTH, button_y, button_y + BUTTON_HEIGHT);
-
                     if (x >= open_x && x < open_x + BUTTON_WIDTH &&
                         y >= button_y && y < button_y + BUTTON_HEIGHT) {
-
-                        log_error("[DEBUG] Open button click confirmed, calling execute_action");
-                        // Use helper function to execute the appropriate action
+// Use helper function to execute the appropriate action
                         reqasl_execute_action(req);
                     }
                 }
@@ -2830,7 +2807,7 @@ static void listview_select_callback(int index, const char *text, void *user_dat
             // Count selected files and find the single file if only one
             int file_count = 0;
             int single_file_index = -1;
-            for (int i = 0; i < req->entry_count && i < LISTVIEW_MAX_ITEMS; i++) {
+            for (int i = 0; i < req->entry_count && i < req->listview->capacity; i++) {
                 if (req->listview->selected[i] && req->entries[i]->type == TYPE_FILE) {
                     if (file_count == 0) {
                         single_file_index = i;
