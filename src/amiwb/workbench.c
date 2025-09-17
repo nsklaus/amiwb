@@ -2760,6 +2760,7 @@ void create_icon(const char *path, Canvas *canvas, int x, int y) {
 
 void destroy_icon(FileIcon *icon) {
     if (!icon) return;
+
     // If this icon is currently being dragged, cancel the drag safely to avoid UAF
     if (icon == dragged_icon) {
         destroy_drag_window();
@@ -2768,10 +2769,27 @@ void destroy_icon(FileIcon *icon) {
         drag_source_canvas = NULL;
         saved_source_window = None;
     }
+
+    // Free icon resources (XRender pictures)
     free_icon(icon);
-    if (icon->path) free(icon->path);
-    if (icon->label) free(icon->label);
+
+    // Free strings and nullify to prevent double-free
+    if (icon->path) {
+        free(icon->path);
+        icon->path = NULL;
+    }
+    if (icon->label) {
+        free(icon->label);
+        icon->label = NULL;
+    }
+
+    // Remove from icon management array
     manage_icons(false, icon);
+
+    // Zero out the structure before freeing to catch use-after-free
+    memset(icon, 0, sizeof(FileIcon));
+
+    // Finally free the icon structure itself
     free(icon);
 }
 
