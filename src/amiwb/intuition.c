@@ -1987,13 +1987,35 @@ static Bool handle_drag_motion(XMotionEvent *event) {
     if (dragging_canvas) {
         int delta_x = event->x_root - drag_start_x;
         int delta_y = event->y_root - drag_start_y;
-        window_start_x += delta_x; 
+        window_start_x += delta_x;
         // Clamp y to ensure titlebar is below menubar
-        window_start_y = max(window_start_y + delta_y, MENUBAR_HEIGHT);  
+        window_start_y = max(window_start_y + delta_y, MENUBAR_HEIGHT);
         XMoveWindow(display, dragging_canvas->win, window_start_x, window_start_y);
-        dragging_canvas->x = window_start_x; 
+        dragging_canvas->x = window_start_x;
         dragging_canvas->y = window_start_y;
         drag_start_x = event->x_root; drag_start_y = event->y_root;
+
+        // Send ConfigureNotify to client window so it knows its new position
+        // This is crucial for apps with menus (Steam, fs-uae-launcher, etc)
+        if (dragging_canvas->client_win != None) {
+            XConfigureEvent ce;
+            ce.type = ConfigureNotify;
+            ce.display = display;
+            ce.event = dragging_canvas->client_win;
+            ce.window = dragging_canvas->client_win;
+            // Send root-relative coordinates (frame position + decoration offsets)
+            ce.x = window_start_x + BORDER_WIDTH_LEFT;
+            ce.y = window_start_y + BORDER_HEIGHT_TOP;
+            // Client dimensions (subtract decorations from frame size)
+            ce.width = dragging_canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+            ce.height = dragging_canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+            ce.border_width = 0;
+            ce.above = None;
+            ce.override_redirect = False;
+            XSendEvent(display, dragging_canvas->client_win, False,
+                      StructureNotifyMask, (XEvent *)&ce);
+        }
+
         return True;
     }
     return False;
@@ -2334,6 +2356,11 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
 
     if (should_skip_framing(event->window, &attrs)) {
         XMapWindow(display, event->window);
+        // Raise override-redirect windows (popup menus, tooltips, etc)
+        // This ensures they appear above other windows, not behind them
+        if (attrs.override_redirect) {
+            XRaiseWindow(display, event->window);
+        }
         send_x_command_and_sync();
         return;
     }
@@ -2347,11 +2374,21 @@ void intuition_handle_map_notify(XMapEvent *event) {
         return;
     }
 
-    // Ensure it's a toplevel, viewable, input-output window and not override-redirect
+    // Ensure it's a toplevel, viewable, input-output window
     XWindowAttributes attrs;
     get_window_attrs_with_defaults(event->window, &attrs);
     if (!is_viewable_client(&attrs) || !is_toplevel_under_root(event->window)) return;
-    if (should_skip_framing(event->window, &attrs)) return;
+
+    // Handle override-redirect windows (popup menus, tooltips)
+    if (should_skip_framing(event->window, &attrs)) {
+        // Raise override-redirect windows when they map themselves
+        // This ensures popup menus appear above their parent windows
+        if (attrs.override_redirect) {
+            XRaiseWindow(display, event->window);
+            XFlush(display);
+        }
+        return;
+    }
 
     frame_and_activate(event->window, &attrs, true);
 }
@@ -2489,8 +2526,17 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
     ce.display = display;
     ce.event = event->window;
     ce.window = event->window;
-    ce.x = 0;  // Client coords relative to frame
-    ce.y = 0;
+    // Send root-relative coordinates so apps know their actual position on screen
+    // This is crucial for proper menu/popup positioning
+    if (canvas->fullscreen) {
+        // Fullscreen windows are at 0,0
+        ce.x = 0;
+        ce.y = 0;
+    } else {
+        // Normal windows: frame position + decoration offsets
+        ce.x = canvas->x + BORDER_WIDTH_LEFT;
+        ce.y = canvas->y + BORDER_HEIGHT_TOP;
+    }
     ce.width = event->width;
     ce.height = event->height;
     ce.border_width = 0;

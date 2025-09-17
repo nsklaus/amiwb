@@ -22,6 +22,7 @@ typedef struct CompWin {
     int height;
     int x;      // Cached position to avoid XTranslateCoordinates
     int y;      // Cached position to avoid XTranslateCoordinates
+    bool override_redirect;  // Track if window is override-redirect (popup menus, tooltips)
     struct CompWin *next;
 } CompWin;
 
@@ -247,6 +248,7 @@ static void build_win_list(Display *dpy) {
         cw->win = w; cw->pm = pm; cw->pict = pict; cw->damage = dmg; cw->depth = depth;
         cw->width = wa.width; cw->height = wa.height;
         cw->x = x; cw->y = y;  // Cache position
+        cw->override_redirect = wa.override_redirect;  // Store override_redirect flag
         cw->next = NULL; *tail = cw; tail = &cw->next; // append to preserve order
         added++;
     }
@@ -340,6 +342,15 @@ static void repaint(Display *dpy) {
         Canvas *c = find_canvas(it->win);
         if (!(c && c->type == MENU)) continue;
         // Use cached values - no X11 calls!
+        unsigned int ww = (unsigned int)it->width, wh = (unsigned int)it->height;
+        int op = (it->depth == 32) ? PictOpOver : PictOpSrc;
+        XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, it->x, it->y, ww,wh);
+        count++;
+    }
+    // Pass 4: override-redirect windows (popup menus, tooltips) - TOPMOST
+    for (CompWin *it = g_list; it; it = it->next) {
+        if (!it->override_redirect) continue;
+        // These must always be on top (GTK popup menus, tooltips, etc)
         unsigned int ww = (unsigned int)it->width, wh = (unsigned int)it->height;
         int op = (it->depth == 32) ? PictOpOver : PictOpSrc;
         XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, it->x, it->y, ww,wh);
