@@ -42,11 +42,7 @@ static void reqasl_log_init(void) {
         strftime(ts, sizeof(ts), "%a %d %b %Y - %H:%M", &tm);
         fprintf(lf, "ReqASL log file, started on: %s\n", ts);
         fprintf(lf, "----------------------------------------\n");
-        fclose(lf);
-        
-        // Redirect stderr to append to the log file
-        // This makes toolkit widget errors go to reqasl.log automatically
-        freopen(log_path, "a", stderr);
+        fclose(lf);  // Close immediately - no fd inheritance
     }
 }
 

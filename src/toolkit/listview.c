@@ -1,4 +1,5 @@
 #include "listview.h"
+#include "toolkit.h"
 #include "../amiwb/config.h"
 #include <stdlib.h>
 #include <string.h>
@@ -40,7 +41,7 @@ void listview_update_scrollbar(ListView *lv) {
 ListView* listview_create(int x, int y, int width, int height) {
     ListView *lv = malloc(sizeof(ListView));
     if (!lv) {
-        fprintf(stderr, "[ERROR] ListView: Failed to allocate memory (size=%zu)\n", sizeof(ListView));
+        toolkit_log_error("[ERROR] ListView: Failed to allocate memory (size=%zu)", sizeof(ListView));
         return NULL;
     }
     

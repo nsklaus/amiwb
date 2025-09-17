@@ -1,6 +1,7 @@
 #include "editpad.h"
 #include "find.h"
 #include "font_manager.h"
+#include "../toolkit/toolkit.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,11 @@ static char g_log_path[PATH_SIZE] = "~/.config/amiwb/editpad.log";
 // Set the log path (called from editpad_load_config)
 void editpad_set_log_path(const char *path) {
     if (path && *path) {
+        // Store old path to check if it changed
+        char old_path[PATH_SIZE];
+        strncpy(old_path, g_log_path, PATH_SIZE - 1);
+        old_path[PATH_SIZE - 1] = '\0';
+
         strncpy(g_log_path, path, PATH_SIZE - 1);
         g_log_path[PATH_SIZE - 1] = '\0';
     }
@@ -43,18 +49,24 @@ void editpad_log_init(void) {
     if (lf) {
         // Header with timestamp - only thing that goes in log during normal operation
         time_t now = time(NULL);
-        struct tm tm; 
+        struct tm tm;
         localtime_r(&now, &tm);
         char ts[128];
         strftime(ts, sizeof(ts), "%a %d %b %Y - %H:%M", &tm);
         fprintf(lf, "EditPad log file, started on: %s\n", ts);
         fprintf(lf, "----------------------------------------\n");
         fclose(lf);  // Close immediately - no fd inheritance
-        
-        // Redirect stderr to append to the log file
-        // This makes toolkit widget errors go to editpad.log automatically
-        freopen(path_buf, "a", stderr);
     }
+}
+
+// Early log initialization - use default path before config is loaded
+void editpad_log_init_early(void) {
+    // Use a temporary default path in current directory
+    strncpy(g_log_path, "editpad.log", PATH_SIZE - 1);
+    g_log_path[PATH_SIZE - 1] = '\0';
+
+    // Initialize the log file
+    editpad_log_init();
 }
 
 // Error logging function - only logs actual errors
@@ -414,21 +426,26 @@ int main(int argc, char *argv[]) {
 
     // Initialize font system
     if (!editpad_font_init(display)) {
-        log_error("[ERROR] Failed to initialize font system");
+        fprintf(stderr, "[ERROR] Failed to initialize font system\n");
         XCloseDisplay(display);
         return 1;
     }
 
-    // Create EditPad (this will load config and set log path)
+    // PHASE 1: Early log init with default path and register callback
+    editpad_log_init_early();
+    toolkit_set_log_callback(log_error);
+
+    // Create EditPad (this will load config and update log path)
     EditPad *ep = editpad_create(display);
     if (!ep) {
         log_error("[ERROR] Failed to create EditPad");
         XCloseDisplay(display);
         return 1;
     }
-    
-    // Initialize log file AFTER config is loaded
-    editpad_log_init();
+
+    // PHASE 2: DON'T reinitialize - the config already set the path
+    // and we don't want to truncate the log again
+    // The early messages are already in the log file
     
     // Set up WM_DELETE_WINDOW
     Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);

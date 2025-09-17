@@ -1,4 +1,5 @@
 #include "textview.h"
+#include "toolkit.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -363,7 +364,7 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     tv->font = font;
     
     if (!tv->font) {
-        fprintf(stderr, "[ERROR] TextView: No font provided\n");
+        toolkit_log_error("[ERROR] TextView: No font provided");
         free(tv->lines);
         free(tv->line_widths);
         free(tv);
@@ -379,7 +380,7 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
         
         // Defensive check: ensure line_height is reasonable
         if (tv->line_height <= 0) {
-            fprintf(stderr, "[ERROR] TextView: Invalid line_height calculated: %d\n", tv->line_height);
+            toolkit_log_error("[ERROR] TextView: Invalid line_height calculated: %d", tv->line_height);
             tv->line_height = 16;  // Fallback to a reasonable default
         }
         
@@ -389,7 +390,7 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
         }
     } else {
         // No font loaded - use defaults
-        fprintf(stderr, "[WARNING] TextView: No font loaded, using defaults\n");
+        toolkit_log_error("[WARNING] TextView: No font loaded, using defaults");
         tv->char_width = 8;
         tv->line_height = 16;
         tv->visible_lines = (tv->height - 2) / tv->line_height;  // 2px safety buffer
@@ -458,7 +459,7 @@ TextView* textview_create(Display *display, Window parent, int x, int y,
     
     // Initialize syntax highlighting data
     tv->syntax_data = NULL;  // Will be allocated when syntax is set
-    
+
     XMapWindow(display, tv->window);
     return tv;
 }
@@ -2977,7 +2978,7 @@ bool textview_handle_configure(TextView *tv, XConfigureEvent *event) {
             tv->visible_lines = 1;
         }
     } else {
-        fprintf(stderr, "[WARNING] TextView: line_height is %d during resize, using default\n", tv->line_height);
+        toolkit_log_error("[WARNING] TextView: line_height is %d during resize, using default", tv->line_height);
         tv->visible_lines = (tv->height - 2) / 16;  // Use default with safety buffer
         if (tv->visible_lines <= 0) tv->visible_lines = 1;
     }
@@ -3002,7 +3003,7 @@ void textview_update_scrollbar(TextView *tv) {
             tv->visible_lines = 1;
         }
     } else {
-        fprintf(stderr, "[WARNING] TextView: line_height is %d in scrollbar update\n", tv->line_height);
+        toolkit_log_error("[WARNING] TextView: line_height is %d in scrollbar update", tv->line_height);
         tv->visible_lines = viewable_height / 16;
         if (tv->visible_lines <= 0) tv->visible_lines = 1;
     }

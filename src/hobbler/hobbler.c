@@ -20,6 +20,7 @@
 #include <time.h>
 
 // Toolkit includes
+#include "../toolkit/toolkit.h"
 #include "../toolkit/button.h"
 #include "../toolkit/inputfield.h"
 
@@ -83,11 +84,17 @@ static void on_home_clicked(void *data);
 static void on_go_clicked(void *data);
 static void on_url_enter(const char *text, void *data);
 
-// Logging function
+// Logging function - follows standard AmiWB pattern
 void log_error(const char *format, ...) {
     const char *log_path = "/home/klaus/Sources/amiwb/hobbler.log";
     FILE *log = fopen(log_path, "a");
     if (!log) return;
+
+    // Add timestamp like other AmiWB apps
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    fprintf(log, "[%02d:%02d:%02d] ",
+            tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec);
 
     va_list args;
     va_start(args, format);
@@ -108,8 +115,8 @@ static void init_log(void) {
     fprintf(log, "----------------------------------------\n");
     fclose(log);
 
-    // Redirect stderr to log
-    freopen(log_path, "a", stderr);
+    // DO NOT redirect stderr - follow standard logging pattern
+    // Each error logged via log_error() using direct file I/O
 }
 
 // Button callbacks
@@ -458,6 +465,9 @@ static void on_window_destroy(GtkWidget *widget, gpointer data) {
 int main(int argc, char *argv[]) {
     // Initialize logging
     init_log();
+
+    // Register toolkit logging callback so toolkit widgets log to hobbler.log
+    toolkit_set_log_callback(log_error);
 
     // Initialize GTK
     gtk_init(&argc, &argv);

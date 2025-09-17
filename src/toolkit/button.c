@@ -1,4 +1,5 @@
 #include "button.h"
+#include "toolkit.h"
 #include "../amiwb/config.h"
 #include <stdlib.h>
 #include <string.h>
@@ -7,7 +8,7 @@
 Button* button_create(int x, int y, int width, int height, const char *label, XftFont *font) {
     Button *button = malloc(sizeof(Button));
     if (!button) {
-        fprintf(stderr, "[ERROR] Button: Failed to allocate memory (size=%zu)\n", sizeof(Button));
+        toolkit_log_error("[ERROR] Button: Failed to allocate memory (size=%zu)", sizeof(Button));
         return NULL;
     }
 

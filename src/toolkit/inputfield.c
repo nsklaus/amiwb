@@ -1,4 +1,5 @@
 #include "inputfield.h"
+#include "toolkit.h"
 #include "../amiwb/config.h"
 #include <stdlib.h>
 #include <string.h>
@@ -52,7 +53,7 @@ static void get_selection_range(InputField *field, int *start, int *end) {
 InputField* inputfield_create(int x, int y, int width, int height, XftFont *font) {
     InputField *field = malloc(sizeof(InputField));
     if (!field) {
-        fprintf(stderr, "[ERROR] InputField: Failed to allocate memory (size=%zu)\n", sizeof(InputField));
+        toolkit_log_error("[ERROR] InputField: Failed to allocate memory (size=%zu)", sizeof(InputField));
         return NULL;
     }
     
@@ -1132,7 +1133,7 @@ static char *expand_tilde(const char *path) {
         size_t path_len = strlen(path + 1);
         char *result = malloc(home_len + path_len + 1);
         if (!result) {
-            fprintf(stderr, "[ERROR] InputField: Failed to allocate memory for path expansion\n");
+            toolkit_log_error("[ERROR] InputField: Failed to allocate memory for path expansion");
             return strdup(path);
         }
         
@@ -1159,7 +1160,7 @@ static void find_completions(InputField *field, const char *partial) {
         // Has directory component
         size_t dir_len = last_slash - expanded + 1;
         if (dir_len >= PATH_SIZE) {
-            fprintf(stderr, "[ERROR] InputField: Directory path too long\n");
+            toolkit_log_error("[ERROR] InputField: Directory path too long");
             free(expanded);
             return;
         }
@@ -1217,7 +1218,7 @@ static void find_completions(InputField *field, const char *partial) {
             char full_path[PATH_SIZE];
             int ret = snprintf(full_path, sizeof(full_path), "%s%s", expanded_dir, entry->d_name);
             if (ret >= PATH_SIZE) {
-                fprintf(stderr, "[WARNING] InputField: Path too long for completion, skipping: %s%s\n", expanded_dir, entry->d_name);
+                toolkit_log_error("[WARNING] InputField: Path too long for completion, skipping: %s%s", expanded_dir, entry->d_name);
                 continue;
             }
             struct stat st;
@@ -1262,7 +1263,7 @@ void inputfield_apply_completion(InputField *field, int index) {
     // Build the completed path
     char completed[PATH_SIZE];
     if (field->completion_prefix_len >= PATH_SIZE) {
-        fprintf(stderr, "[ERROR] InputField: Completion prefix too long\n");
+        toolkit_log_error("[ERROR] InputField: Completion prefix too long");
         return;
     }
     strncpy(completed, field->completion_prefix, field->completion_prefix_len);
@@ -1272,7 +1273,7 @@ void inputfield_apply_completion(InputField *field, int index) {
     size_t current_len = strlen(completed);
     size_t candidate_len = strlen(field->completion_candidates[index]);
     if (current_len + candidate_len >= PATH_SIZE) {
-        fprintf(stderr, "[ERROR] InputField: Completed path too long\n");
+        toolkit_log_error("[ERROR] InputField: Completed path too long");
         return;
     }
     strncat(completed, field->completion_candidates[index], PATH_SIZE - current_len - 1);

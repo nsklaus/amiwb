@@ -6,6 +6,7 @@
 #include <X11/Xlib.h>
 #include "reqasl.h"
 #include "font_manager.h"
+#include "../toolkit/toolkit.h"
 
 static bool files_selected = false;
 
@@ -32,6 +33,9 @@ int main(int argc, char *argv[]) {
         XCloseDisplay(display);
         return 1;
     }
+
+    // Register toolkit logging callback
+    toolkit_set_log_callback(log_error);
 
     // Create ReqASL dialog
     ReqASL *req = reqasl_create(display);
