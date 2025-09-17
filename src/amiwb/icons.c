@@ -928,18 +928,21 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         log_error("[DEBUG] has_selected=0x%08x", has_selected);
     }
 
-    // For AWMWB3 extended format icons, the selected image is at a different location
-    bool is_extended_format = (header_offset == 0x86) && strstr(icon_path, "AWMWB3/Coms");
+    // For extended format MWB icons, the selected image is at a different location
+    // Detect based on format characteristics, not path
+    bool is_extended_format = (header_offset == 0x86);  // Has drawer data
+
+    // Additional check: Extended format icons typically have specific size patterns
+    // Most extended format icons are 1659 bytes, but we should check structure instead
     if (is_extended_format && has_selected) {
         // Calculate where second image should be
         int row_bytes = ((width + 15) / 16) * 2;
         int plane_size = row_bytes * height;
         int first_image_size = plane_size * depth;
 
-        // In extended format, second image starts at 0x37A
-        // Second image header at 0x370, data would be at 0x382, but go back 1 row
-        // So actual image data: 0x382 - 0x08 = 0x37A
-        int second_image_offset = 0x37A;
+        // In extended format, second image starts at 0x38A for AWMWB3
+        // The pattern shows actual data begins at 0x38A, not 0x37A
+        int second_image_offset = 0x38A;
 
         if (strstr(icon_path, "AWMWB3/Coms")) {
             log_error("[DEBUG] Extended format - looking for second image at 0x%x", second_image_offset);
