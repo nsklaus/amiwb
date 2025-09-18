@@ -317,6 +317,64 @@ const SITE_MODIFICATIONS = {
     }
   },
   
+  'patreon.com': {
+    selectors: {
+      // Change white backgrounds to gray
+      'body, main, div, section, article, header, footer, nav, aside, form': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0',
+        'background-image': 'none'
+      },
+
+      // Force all text to black
+      '*': {
+        'color': '#000000'
+      },
+
+      // Links blue
+      'a, a *': {
+        'color': '#000cda'
+      },
+
+      // Visited links purple
+      'a:visited': {
+        'color': '#551a8b'
+      }
+    }
+  },
+
+  'www.patreon.com': {
+    selectors: {
+      'body': {
+        'background': '#A0A2A0'
+      },
+
+      'body *': {
+        'color': '#000000'
+      },
+
+      'a, a *': {
+        'color': '#000cda'
+      },
+
+      'a:visited': {
+        'color': '#551a8b'
+      },
+
+      // Post cards and their children
+      'div[data-tag="post-card"], div[data-tag="post-card"] *': {
+        'background': '#A0A2A0',
+        'background-color': '#A0A2A0'
+      },
+
+      // Navbar and its children
+      'div[data-tag="navbar"], div[data-tag="navbar"] *': {
+        'background': '#A0A2A0',
+        'background-color': '#A0A2A0'
+      }
+    }
+  },
+
   // DEFAULT FALLBACK FOR ALL UNDEFINED SITES
   '*.*': {
     selectors: {
