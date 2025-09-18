@@ -1589,8 +1589,29 @@ void handle_menu_selection(Menu *menu, int item_index) {
     
     // Handle app menu selections
     if (app_menu_active && current_app_window != None) {
-        // Send selection to app via client message
-        send_menu_selection_to_app(current_app_window, menu->parent_index, item_index);
+        // For nested submenus, we need to send additional info
+        if (menu->parent_menu && menu->parent_menu->parent_menu) {
+            // This is a nested submenu - send parent menu index in data.l[2]
+            Display *dpy = get_display();
+            if (dpy) {
+                XEvent event;
+                memset(&event, 0, sizeof(event));
+                event.type = ClientMessage;
+                event.xclient.window = current_app_window;
+                event.xclient.message_type = XInternAtom(dpy, "_AMIWB_MENU_SELECT", False);
+                event.xclient.format = 32;
+                event.xclient.data.l[0] = menu->parent_index;  // Parent item index (e.g., 2 for "Syntax")
+                event.xclient.data.l[1] = item_index;  // Which item in submenu
+                event.xclient.data.l[2] = menu->parent_menu->parent_index;  // Parent menu index (e.g., 3 for "View")
+                event.xclient.data.l[3] = 1;  // Flag: this is a submenu selection
+
+                XSendEvent(dpy, current_app_window, False, NoEventMask, &event);
+                XFlush(dpy);
+            }
+        } else {
+            // Regular top-level menu selection
+            send_menu_selection_to_app(current_app_window, menu->parent_index, item_index);
+        }
         
         // Close menus after selection
         if (get_show_menus_state()) {
@@ -2903,119 +2924,250 @@ static void parse_and_switch_app_menus(const char *app_name, const char *menu_da
         log_error("[ERROR] parse_and_switch_app_menus: NULL parameters");
         return;
     }
-    
-    // Parsing menu data
-    
-    // Count top-level menus (separated by |)
-    int menu_count = 1;
-    for (const char *p = menu_data; *p; p++) {
-        if (*p == '|') menu_count++;
+
+    // Parsing menu data with submenu support
+
+    // First pass: count top-level menus and identify submenus
+    // Top-level menus are sections that don't contain "/"
+    int menu_count = 0;
+    int submenu_count = 0;
+
+    // Split by | and count
+    char *temp_copy = strdup(menu_data);
+    char *temp_saveptr;
+    char *temp_str = strtok_r(temp_copy, "|", &temp_saveptr);
+
+    while (temp_str) {
+        // Check if this is a submenu definition (contains "/")
+        if (strchr(temp_str, '/')) {
+            submenu_count++;
+        } else {
+            menu_count++;
+        }
+        temp_str = strtok_r(NULL, "|", &temp_saveptr);
     }
-    
+    free(temp_copy);
+
     // Allocate top-level arrays
     char **menu_items = calloc(menu_count, sizeof(char*));
     Menu **submenus = calloc(menu_count, sizeof(Menu*));
-    
+
+    // Store submenu definitions temporarily
+    typedef struct {
+        char *parent_menu;
+        char *parent_item;
+        Menu *submenu;
+    } SubmenuDef;
+    SubmenuDef *submenu_defs = calloc(submenu_count, sizeof(SubmenuDef));
+    int submenu_def_count = 0;
+
     // Parse the menu data - use strtok_r to avoid issues
     char *data_copy = strdup(menu_data);
     char *saveptr;
     char *menu_str = strtok_r(data_copy, "|", &saveptr);
     int menu_index = 0;
-    
-    while (menu_str && menu_index < menu_count) {
-        // Split "File:New,Open,Save" into "File" and "New,Open,Save"
-        char *colon = strchr(menu_str, ':');
-        if (!colon) continue;
-        
-        *colon = '\0';
-        char *menu_name = menu_str;
-        char *items_str = colon + 1;
-        
-        // Store menu name
-        menu_items[menu_index] = strdup(menu_name);
-        
-        // Count items in this menu
-        int item_count = 1;
-        for (const char *p = items_str; *p; p++) {
-            if (*p == ',') item_count++;
-        }
-        
-        // Create submenu
-        Menu *submenu = calloc(1, sizeof(Menu));
-        submenu->item_count = item_count;
-        submenu->items = calloc(item_count, sizeof(char*));
-        submenu->shortcuts = calloc(item_count, sizeof(char*));
-        submenu->enabled = calloc(item_count, sizeof(bool));
-        submenu->checkmarks = calloc(item_count, sizeof(bool));
-        
-        // Parse items - use strtok_r for thread safety and to avoid nested strtok issues
-        char *saveptr2;
-        char *items_copy = strdup(items_str);  // Make a copy for strtok_r
-        char *item = strtok_r(items_copy, ",", &saveptr2);
-        int item_index = 0;
-        while (item && item_index < item_count) {
-            // Skip leading spaces
-            while (*item == ' ') item++;
 
-            // Check for checkbox notation [o] = checked, [x] = unchecked
-            if (strncmp(item, "[o]", 3) == 0) {
-                submenu->checkmarks[item_index] = true;  // Checked (on)
-                item += 3;  // Skip "[o]"
-                if (*item == ' ') item++;  // Skip space after checkbox
-            } else if (strncmp(item, "[x]", 3) == 0) {
-                submenu->checkmarks[item_index] = false;  // Unchecked (off)
-                item += 3;  // Skip "[x]"
-                if (*item == ' ') item++;  // Skip space after checkbox
-            }
-            // Items without [o] or [x] are not toggleable
+    while (menu_str) {
+        // Check if this is a submenu definition
+        char *slash = strchr(menu_str, '/');
+        if (slash) {
+            // Parse "View/Syntax:None,C/C++,Python" format
+            *slash = '\0';
+            char *parent_menu = menu_str;
+            char *rest = slash + 1;
 
-            // Parse menu item with potential "#" shortcut notation
-            char *delimiter = strchr(item, '#');
-            if (delimiter) {
-                // Found "#" - split into name and shortcut
-                *delimiter = '\0';  // Terminate item name at #
-                char *shortcut = delimiter + 1;  // Shortcut is everything after #
+            char *colon = strchr(rest, ':');
+            if (colon) {
+                *colon = '\0';
+                char *parent_item = rest;
+                char *items_str = colon + 1;
 
-                // Strip any trailing spaces from item name
-                char *end = item + strlen(item) - 1;
-                while (end > item && *end == ' ') {
-                    *end = '\0';
-                    end--;
+                // Create the submenu
+                int item_count = 1;
+                for (const char *p = items_str; *p; p++) {
+                    if (*p == ',') item_count++;
                 }
 
-                // Strip any leading spaces from shortcut
-                while (*shortcut == ' ') {
-                    shortcut++;
-                }
+                Menu *submenu = calloc(1, sizeof(Menu));
+                submenu->item_count = item_count;
+                submenu->items = calloc(item_count, sizeof(char*));
+                submenu->shortcuts = calloc(item_count, sizeof(char*));
+                submenu->enabled = calloc(item_count, sizeof(bool));
+                submenu->checkmarks = calloc(item_count, sizeof(bool));
 
-                submenu->items[item_index] = strdup(item);
-                submenu->shortcuts[item_index] = strdup(shortcut);
-            } else {
-                // No "#" delimiter - no shortcut
-                submenu->items[item_index] = strdup(item);
-                submenu->shortcuts[item_index] = NULL;
+                // Parse submenu items
+                char *items_copy = strdup(items_str);
+                char *saveptr2;
+                char *item = strtok_r(items_copy, ",", &saveptr2);
+                int item_index = 0;
+
+                while (item && item_index < item_count) {
+                    // Skip leading spaces
+                    while (*item == ' ') item++;
+                    submenu->items[item_index] = strdup(item);
+                    submenu->shortcuts[item_index] = NULL;
+                    submenu->enabled[item_index] = true;
+                    item = strtok_r(NULL, ",", &saveptr2);
+                    item_index++;
+                }
+                free(items_copy);
+
+                submenu->selected_item = -1;
+                submenu->submenus = NULL;
+                submenu->canvas = NULL;
+
+                // Store submenu definition
+                submenu_defs[submenu_def_count].parent_menu = strdup(parent_menu);
+                submenu_defs[submenu_def_count].parent_item = strdup(parent_item);
+                submenu_defs[submenu_def_count].submenu = submenu;
+                submenu_def_count++;
+            }
+        } else {
+            // Regular top-level menu
+            char *colon = strchr(menu_str, ':');
+            if (!colon) {
+                menu_str = strtok_r(NULL, "|", &saveptr);
+                continue;
             }
 
-            submenu->enabled[item_index] = true;
+            *colon = '\0';
+            char *menu_name = menu_str;
+            char *items_str = colon + 1;
 
-            item = strtok_r(NULL, ",", &saveptr2);
-            item_index++;
+            // Store menu name
+            menu_items[menu_index] = strdup(menu_name);
+
+            // Count items in this menu
+            int item_count = 1;
+            for (const char *p = items_str; *p; p++) {
+                if (*p == ',') item_count++;
+            }
+
+            // Create submenu
+            Menu *submenu = calloc(1, sizeof(Menu));
+            submenu->item_count = item_count;
+            submenu->items = calloc(item_count, sizeof(char*));
+            submenu->shortcuts = calloc(item_count, sizeof(char*));
+            submenu->enabled = calloc(item_count, sizeof(bool));
+            submenu->checkmarks = calloc(item_count, sizeof(bool));
+            submenu->submenus = calloc(item_count, sizeof(Menu*));  // Allocate space for nested submenus
+        
+            // Parse items - use strtok_r for thread safety and to avoid nested strtok issues
+            char *saveptr2;
+            char *items_copy = strdup(items_str);  // Make a copy for strtok_r
+            char *item = strtok_r(items_copy, ",", &saveptr2);
+            int item_index = 0;
+            while (item && item_index < item_count) {
+                // Skip leading spaces
+                while (*item == ' ') item++;
+
+                // Check for checkbox notation [o] = checked, [x] = unchecked
+                if (strncmp(item, "[o]", 3) == 0) {
+                    submenu->checkmarks[item_index] = true;  // Checked (on)
+                    item += 3;  // Skip "[o]"
+                    if (*item == ' ') item++;  // Skip space after checkbox
+                } else if (strncmp(item, "[x]", 3) == 0) {
+                    submenu->checkmarks[item_index] = false;  // Unchecked (off)
+                    item += 3;  // Skip "[x]"
+                    if (*item == ' ') item++;  // Skip space after checkbox
+                }
+                // Items without [o] or [x] are not toggleable
+
+                // Check for submenu marker ">"
+                char *submenu_marker = strstr(item, " >");
+                if (submenu_marker) {
+                    // This item has a submenu
+                    *submenu_marker = '\0';  // Remove the " >" from the item name
+                    // The actual submenu will be linked later
+                }
+
+                // Parse menu item with potential "#" shortcut notation
+                char *delimiter = strchr(item, '#');
+                if (delimiter) {
+                    // Found "#" - split into name and shortcut
+                    *delimiter = '\0';  // Terminate item name at #
+                    char *shortcut = delimiter + 1;  // Shortcut is everything after #
+
+                    // Strip any trailing spaces from item name
+                    char *end = item + strlen(item) - 1;
+                    while (end > item && *end == ' ') {
+                        *end = '\0';
+                        end--;
+                    }
+
+                    // Strip any leading spaces from shortcut
+                    while (*shortcut == ' ') {
+                        shortcut++;
+                    }
+
+                    submenu->items[item_index] = strdup(item);
+                    submenu->shortcuts[item_index] = strdup(shortcut);
+                } else {
+                    // No "#" delimiter - no shortcut
+                    // Strip trailing spaces
+                    char *end = item + strlen(item) - 1;
+                    while (end > item && *end == ' ') {
+                        *end = '\0';
+                        end--;
+                    }
+                    submenu->items[item_index] = strdup(item);
+                    submenu->shortcuts[item_index] = NULL;
+                }
+
+                submenu->enabled[item_index] = true;
+
+                item = strtok_r(NULL, ",", &saveptr2);
+                item_index++;
+            }
+            free(items_copy);
+        
+            submenu->selected_item = -1;
+            submenu->parent_menu = menubar;
+            submenu->parent_index = menu_index;
+            submenu->canvas = NULL;
+
+            submenus[menu_index] = submenu;
+            menu_index++;
         }
-        free(items_copy);
-        
-        submenu->selected_item = -1;
-        submenu->parent_menu = menubar;
-        submenu->parent_index = menu_index;
-        submenu->submenus = NULL;
-        submenu->canvas = NULL;
-        
-        submenus[menu_index] = submenu;
-        
+
         menu_str = strtok_r(NULL, "|", &saveptr);
-        menu_index++;
     }
-    
+
     free(data_copy);
+
+    // Now link the submenus to their parent items
+    for (int i = 0; i < submenu_def_count; i++) {
+        SubmenuDef *def = &submenu_defs[i];
+
+        // Find the parent menu
+        int parent_menu_idx = -1;
+        for (int j = 0; j < menu_count; j++) {
+            if (menu_items[j] && strcmp(menu_items[j], def->parent_menu) == 0) {
+                parent_menu_idx = j;
+                break;
+            }
+        }
+
+        if (parent_menu_idx >= 0 && submenus[parent_menu_idx]) {
+            Menu *parent_menu = submenus[parent_menu_idx];
+
+            // Find the parent item
+            for (int j = 0; j < parent_menu->item_count; j++) {
+                if (parent_menu->items[j] && strcmp(parent_menu->items[j], def->parent_item) == 0) {
+                    // Link the submenu
+                    parent_menu->submenus[j] = def->submenu;
+                    def->submenu->parent_menu = parent_menu;
+                    def->submenu->parent_index = j;
+                    break;
+                }
+            }
+        }
+
+        // Clean up submenu def strings
+        free(def->parent_menu);
+        free(def->parent_item);
+    }
+    free(submenu_defs);
 
     // Cache the menus for reuse by other instances
     cache_app_menus(app_name, menu_items, submenus, menu_count);

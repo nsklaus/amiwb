@@ -173,10 +173,14 @@ void editpad_run(EditPad *ep) {
                     else if (event.xclient.message_type == XInternAtom(ep->display, "_AMIWB_MENU_SELECT", False)) {
                         int menu_index = event.xclient.data.l[0];
                         int item_index = event.xclient.data.l[1];
-                        
-                        
+                        int parent_menu = event.xclient.data.l[2];  // Parent menu (for submenus)
+                        int is_submenu = event.xclient.data.l[3];   // 1 if this is a submenu selection
+
+                        log_error("[DEBUG] Menu event: menu=%d, item=%d, parent=%d, is_sub=%d",
+                                  menu_index, item_index, parent_menu, is_submenu);
+
                         // Handle File menu (index 0)
-                        if (menu_index == 0) {
+                        if (!is_submenu && menu_index == 0) {
                             switch (item_index) {
                                 case 0:  // New
                                     editpad_new_file(ep);
@@ -208,7 +212,7 @@ void editpad_run(EditPad *ep) {
                             }
                         }
                         // Handle Edit menu (index 1)
-                        else if (menu_index == 1) {
+                        else if (!is_submenu && menu_index == 1) {
                             switch (item_index) {
                                 case 0:  // Cut
                                     editpad_cut(ep);
@@ -228,7 +232,7 @@ void editpad_run(EditPad *ep) {
                             }
                         }
                         // Handle Search menu (index 2)
-                        else if (menu_index == 2) {
+                        else if (!is_submenu && menu_index == 2) {
                             switch (item_index) {
                                 case 0:  // Find
                                     editpad_find(ep);
@@ -239,7 +243,7 @@ void editpad_run(EditPad *ep) {
                             }
                         }
                         // Handle View menu (index 3)
-                        else if (menu_index == 3) {
+                        else if (!is_submenu && menu_index == 3) {
                             switch (item_index) {
                                 case 0:  // WordWrap
                                     editpad_toggle_word_wrap(ep);
@@ -247,7 +251,46 @@ void editpad_run(EditPad *ep) {
                                 case 1:  // LineNumbers
                                     editpad_toggle_line_numbers(ep);
                                     break;
+                                case 2:  // Syntax > (has submenu)
+                                    // Submenu selections come as menu_index=2, item_index=submenu_item
+                                    // This is handled separately below
+                                    break;
                             }
+                        }
+                        // Handle Syntax submenu selections
+                        // When a submenu item is selected, AmiWB sends:
+                        // data.l[0] = parent item index (2 for "Syntax")
+                        // data.l[1] = selected item in submenu
+                        // data.l[2] = parent menu index (3 for "View")
+                        // data.l[3] = 1 (submenu flag)
+                        else if (is_submenu && parent_menu == 3 && menu_index == 2) {  // View->Syntax submenu
+                            Language lang = LANG_NONE;
+                            switch (item_index) {
+                                case 0:  // None
+                                    lang = LANG_NONE;
+                                    break;
+                                case 1:  // C/C++
+                                    lang = LANG_C;
+                                    break;
+                                case 2:  // Python
+                                    lang = LANG_PYTHON;
+                                    break;
+                                case 3:  // Shell
+                                    lang = LANG_SHELL;
+                                    break;
+                                case 4:  // JavaScript
+                                    lang = LANG_JAVASCRIPT;
+                                    break;
+                                case 5:  // Makefile
+                                    lang = LANG_MAKEFILE;
+                                    break;
+                                case 6:  // Markdown
+                                    lang = LANG_MARKDOWN;
+                                    break;
+                            }
+
+                            // Set the syntax language and refresh
+                            editpad_set_syntax_language(ep, lang);
                         }
                     }
                     break;

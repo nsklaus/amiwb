@@ -125,8 +125,8 @@ EditPad* editpad_create(Display *display) {
                    XA_STRING, 8, PropModeReplace,
                    (unsigned char*)app_type, strlen(app_type));
     
-    // Set menu data (simple format for now)
-    const char *menu_data = "File:New,Open,Save,Save As,Quit|Edit:Cut,Copy,Paste,Select All,Undo|Search:Find,Goto Line|View:Word Wrap,Line Numbers";
+    // Set menu data with Syntax submenu under View
+    const char *menu_data = "File:New,Open,Save,Save As,Quit|Edit:Cut,Copy,Paste,Select All,Undo|Search:Find,Goto Line|View:Word Wrap,Line Numbers,Syntax >|View/Syntax:None,C/C++,Python,Shell,JavaScript,Makefile,Markdown";
     XChangeProperty(display, ep->main_window, menu_data_atom,
                    XA_STRING, 8, PropModeReplace,
                    (unsigned char*)menu_data, strlen(menu_data));
@@ -531,6 +531,29 @@ void editpad_toggle_word_wrap(EditPad *ep) {
     if (!ep) return;
     ep->word_wrap = !ep->word_wrap;
     textview_set_word_wrap(ep->text_view, ep->word_wrap);
+}
+
+// Force a syntax language change and refresh TextView highlighting
+void editpad_set_syntax_language(EditPad *ep, Language lang) {
+    if (!ep || !ep->syntax || !ep->text_view) return;
+
+    // Change the language
+    syntax_set_language(ep->syntax, lang);
+
+    // Get the color palette for the new language
+    uint32_t palette[SYNTAX_MAX];
+    for (int i = 0; i < SYNTAX_MAX; i++) {
+        palette[i] = syntax_get_color(ep->syntax, i);
+    }
+
+    // Re-set syntax highlighting to invalidate TextView's cache
+    textview_set_syntax_highlight(ep->text_view, ep->syntax,
+                                 (TextViewSyntaxCallback)editpad_syntax_callback,
+                                 palette, SYNTAX_MAX);
+
+    // Force immediate re-highlighting and redraw
+    textview_highlight_all_lines(ep->text_view);
+    textview_draw(ep->text_view);
 }
 
 // Load configuration from ~/.config/amiwb/editpad/editpadrc

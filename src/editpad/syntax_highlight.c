@@ -688,6 +688,231 @@ static SyntaxColor* highlight_markdown_line(SyntaxHighlight *sh, const char *lin
     return colors;
 }
 
+// Highlight shell script line
+static SyntaxColor* highlight_shell_line(SyntaxHighlight *sh, const char *line, int line_num) {
+    if (!sh || !line) return NULL;
+
+    int len = strlen(line);
+    SyntaxColor *colors = calloc(len + 1, sizeof(SyntaxColor));
+    if (!colors) return NULL;
+
+    // Initialize all to normal
+    for (int i = 0; i < len; i++) {
+        colors[i] = SYNTAX_NORMAL;
+    }
+
+    // Shell keywords
+    const char *keywords[] = {
+        "if", "then", "else", "elif", "fi", "case", "esac", "for", "while",
+        "do", "done", "function", "return", "break", "continue", "exit",
+        "export", "source", "shift", "eval", "exec", "test", "echo", "read",
+        "cd", "pwd", "ls", "cp", "mv", "rm", "mkdir", "rmdir", "touch",
+        "grep", "sed", "awk", "find", "cat", "head", "tail", "sort", "uniq",
+        NULL
+    };
+
+    int i = 0;
+    while (i < len) {
+        // Skip whitespace
+        while (i < len && isspace(line[i])) i++;
+
+        // Comments
+        if (line[i] == '#') {
+            while (i < len) {
+                colors[i++] = SYNTAX_COMMENT;
+            }
+            break;
+        }
+
+        // Strings with double quotes
+        if (line[i] == '"') {
+            colors[i++] = SYNTAX_STRING;
+            while (i < len && line[i] != '"') {
+                if (line[i] == '\\' && i + 1 < len) {
+                    colors[i++] = SYNTAX_STRING;
+                    if (i < len) colors[i++] = SYNTAX_STRING;
+                } else {
+                    colors[i++] = SYNTAX_STRING;
+                }
+            }
+            if (i < len) colors[i++] = SYNTAX_STRING;
+            continue;
+        }
+
+        // Strings with single quotes
+        if (line[i] == '\'') {
+            colors[i++] = SYNTAX_STRING;
+            while (i < len && line[i] != '\'') {
+                colors[i++] = SYNTAX_STRING;
+            }
+            if (i < len) colors[i++] = SYNTAX_STRING;
+            continue;
+        }
+
+        // Variables $VAR or ${VAR}
+        if (line[i] == '$') {
+            colors[i++] = SYNTAX_PREPROCESSOR;
+            if (i < len && line[i] == '{') {
+                colors[i++] = SYNTAX_PREPROCESSOR;
+                while (i < len && line[i] != '}') {
+                    colors[i++] = SYNTAX_PREPROCESSOR;
+                }
+                if (i < len) colors[i++] = SYNTAX_PREPROCESSOR;
+            } else {
+                while (i < len && (isalnum(line[i]) || line[i] == '_')) {
+                    colors[i++] = SYNTAX_PREPROCESSOR;
+                }
+            }
+            continue;
+        }
+
+        // Check for keywords
+        if (isalpha(line[i]) || line[i] == '_') {
+            int start = i;
+            while (i < len && (isalnum(line[i]) || line[i] == '_')) i++;
+
+            // Extract the word
+            int word_len = i - start;
+            char *word = malloc(word_len + 1);
+            if (word) {
+                strncpy(word, &line[start], word_len);
+                word[word_len] = '\0';
+
+                if (is_keyword(word, keywords)) {
+                    for (int j = start; j < i; j++) {
+                        colors[j] = SYNTAX_KEYWORD;
+                    }
+                }
+                free(word);
+            }
+            continue;
+        }
+
+        // Operators
+        if (strchr("=+-*/<>!&|[](){};", line[i])) {
+            colors[i] = SYNTAX_OPERATOR;
+            i++;
+            continue;
+        }
+
+        i++;
+    }
+
+    return colors;
+}
+
+// Highlight makefile line
+static SyntaxColor* highlight_makefile_line(SyntaxHighlight *sh, const char *line, int line_num) {
+    if (!sh || !line) return NULL;
+
+    int len = strlen(line);
+    SyntaxColor *colors = calloc(len + 1, sizeof(SyntaxColor));
+    if (!colors) return NULL;
+
+    // Initialize all to normal
+    for (int i = 0; i < len; i++) {
+        colors[i] = SYNTAX_NORMAL;
+    }
+
+    int i = 0;
+
+    // Comments
+    if (line[0] == '#') {
+        for (i = 0; i < len; i++) {
+            colors[i] = SYNTAX_COMMENT;
+        }
+        return colors;
+    }
+
+    // Rule targets (start of line, contains ':')
+    if (line[0] != '\t' && line[0] != ' ') {
+        // Look for ':' to identify targets
+        int colon_pos = -1;
+        for (int j = 0; j < len; j++) {
+            if (line[j] == ':') {
+                colon_pos = j;
+                break;
+            }
+        }
+
+        if (colon_pos > 0) {
+            // Color the target
+            for (i = 0; i <= colon_pos; i++) {
+                colors[i] = SYNTAX_FUNCTION;
+            }
+            i = colon_pos + 1;
+        }
+    }
+
+    // Commands (lines starting with tab)
+    if (line[0] == '\t') {
+        i = 1; // Skip the tab
+        // Commands are colored as normal but we still parse them
+    }
+
+    while (i < len) {
+        // Comments
+        if (line[i] == '#') {
+            while (i < len) {
+                colors[i++] = SYNTAX_COMMENT;
+            }
+            break;
+        }
+
+        // Variables $(VAR) or ${VAR}
+        if (line[i] == '$' && i + 1 < len && (line[i+1] == '(' || line[i+1] == '{')) {
+            char end_char = (line[i+1] == '(') ? ')' : '}';
+            colors[i++] = SYNTAX_PREPROCESSOR;
+            colors[i++] = SYNTAX_PREPROCESSOR;
+            while (i < len && line[i] != end_char) {
+                colors[i++] = SYNTAX_PREPROCESSOR;
+            }
+            if (i < len) colors[i++] = SYNTAX_PREPROCESSOR;
+            continue;
+        }
+
+        // Assignment operators
+        if (line[i] == '=' || (line[i] == ':' && i + 1 < len && line[i+1] == '=') ||
+            (line[i] == '+' && i + 1 < len && line[i+1] == '=') ||
+            (line[i] == '?' && i + 1 < len && line[i+1] == '=')) {
+            colors[i] = SYNTAX_OPERATOR;
+            i++;
+            if (i < len && line[i] == '=') {
+                colors[i] = SYNTAX_OPERATOR;
+                i++;
+            }
+            continue;
+        }
+
+        // Strings
+        if (line[i] == '"' || line[i] == '\'') {
+            char quote = line[i];
+            colors[i++] = SYNTAX_STRING;
+            while (i < len && line[i] != quote) {
+                if (line[i] == '\\' && i + 1 < len) {
+                    colors[i++] = SYNTAX_STRING;
+                    if (i < len) colors[i++] = SYNTAX_STRING;
+                } else {
+                    colors[i++] = SYNTAX_STRING;
+                }
+            }
+            if (i < len) colors[i++] = SYNTAX_STRING;
+            continue;
+        }
+
+        // Special variables
+        if (line[i] == '@' || line[i] == '<' || line[i] == '^' || line[i] == '*') {
+            colors[i] = SYNTAX_PREPROCESSOR;
+            i++;
+            continue;
+        }
+
+        i++;
+    }
+
+    return colors;
+}
+
 // Main highlight function
 SyntaxColor* syntax_highlight_line(SyntaxHighlight *sh, const char *line, int line_num) {
     if (!sh || !line) return NULL;
@@ -701,16 +926,14 @@ SyntaxColor* syntax_highlight_line(SyntaxHighlight *sh, const char *line, int li
             return highlight_python_line(sh, line, line_num);
             
         case LANG_SHELL:
-            // TODO: Implement shell highlighting
-            break;
-            
+            return highlight_shell_line(sh, line, line_num);
+
         case LANG_JAVASCRIPT:
             // JavaScript is similar to C for basic highlighting
             return highlight_c_line(sh, line, line_num);
-            
+
         case LANG_MAKEFILE:
-            // TODO: Implement makefile highlighting
-            break;
+            return highlight_makefile_line(sh, line, line_num);
             
         case LANG_MARKDOWN:
             return highlight_markdown_line(sh, line, line_num);

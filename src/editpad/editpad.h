@@ -72,6 +72,7 @@ void editpad_goto_line(EditPad *ep);
 // View operations
 void editpad_toggle_line_numbers(EditPad *ep);
 void editpad_toggle_word_wrap(EditPad *ep);
+void editpad_set_syntax_language(EditPad *ep, Language lang);
 
 // Window operations
 void editpad_update_title(EditPad *ep);
