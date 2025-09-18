@@ -1,6 +1,9 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+// AmiWB version
+#define AMIWB_VERSION "0.01"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>

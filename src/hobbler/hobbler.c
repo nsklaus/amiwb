@@ -19,30 +19,13 @@
 #include <stdbool.h>
 #include <time.h>
 
+// Configuration
+#include "config.h"
+
 // Toolkit includes
 #include "../toolkit/toolkit.h"
 #include "../toolkit/button.h"
 #include "../toolkit/inputfield.h"
-
-// Buffer sizes
-#define PATH_SIZE 512
-#define NAME_SIZE 128
-
-// Window dimensions
-#define WINDOW_WIDTH 800
-#define WINDOW_HEIGHT 600
-#define TOOLBAR_HEIGHT 50
-
-// Button dimensions
-#define NAV_BUTTON_WIDTH 60
-#define NAV_BUTTON_HEIGHT 30
-#define HOME_BUTTON_WIDTH 50
-#define STOP_RELOAD_WIDTH 70
-#define GO_BUTTON_WIDTH 40
-#define BUTTON_PADDING 5
-
-// Colors
-#define COLOR_TOOLBAR 0xBBBBBB
 
 typedef struct {
     // GTK/WebKit components
@@ -73,7 +56,7 @@ typedef struct {
 static HobblerApp *app = NULL;
 
 // Forward declarations
-void log_error(const char *format, ...);
+// log_error is declared in config.h
 static void create_toolbar_widgets(void);
 static void redraw_toolbar(void);
 static gboolean handle_x11_events(gpointer data);
@@ -480,7 +463,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Set default home URL to local start page
-    snprintf(app->home_url, PATH_SIZE, "file:///home/klaus/Documents/start.html");
+    snprintf(app->home_url, PATH_SIZE, DEFAULT_HOME_URL);
 
     // Parse command line
     if (argc > 1) {

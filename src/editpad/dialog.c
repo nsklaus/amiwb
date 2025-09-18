@@ -7,7 +7,6 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <fontconfig/fontconfig.h>
-#include "../amiwb/config.h"
 
 // Create a new dialog
 Dialog* dialog_create(Display *display, Window parent, DialogType type) {

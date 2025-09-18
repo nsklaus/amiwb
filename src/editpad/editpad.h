@@ -5,7 +5,7 @@
 #include <X11/Xft/Xft.h>
 #include <stdbool.h>
 #include "../toolkit/textview.h"
-#include "../amiwb/config.h"
+#include "config.h"
 #include "syntax_highlight.h"
 
 typedef struct EditPad {

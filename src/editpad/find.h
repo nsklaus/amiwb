@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include "../toolkit/inputfield.h"
 #include "../toolkit/button.h"
-#include "../amiwb/config.h"
+#include "config.h"
 #include "dialog.h"
 
 // Forward declaration
