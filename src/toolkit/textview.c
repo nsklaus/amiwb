@@ -3606,6 +3606,15 @@ static void record_undo_delete_text(TextView *tv, int start_line, int start_col,
     // Remove oldest entries if we exceed max
     while (history->count > history->max_count && history->head) {
         UndoEntry *old = history->head;
+        
+        /* CRITICAL FIX: Update current if it points to the entry being deleted
+         * Without this check, current becomes a dangling pointer causing segfault
+         * when clear_redo_history() tries to access current->next */
+        if (history->current == old) {
+            /* Move current to the next entry (new head), or NULL if this was the only entry */
+            history->current = old->next;
+        }
+        
         history->head = old->next;
         if (history->head) {
             history->head->prev = NULL;
@@ -3651,6 +3660,15 @@ static void record_undo(TextView *tv, UndoType type, int line, int col,
     // Remove oldest entries if we exceed max
     while (history->count > history->max_count && history->head) {
         UndoEntry *old = history->head;
+        
+        /* CRITICAL FIX: Update current if it points to the entry being deleted
+         * Without this check, current becomes a dangling pointer causing segfault
+         * when clear_redo_history() tries to access current->next */
+        if (history->current == old) {
+            /* Move current to the next entry (new head), or NULL if this was the only entry */
+            history->current = old->next;
+        }
+        
         history->head = old->next;
         if (history->head) {
             history->head->prev = NULL;
