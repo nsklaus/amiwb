@@ -24,7 +24,7 @@ Dialog* dialog_create(Display *display, Window parent, DialogType type) {
     switch (type) {
         case DIALOG_FIND:
             dialog->width = 450;
-            dialog->height = 200;
+            dialog->height = 100;  // Reduced to half for compact layout
             dialog->title = strdup("Find");
             break;
         case DIALOG_GOTO_LINE:
@@ -480,16 +480,29 @@ void dialog_draw(Dialog *dialog) {
         }
     }
     
-    // Special handling for Find dialog - draw the "Find:" and "Replace:" labels
+    // Special handling for Find dialog - draw the "Find" and "Replace" labels (right-aligned)
     if (dialog->type == DIALOG_FIND && dialog->font) {
-        // Draw "Find:" label at the same Y as the input field
-        // Input field is at y=40, so center text vertically with it
+        // Measure text for right alignment
+        XGlyphInfo extents_find, extents_replace;
+        XftTextExtentsUtf8(dialog->display, dialog->font,
+                          (XftChar8*)"Find", 4, &extents_find);
+        XftTextExtentsUtf8(dialog->display, dialog->font,
+                          (XftChar8*)"Replace", 7, &extents_replace);
+
+        // Right-align labels at x=70 (10px before input field at x=80)
+        // This creates a visual gap between label and field
+        int label_right_edge = 70;
+
+        // Draw "Find" label at y=20, right-aligned
+        // +18 offset for vertical centering with input field baseline
         XftDrawString8(dialog->xft_draw, &dialog->fg_color, dialog->font,
-                      20, 40 + 18, (XftChar8*)"Find:", 5);
-        
-        // Draw "Replace:" label at y=80
+                      label_right_edge - extents_find.width, 20 + 18,
+                      (XftChar8*)"Find", 4);
+
+        // Draw "Replace" label at y=55, right-aligned
         XftDrawString8(dialog->xft_draw, &dialog->fg_color, dialog->font,
-                      20, 80 + 18, (XftChar8*)"Replace:", 8);
+                      label_right_edge - extents_replace.width, 55 + 18,
+                      (XftChar8*)"Replace", 7);
     }
     
     XFlush(dialog->display);

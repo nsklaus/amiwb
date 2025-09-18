@@ -10,7 +10,6 @@ static void find_next_callback(void *user_data);
 static void replace_once_callback(void *user_data);
 static void replace_all_callback(void *user_data);
 static void find_prev_callback(void *user_data);
-static void close_callback(void *user_data);
 
 // Create find dialog
 FindDialog* find_dialog_create(EditPad *editpad) {
@@ -43,23 +42,23 @@ FindDialog* find_dialog_create(EditPad *editpad) {
     // Calculate button positions (after the input field)
     int buttons_x = field_x + field_width + 10;
     
-    // Line 1: Find field and Next/Prev buttons at y=40
-    int find_y = 40;
+    // Line 1: Find field and Next/Prev buttons - centered vertically at y=20
+    int find_y = 20;  // Moved up for compact 100px height dialog
     find->find_field = dialog_add_field(find->base, field_x, find_y, field_width, field_height);
     if (find->find_field) {
         inputfield_set_focus(find->find_field, true);
     }
-    
-    find->find_next_button = dialog_add_button(find->base, 
+
+    find->find_next_button = dialog_add_button(find->base,
         buttons_x, find_y, button_width, button_height,
         "Next", find_next_callback);
-    
+
     find->find_prev_button = dialog_add_button(find->base,
         buttons_x + button_width + button_spacing, find_y, button_width, button_height,
         "Prev", find_prev_callback);
-    
-    // Line 2: Replace field and Once/All buttons at y=80
-    int replace_y = 80;
+
+    // Line 2: Replace field and Once/All buttons at y=55
+    int replace_y = 55;  // Compact spacing for 100px height dialog
     find->replace_field = dialog_add_field(find->base, field_x, replace_y, field_width, field_height);
     
     find->replace_once_button = dialog_add_button(find->base,
@@ -69,14 +68,8 @@ FindDialog* find_dialog_create(EditPad *editpad) {
     find->replace_all_button = dialog_add_button(find->base,
         buttons_x + button_width + button_spacing, replace_y, button_width, button_height,
         "All", replace_all_callback);
-    
-    // Cancel button centered at bottom with breathing room (25px from bottom)
-    int cancel_y = find->base->height - button_height - 25;
-    int cancel_x = (find->base->width - button_width) / 2;
-    
-    find->close_button = dialog_add_button(find->base,
-        cancel_x, cancel_y, button_width, button_height,
-        "Cancel", close_callback);
+
+    // Cancel button removed - users can close with window X button or ESC key
     
     // Initialize state
     find->case_sensitive = false;
@@ -217,19 +210,6 @@ static void find_prev_callback(void *user_data) {
     
     FindDialog *find = (FindDialog*)base->dialog_data;
     find_dialog_search_prev(find);
-}
-
-static void close_callback(void *user_data) {
-    Dialog *base = (Dialog*)user_data;
-    if (!base) return;
-    
-    // Destroy the window like the X button does
-    // This will trigger DestroyNotify which cleans up the dialog
-    if (base->xft_draw) {
-        XftDrawDestroy(base->xft_draw);
-        base->xft_draw = NULL;
-    }
-    XDestroyWindow(base->display, base->window);
 }
 
 static void replace_once_callback(void *user_data) {

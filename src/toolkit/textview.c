@@ -642,8 +642,9 @@ char* textview_get_text(TextView *tv) {
     // Concatenate all lines
     char *ptr = result;
     for (int i = 0; i < tv->line_count; i++) {
-        strcpy(ptr, tv->lines[i]);
-        ptr += strlen(tv->lines[i]);
+        size_t line_len = strlen(tv->lines[i]);
+        memcpy(ptr, tv->lines[i], line_len);
+        ptr += line_len;
         if (i < tv->line_count - 1) {
             *ptr++ = '\n';
         }
@@ -673,11 +674,13 @@ void textview_insert_char(TextView *tv, char c) {
     // Grow line buffer
     char *new_line = malloc(len + 2);
     if (byte_offset > 0) {
-        strncpy(new_line, line, byte_offset);
+        memcpy(new_line, line, byte_offset);
     }
     new_line[byte_offset] = c;
     if (byte_offset < len) {
-        strcpy(new_line + byte_offset + 1, line + byte_offset);
+        size_t remaining = len - byte_offset;
+        memcpy(new_line + byte_offset + 1, line + byte_offset, remaining);
+        new_line[byte_offset + 1 + remaining] = '\0';
     } else {
         new_line[byte_offset + 1] = '\0';
     }
@@ -823,9 +826,11 @@ void textview_backspace(TextView *tv) {
         record_undo(tv, UNDO_JOIN_LINES, tv->cursor_line - 1, prev_len, current_line, strlen(current_line));
         
         // Concatenate lines
-        char *new_line = malloc(prev_len + strlen(current_line) + 1);
-        strcpy(new_line, prev_line);
-        strcat(new_line, current_line);
+        size_t current_len = strlen(current_line);
+        char *new_line = malloc(prev_len + current_len + 1);
+        memcpy(new_line, prev_line, prev_len);
+        memcpy(new_line + prev_len, current_line, current_len);
+        new_line[prev_len + current_len] = '\0';
         
         free(prev_line);
         free(current_line);
@@ -890,9 +895,11 @@ void textview_delete_key(TextView *tv) {
         char *next_line = tv->lines[tv->cursor_line + 1];
         
         // Concatenate lines
-        char *new_line = malloc(len + strlen(next_line) + 1);
-        strcpy(new_line, line);
-        strcat(new_line, next_line);
+        size_t next_len = strlen(next_line);
+        char *new_line = malloc(len + next_len + 1);
+        memcpy(new_line, line, len);
+        memcpy(new_line + len, next_line, next_len);
+        new_line[len + next_len] = '\0';
         
         free(line);
         free(next_line);
@@ -2793,14 +2800,16 @@ char* textview_get_selection(TextView *tv) {
         if (start_col > first_len_chars) start_col = first_len_chars;
         int start_byte = utf8_char_index_to_byte_offset(first_line, start_col);
         
-        strcpy(p, first_line + start_byte);
-        p += strlen(first_line + start_byte);
+        size_t first_part_len = strlen(first_line + start_byte);
+        memcpy(p, first_line + start_byte, first_part_len);
+        p += first_part_len;
         *p++ = '\n';
         
         // Middle lines
         for (int i = start_line + 1; i < end_line; i++) {
-            strcpy(p, tv->lines[i]);
-            p += strlen(tv->lines[i]);
+            size_t line_len = strlen(tv->lines[i]);
+            memcpy(p, tv->lines[i], line_len);
+            p += line_len;
             *p++ = '\n';
         }
         
@@ -2866,11 +2875,17 @@ void textview_delete_selection(TextView *tv) {
         int new_len = line_len_bytes - (end_byte - start_byte);
         char *new_line = malloc(new_len + 1);
         if (new_line) {
+            // Initialize buffer to ensure null termination
+            new_line[0] = '\0';
+
             if (start_byte > 0) {
-                strncpy(new_line, line, start_byte);
+                memcpy(new_line, line, start_byte);
+                new_line[start_byte] = '\0';  // CRITICAL: Null terminate!
             }
             if (end_byte < line_len_bytes) {
-                strcpy(new_line + start_byte, line + end_byte);
+                size_t remaining = line_len_bytes - end_byte;
+                memcpy(new_line + start_byte, line + end_byte, remaining);
+                new_line[start_byte + remaining] = '\0';  // Ensure termination
             } else {
                 new_line[start_byte] = '\0';
             }
@@ -2896,11 +2911,17 @@ void textview_delete_selection(TextView *tv) {
         int new_len = start_byte + (last_len_bytes - end_byte);
         char *new_line = malloc(new_len + 1);
         if (new_line) {
+            // Initialize buffer to ensure null termination
+            new_line[0] = '\0';
+
             if (start_byte > 0) {
-                strncpy(new_line, first_line, start_byte);
+                memcpy(new_line, first_line, start_byte);
+                new_line[start_byte] = '\0';  // CRITICAL: Null terminate!
             }
             if (end_byte < last_len_bytes) {
-                strcpy(new_line + start_byte, last_line + end_byte);
+                size_t remaining = last_len_bytes - end_byte;
+                memcpy(new_line + start_byte, last_line + end_byte, remaining);
+                new_line[start_byte + remaining] = '\0';  // Ensure termination
             } else {
                 new_line[start_byte] = '\0';
             }
@@ -3728,7 +3749,9 @@ void textview_undo(TextView *tv) {
                     memcpy(new_line, line, byte_offset);
                 }
                 memcpy(new_line + byte_offset, entry->text, entry->text_len);
-                strcpy(new_line + byte_offset + entry->text_len, line + byte_offset);
+                size_t remaining = strlen(line + byte_offset);
+                memcpy(new_line + byte_offset + entry->text_len, line + byte_offset, remaining);
+                new_line[byte_offset + entry->text_len + remaining] = '\0';
                 free(tv->lines[tv->cursor_line]);
                 tv->lines[tv->cursor_line] = new_line;
             }
@@ -3739,9 +3762,12 @@ void textview_undo(TextView *tv) {
             if (tv->cursor_line < tv->line_count - 1) {
                 char *current = tv->lines[tv->cursor_line];
                 char *next = tv->lines[tv->cursor_line + 1];
-                char *joined = malloc(strlen(current) + strlen(next) + 1);
-                strcpy(joined, current);
-                strcat(joined, next);
+                size_t current_len = strlen(current);
+                size_t next_len = strlen(next);
+                char *joined = malloc(current_len + next_len + 1);
+                memcpy(joined, current, current_len);
+                memcpy(joined + current_len, next, next_len);
+                joined[current_len + next_len] = '\0';
                 
                 free(current);
                 free(next);
@@ -3769,7 +3795,9 @@ void textview_undo(TextView *tv) {
                         memcpy(new_line, line, byte_offset);
                     }
                     memcpy(new_line + byte_offset, entry->text, entry->text_len);
-                    strcpy(new_line + byte_offset + entry->text_len, line + byte_offset);
+                    size_t remaining = strlen(line + byte_offset);
+                    memcpy(new_line + byte_offset + entry->text_len, line + byte_offset, remaining);
+                    new_line[byte_offset + entry->text_len + remaining] = '\0';
                     free(tv->lines[tv->cursor_line]);
                     tv->lines[tv->cursor_line] = new_line;
                     
@@ -3795,7 +3823,9 @@ void textview_undo(TextView *tv) {
                         memcpy(new_line, line, byte_offset);
                     }
                     memcpy(new_line + byte_offset, entry->text, entry->text_len);
-                    strcpy(new_line + byte_offset + entry->text_len, line + byte_offset);
+                    size_t remaining = strlen(line + byte_offset);
+                    memcpy(new_line + byte_offset + entry->text_len, line + byte_offset, remaining);
+                    new_line[byte_offset + entry->text_len + remaining] = '\0';
                     free(tv->lines[tv->cursor_line]);
                     tv->lines[tv->cursor_line] = new_line;
                 }
@@ -3886,7 +3916,9 @@ void textview_redo(TextView *tv) {
                     memcpy(new_line, line, byte_offset);
                 }
                 memcpy(new_line + byte_offset, entry->text, entry->text_len);
-                strcpy(new_line + byte_offset + entry->text_len, line + byte_offset);
+                size_t remaining = strlen(line + byte_offset);
+                memcpy(new_line + byte_offset + entry->text_len, line + byte_offset, remaining);
+                new_line[byte_offset + entry->text_len + remaining] = '\0';
                 free(tv->lines[tv->cursor_line]);
                 tv->lines[tv->cursor_line] = new_line;
                 tv->cursor_col++;
@@ -3966,9 +3998,12 @@ void textview_redo(TextView *tv) {
             if (tv->cursor_line < tv->line_count - 1) {
                 char *current = tv->lines[tv->cursor_line];
                 char *next = tv->lines[tv->cursor_line + 1];
-                char *joined = malloc(strlen(current) + strlen(next) + 1);
-                strcpy(joined, current);
-                strcat(joined, next);
+                size_t current_len = strlen(current);
+                size_t next_len = strlen(next);
+                char *joined = malloc(current_len + next_len + 1);
+                memcpy(joined, current, current_len);
+                memcpy(joined + current_len, next, next_len);
+                joined[current_len + next_len] = '\0';
                 
                 free(current);
                 free(next);

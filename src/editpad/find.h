@@ -24,10 +24,7 @@ typedef struct FindDialog {
     InputField *replace_field;
     Button *replace_once_button;
     Button *replace_all_button;
-    
-    // UI elements - Bottom
-    Button *close_button;
-    
+
     // Options (future: add checkboxes when toolkit has them)
     bool case_sensitive;
     bool wrap_around;
