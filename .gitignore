@@ -41,15 +41,12 @@
 plan.txt
 compile_flags.txt
 valgrind_new.log
-.vscode/
 amiwb.log
-plan_claude.md
 amiwb_lldb.log
 docs/
-editpad
-editpad.log
-reqasl
-reqasl.log
+/editpad
+/reqasl
+*.log
 
 # Debug files
 *.dSYM/
