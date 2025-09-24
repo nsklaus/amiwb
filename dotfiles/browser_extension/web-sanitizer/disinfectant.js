@@ -378,33 +378,64 @@ const SITE_MODIFICATIONS = {
   // DEFAULT FALLBACK FOR ALL UNDEFINED SITES
   '*.*': {
     selectors: {
-      // NUCLEAR OPTION - BAN ALL BACKGROUNDS ON EVERYTHING
-      '*': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0',
-        'background-image': 'none',
-        'box-shadow': 'none',
-        'text-shadow': 'none'
+      // Force gray on EVERYTHING visible
+      'html, body, div, span, section, article, main, aside, header, footer, nav, table, tbody, thead, tfoot, tr, td, th, ul, ol, li, dl, dt, dd, p, h1, h2, h3, h4, h5, h6, form, fieldset, legend, label, input, textarea, select, button, a, em, strong, small, mark, del, ins, sub, sup, blockquote, pre, code, figure, figcaption, address': {
+        'background-color': '#A0A2A0 !important',
+        'background': '#A0A2A0 !important',
+        'background-image': 'none !important'
       },
-      // Force all text black except links
-      '*:not(a)': {
+      // Also target any element with inline styles containing background
+      '[style*="background"]': {
+        'background-color': '#A0A2A0 !important',
+        'background': '#A0A2A0 !important',
+        'background-image': 'none !important'
+      },
+      // Target classes that commonly have backgrounds
+      '[class*="bg-"], [class*="background"], [class*="Background"]': {
+        'background-color': '#A0A2A0 !important',
+        'background': '#A0A2A0 !important',
+        'background-image': 'none !important'
+      },
+      // Remove all shadows
+      '*': {
+        'box-shadow': 'none !important',
+        'text-shadow': 'none !important'
+      },
+      // Text colors
+      'body, body *': {
         'color': '#000000'
       },
       // Links
-      'a:not(:visited)': {
-        'color': '#000cda'
+      'a, a *': {
+        'color': '#000cda !important'
       },
-      'a:visited': {
-        'color': '#551a8b'
+      'a:visited, a:visited *': {
+        'color': '#551a8b !important'
       },
-      // Keep images/videos visible
-      'img, video, svg, canvas': {
-        'background-color': 'transparent',
-        'background': 'transparent'
+      // CRITICAL: Fixed overlays with pointer-events none MUST be transparent
+      'div[style*="position: fixed"][style*="pointer-events: none"]': {
+        'background': 'transparent !important',
+        'background-color': 'transparent !important',
+        'opacity': '0 !important'
       },
-      // Remove images from table cells
-      'td img, th img': {
-        'display': 'none'
+      'div[style*="position:fixed"][style*="pointer-events:none"]': {
+        'background': 'transparent !important',
+        'background-color': 'transparent !important',
+        'opacity': '0 !important'
+      },
+      // CRITICAL: Images must be visible and not have gray background
+      'img': {
+        'opacity': '1 !important',
+        'visibility': 'visible !important',
+        'display': 'inline-block !important',
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
+      },
+      'video, picture, svg, canvas': {
+        'opacity': '1 !important',
+        'visibility': 'visible !important',
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
       }
     }
   },
@@ -2132,7 +2163,12 @@ function injectStyles() {
     for (const [selector, styles] of Object.entries(siteMods.selectors)) {
       css += `${selector} {\n`;
       for (const [property, value] of Object.entries(styles)) {
-        css += `  ${property}: ${value} !important;\n`;
+        // Don't add !important if the value already has it
+        if (value.includes('!important')) {
+          css += `  ${property}: ${value};\n`;
+        } else {
+          css += `  ${property}: ${value} !important;\n`;
+        }
       }
       css += '}\n\n';
     }
@@ -2154,8 +2190,12 @@ function injectStyles() {
     }
     
     console.log(`Web Sanitizer: Applied modifications for ${hostname}`);
+
+    // No JavaScript processing needed - CSS handles everything
   }
 }
+
+// No JavaScript processing needed for fallback sites
 
 // Run immediately
 injectStyles();

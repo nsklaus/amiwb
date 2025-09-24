@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Web Sanitizer",
-  "version": "1.1",
+  "version": "1.2",
   "description": "Sanitizes web pages by removing visual noise and applying clean, consistent styling",
   "content_scripts": [{
     "matches": ["<all_urls>"],
