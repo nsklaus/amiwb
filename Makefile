@@ -1,4 +1,5 @@
-# AMIWB Desktop Environment Master Makefile
+# AMIWB Desktop Environment Makefile
+# Builds only amiwb window manager and toolkit library
 
 CC = gcc
 AR = ar
@@ -14,63 +15,29 @@ LIBS = -lSM -lICE -lXext -lXmu -lX11 -lXrender -lXfixes -lXdamage \
 # Directories
 AMIWB_DIR = src/amiwb
 TOOLKIT_DIR = src/toolkit
-REQASL_DIR = src/reqasl
-EDITPAD_DIR = src/editpad
-HOBBLER_DIR = src/hobbler
-IFF_LOADER_DIR = src/iff-loader
 
 # Source files
 AMIWB_SRCS = $(wildcard $(AMIWB_DIR)/*.c)
 TOOLKIT_SRCS = $(wildcard $(TOOLKIT_DIR)/*.c)
-REQASL_SRCS = $(wildcard $(REQASL_DIR)/*.c)
-EDITPAD_SRCS = $(wildcard $(EDITPAD_DIR)/*.c)
-HOBBLER_SRCS = $(wildcard $(HOBBLER_DIR)/*.c)
 
 # Object files
 AMIWB_OBJS = $(AMIWB_SRCS:.c=.o)
 TOOLKIT_OBJS = $(TOOLKIT_SRCS:.c=.o)
-REQASL_OBJS = $(REQASL_SRCS:.c=.o)
-EDITPAD_OBJS = $(EDITPAD_SRCS:.c=.o)
-HOBBLER_OBJS = $(HOBBLER_SRCS:.c=.o)
 
-# Executables
+# Outputs
 AMIWB_EXEC = amiwb
-REQASL_EXEC = reqasl
-EDITPAD_EXEC = editpad
-HOBBLER_EXEC = hobbler
 TOOLKIT_LIB = libamiwb-toolkit.a
-REQASL_HOOK = reqasl_hook.so
-IFF_LOADER = libpixbufloader-iff.so
-
-# gdk-pixbuf loader directory
-GDK_PIXBUF_LOADER_DIR = $(shell pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)
 
 # Default target
-all: $(TOOLKIT_LIB) amiwb reqasl editpad hobbler $(REQASL_HOOK) iff-loader
+all: $(TOOLKIT_LIB) $(AMIWB_EXEC)
 
-# Toolkit library (built for installation)
+# Toolkit library
 $(TOOLKIT_LIB): $(TOOLKIT_OBJS)
 	$(AR) rcs $@ $(TOOLKIT_OBJS)
 
 # amiwb window manager
 $(AMIWB_EXEC): $(AMIWB_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(AMIWB_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
-
-# ReqASL file requester
-$(REQASL_EXEC): $(REQASL_OBJS) $(TOOLKIT_LIB)
-	$(CC) $(REQASL_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
-
-# EditPad text editor
-$(EDITPAD_EXEC): $(EDITPAD_OBJS) $(TOOLKIT_LIB)
-	$(CC) $(EDITPAD_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
-
-# Hobbler browser - uses WebKit2GTK
-$(HOBBLER_EXEC): $(HOBBLER_OBJS) $(TOOLKIT_LIB)
-	$(CC) $(HOBBLER_OBJS) $(TOOLKIT_LIB) $(LIBS) `pkg-config --libs webkit2gtk-4.0` -o $@
-
-# ReqASL hook library for intercepting file dialogs
-$(REQASL_HOOK): $(REQASL_DIR)/reqasl_hook.c
-	$(CC) -fPIC -shared -ldl -Wall -O2 -o $@ $<
 
 # Pattern rules for object files
 $(AMIWB_DIR)/%.o: $(AMIWB_DIR)/%.c
@@ -79,67 +46,23 @@ $(AMIWB_DIR)/%.o: $(AMIWB_DIR)/%.c
 $(TOOLKIT_DIR)/%.o: $(TOOLKIT_DIR)/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
 
-$(REQASL_DIR)/%.o: $(REQASL_DIR)/%.c
-	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
-
-$(EDITPAD_DIR)/%.o: $(EDITPAD_DIR)/%.c
-	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -DEDITPAD_BUILD -c $< -o $@
-
-$(HOBBLER_DIR)/%.o: $(HOBBLER_DIR)/%.c
-	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) `pkg-config --cflags webkit2gtk-4.0` -c $< -o $@
-
-# IFF ILBM loader for gdk-pixbuf
-iff-loader: $(IFF_LOADER)
-
-$(IFF_LOADER): $(IFF_LOADER_DIR)/iff-ilbm-loader.c
-	$(CC) -shared -fPIC $(shell pkg-config --cflags gdk-pixbuf-2.0) \
-		$< -o $@ $(shell pkg-config --libs gdk-pixbuf-2.0)
-
-# Clean targets
+# Clean
 clean:
-	rm -f $(AMIWB_OBJS) $(TOOLKIT_OBJS) $(REQASL_OBJS) $(EDITPAD_OBJS) $(HOBBLER_OBJS)
-	rm -f $(AMIWB_EXEC) $(REQASL_EXEC) $(EDITPAD_EXEC) $(HOBBLER_EXEC) $(TOOLKIT_LIB) $(REQASL_HOOK) $(IFF_LOADER)
-	rm -f src/*.o  # Clean any stray object files
-	@echo "Clean complete"
+	rm -f $(AMIWB_OBJS) $(TOOLKIT_OBJS) $(AMIWB_EXEC) $(TOOLKIT_LIB)
 
-clean-amiwb:
-	rm -f $(AMIWB_OBJS) $(AMIWB_EXEC)
-
-clean-toolkit:
-	rm -f $(TOOLKIT_OBJS) $(TOOLKIT_LIB)
-
-clean-reqasl:
-	rm -f $(REQASL_OBJS) $(REQASL_EXEC) $(REQASL_HOOK)
-
-clean-editpad:
-	rm -f $(EDITPAD_OBJS) $(EDITPAD_EXEC)
-
-clean-hobbler:
-	rm -f $(HOBBLER_OBJS) $(HOBBLER_EXEC)
-
-# Install targets
-# Order is important:
-# 1st: toolkit needs to be installed first (amiwb and reqasl depend on it)
-# 2nd: amiwb needs to be installed second (main window manager)
-# 3rd: reqasl needs to be installed third (uses amiwb for window management)
-# 4th: editpad needs to be installed fourth (text editor)
-# 5th: hobbler is the web browser
-install: install-toolkit install-amiwb install-reqasl install-editpad install-hobbler install-iff-loader
-
-# 1st: Install toolkit library and headers (required by amiwb and reqasl)
-install-toolkit: $(TOOLKIT_LIB)
+# Install
+install: $(TOOLKIT_LIB) $(AMIWB_EXEC)
+	# Install toolkit library and headers
 	mkdir -p /usr/local/lib
 	cp $(TOOLKIT_LIB) /usr/local/lib/libamiwb-toolkit.a.new
 	mv /usr/local/lib/libamiwb-toolkit.a.new /usr/local/lib/libamiwb-toolkit.a
 	mkdir -p /usr/local/include/amiwb/toolkit
 	cp $(TOOLKIT_DIR)/*.h /usr/local/include/amiwb/toolkit/
-	@echo "Toolkit library installed"
-
-# 2nd: Install amiwb window manager (requires toolkit to be installed)
-install-amiwb: amiwb
+	# Install amiwb binary
 	mkdir -p /usr/local/bin
 	cp $(AMIWB_EXEC) /usr/local/bin/amiwb.new
 	mv /usr/local/bin/amiwb.new /usr/local/bin/amiwb
+	# Install resources
 	mkdir -p /usr/local/share/amiwb/icons
 	cp -r icons/* /usr/local/share/amiwb/icons/ 2>/dev/null || true
 	mkdir -p /usr/local/share/amiwb/patterns
@@ -167,104 +90,20 @@ install-amiwb: amiwb
 			cp dotfiles/home_dot_config_amiwb/toolsdaemonrc "$$CONFIG_DIR/toolsdaemonrc"; \
 			echo "Installed toolsdaemonrc to $$CONFIG_DIR/"; \
 		fi; \
-		if [ ! -f "$$CONFIG_DIR/editpad/editpadrc" ]; then \
-			mkdir -p "$$CONFIG_DIR/editpad"; \
-			cp dotfiles/home_dot_config_amiwb/editpad/editpadrc "$$CONFIG_DIR/editpad/editpadrc"; \
-			echo "Installed editpadrc to $$CONFIG_DIR/editpad/"; \
-		fi; \
 		if [ -n "$$SUDO_USER" ]; then \
 			chown -R $$SUDO_USER:$$SUDO_USER "$$CONFIG_DIR"; \
 		elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
 			chown -R $$USER:$$USER "$$CONFIG_DIR" 2>/dev/null || true; \
 		fi; \
 	fi
-	@echo "AmiWB installed"
+	@echo "AmiWB and toolkit installed"
 
-# 3rd: Install reqasl file requester (requires toolkit and works with amiwb)
-install-reqasl: reqasl $(REQASL_HOOK)
-	mkdir -p /usr/local/bin
-	cp $(REQASL_EXEC) /usr/local/bin/reqasl.new
-	mv /usr/local/bin/reqasl.new /usr/local/bin/reqasl
-	mkdir -p /usr/local/lib
-	cp $(REQASL_HOOK) /usr/local/lib/reqasl_hook.so.new
-	mv /usr/local/lib/reqasl_hook.so.new /usr/local/lib/reqasl_hook.so
-	@echo "ReqASL installed"
-
-# 4th: Install editpad text editor
-install-editpad: editpad
-	mkdir -p /usr/local/bin
-	cp $(EDITPAD_EXEC) /usr/local/bin/editpad.new
-	mv /usr/local/bin/editpad.new /usr/local/bin/editpad
-	# Install desktop file for user
-	@if [ -n "$$SUDO_USER" ]; then \
-		USER_HOME=$$(getent passwd $$SUDO_USER | cut -d: -f6); \
-	elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
-		USER_HOME=$$(getent passwd $$USER | cut -d: -f6); \
-	else \
-		USER_HOME="$$HOME"; \
-	fi; \
-	if [ -n "$$USER_HOME" ] && [ -d "$$USER_HOME" ]; then \
-		mkdir -p "$$USER_HOME/.local/share/applications"; \
-		cp dotfiles/editpad.desktop "$$USER_HOME/.local/share/applications/"; \
-		if [ -n "$$SUDO_USER" ]; then \
-			chown $$SUDO_USER:$$SUDO_USER "$$USER_HOME/.local/share/applications/editpad.desktop"; \
-		elif [ -n "$$USER" ] && [ "$$USER" != "root" ]; then \
-			chown $$USER:$$USER "$$USER_HOME/.local/share/applications/editpad.desktop" 2>/dev/null || true; \
-		fi; \
-		echo "EditPad desktop file installed to $$USER_HOME/.local/share/applications/"; \
-	fi
-	@echo "EditPad installed"
-
-# Install hobbler web browser
-install-hobbler: hobbler
-	mkdir -p /usr/local/bin
-	cp $(HOBBLER_EXEC) /usr/local/bin/hobbler.new
-	mv /usr/local/bin/hobbler.new /usr/local/bin/hobbler
-	@echo "Hobbler web browser installed"
-
-# Install IFF ILBM loader for gdk-pixbuf
-install-iff-loader: $(IFF_LOADER)
-	@echo "Installing IFF ILBM loader to $(GDK_PIXBUF_LOADER_DIR)"
-	cp $(IFF_LOADER) $(GDK_PIXBUF_LOADER_DIR)/iff-loader.so.new
-	mv $(GDK_PIXBUF_LOADER_DIR)/iff-loader.so.new $(GDK_PIXBUF_LOADER_DIR)/iff-loader.so
-	gdk-pixbuf-query-loaders-64 --update-cache
-	@echo "IFF ILBM support installed - imv and GTK apps can now display IFF files!"
-
+# Uninstall
 uninstall:
 	rm -f /usr/local/bin/amiwb
-	rm -f /usr/local/bin/reqasl
-	rm -f /usr/local/bin/editpad
-	rm -f /usr/local/bin/hobbler
 	rm -f /usr/local/lib/libamiwb-toolkit.a
-	rm -f /usr/local/lib/reqasl_hook.so
 	rm -rf /usr/local/include/amiwb
 	rm -rf /usr/local/share/amiwb
-	rm -f $(GDK_PIXBUF_LOADER_DIR)/$(IFF_LOADER)
-	gdk-pixbuf-query-loaders-64 --update-cache
-	@echo "AMIWB uninstalled"
+	@echo "AmiWB uninstalled"
 
-# Test targets
-test: test-amiwb test-reqasl
-
-test-amiwb: amiwb
-	./$(AMIWB_EXEC)
-
-test-reqasl: reqasl
-	./$(REQASL_EXEC)
-
-# Help target
-help:
-	@echo "AMIWB Build System"
-	@echo "================="
-	@echo "Targets:"
-	@echo "  make all           - Build everything"
-	@echo "  make toolkit 	- Build toolkit library"
-	@echo "  make amiwb    	- Build amiwb window manager"
-	@echo "  make reqasl        - Build ReqASL file requester"
-	@echo "  make clean         - Clean all build artifacts"
-	@echo "  make install       - Install amiwb and reqasl"
-	@echo "  make uninstall     - Uninstall AmiWB"
-	@echo "  make help          - Show this help"
-
-.PHONY: all toolkit amiwb reqasl clean clean-amiwb clean-toolkit clean-reqasl \
-        install install-amiwb install-reqasl uninstall test test-amiwb test-reqasl help
+.PHONY: all clean install uninstall

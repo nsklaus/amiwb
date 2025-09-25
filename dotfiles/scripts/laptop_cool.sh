@@ -77,6 +77,14 @@
   echo 5 | sudo tee /proc/sys/vm/laptop_mode > /dev/null
   echo "✓ Laptop mode enabled"
 
+  # platform_profile
+  echo quiet | sudo tee /sys/firmware/acpi/platform_profile > /dev/null
+  echo "✓ platform_profile set to quiet"
+
+  # wifi power saving
+  sudo iw dev wlan0 set power_save on
+  echo "✓ wifi set to power saving"
+
   # PCI POWER MANAGEMENT
   for pci in /sys/bus/pci/devices/*/power/control; do
       echo auto | sudo tee $pci > /dev/null 2>&1

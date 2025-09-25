@@ -193,9 +193,17 @@ const SITE_MODIFICATIONS = {
         'background-color': '#A0A2A0',
         'background': '#A0A2A0'
       },
-      // Fix text visibility
-      'p, span, div, td, th, li, h1, h2, h3, h4, h5, h6, article, section': {
+      // Fix text visibility (but not video player elements)
+      'p, td, th, li, h1, h2, h3, h4, h5, h6, article, section': {
         'color': '#000000'
+      },
+      // Text in divs/spans except video player areas
+      'div:not(.video-js):not([class*="vjs-"]):not([class*="player"]), span:not(.video-js):not([class*="vjs-"]):not([class*="player"])': {
+        'color': '#000000'
+      },
+      // Keep video player controls their original colors
+      '.video-js *, [class*="vjs-"] *, [class*="player"] *': {
+        'color': 'inherit !important'
       },
       // Preserve link colors
       'a:not(:visited)': {
@@ -211,137 +219,8 @@ const SITE_MODIFICATIONS = {
       }
     }
   },
-  
-  'www.odysee.com': {
-    selectors: {
-      // Override CSS variables from base-theme.scss
-      ':root': {
-        '--color-white': '#A0A2A0',
-        '--color-white-alt': '#A0A2A0',
-        '--color-background': '#A0A2A0',
-        '--color-card-background': '#A0A2A0',
-        '--color-card-background-highlighted': '#A0A2A0',
-        '--color-header-background': '#A0A2A0',
-        '--color-gray-1': '#A0A2A0',
-        '--color-gray-2': '#A0A2A0',
-        '--color-gray-3': '#A0A2A0',
-        '--color-button-alt-bg': '#A0A2A0',
-        '--color-input-bg': '#A0A2A0',
-        '--color-input-toggle-bg': '#A0A2A0',
-        '--color-input-prefix-bg': '#A0A2A0',
-        '--color-menu-background': '#A0A2A0',
-        '--color-follow-bg': '#A0A2A0',
-        '--color-view-bg': '#A0A2A0',
-        '--color-thumbnail-background': '#A0A2A0',
-        '--color-placeholder-background': '#A0A2A0',
-        '--color-file-viewer-background': '#A0A2A0',
-        '--color-tabs-background': '#A0A2A0',
-        '--color-modal-background': '#A0A2A0',
-        '--color-ads-background': '#A0A2A0',
-        '--color-comment-highlighted': '#A0A2A0',
-        '--color-comment-threadline': '#A0A2A0',
-        '--color-link-focus-bg': '#A0A2A0',
-        '--color-visibility-label': '#A0A2A0',
-        '--color-hyperchat-4': '#A0A2A0'
-      },
-      // Same rules for www.odysee.com
-      'body': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      'html': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '#app': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '.main, .content, .container': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      'header, nav, .header, .navigation, .navbar': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '.video-js, .vjs-tech': {
-        'background-color': 'transparent',
-        'background': 'transparent'
-      },
-      '.card, .claim-preview, .media, .content-wrapper': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '.sidebar, aside': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '.comments, .comment, .comment-list': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '.modal, .dialog, .popup': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '[style*="background: white" i], [style*="background-color: white" i]': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '[style*="background:#fff" i], [style*="background-color:#fff" i]': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '[style*="background: #fff" i], [style*="background-color: #fff" i]': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      '[style*="rgb(255, 255, 255)" i], [style*="rgb(255,255,255)" i]': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
-      'p, span, div, td, th, li, h1, h2, h3, h4, h5, h6, article, section': {
-        'color': '#000000'
-      },
-      'a:not(:visited)': {
-        'color': '#000cda'
-      },
-      'a:visited': {
-        'color': '#551a8b'
-      },
-      '*': {
-        'box-shadow': 'none',
-        'text-shadow': 'none'
-      }
-    }
-  },
-  
-  'patreon.com': {
-    selectors: {
-      // Change white backgrounds to gray
-      'body, main, div, section, article, header, footer, nav, aside, form': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0',
-        'background-image': 'none'
-      },
 
-      // Force all text to black
-      '*': {
-        'color': '#000000'
-      },
 
-      // Links blue
-      'a, a *': {
-        'color': '#000cda'
-      },
-
-      // Visited links purple
-      'a:visited': {
-        'color': '#551a8b'
-      }
-    }
-  },
 
   'www.patreon.com': {
     selectors: {
@@ -378,17 +257,45 @@ const SITE_MODIFICATIONS = {
   // DEFAULT FALLBACK FOR ALL UNDEFINED SITES
   '*.*': {
     selectors: {
-      // Force gray on EVERYTHING visible
-      'html, body, div, span, section, article, main, aside, header, footer, nav, table, tbody, thead, tfoot, tr, td, th, ul, ol, li, dl, dt, dd, p, h1, h2, h3, h4, h5, h6, form, fieldset, legend, label, input, textarea, select, button, a, em, strong, small, mark, del, ins, sub, sup, blockquote, pre, code, figure, figcaption, address': {
+      // Apply gray to body and major semantic elements
+      'html, body': {
         'background-color': '#A0A2A0 !important',
         'background': '#A0A2A0 !important',
         'background-image': 'none !important'
       },
-      // Also target any element with inline styles containing background
-      '[style*="background"]': {
+      // Apply gray to text containers and form elements
+      'section, article, main, aside, header, footer, nav, table, tbody, thead, tfoot, tr, td, th, ul, ol, li, dl, dt, dd, p, h1, h2, h3, h4, h5, h6, form, fieldset, legend, label, input, textarea, select, button, blockquote, pre, code, figure, figcaption, address': {
         'background-color': '#A0A2A0 !important',
-        'background': '#A0A2A0 !important',
-        'background-image': 'none !important'
+        'background': '#A0A2A0 !important'
+      },
+      // Target divs that have actual background colors set (not transparent/none)
+      'div[style*="background-color:"], div[style*="background:"]': {
+        'background-color': '#A0A2A0 !important',
+        'background': '#A0A2A0 !important'
+      },
+      // But preserve divs with background: none
+      'div[style*="background: none"], div[style*="background:none"]': {
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
+      },
+      // For spans, only apply gray if they have actual background colors (not none/transparent)
+      'span:not([style*="background: none"]):not([style*="background:none"])': {
+        'background-color': '#A0A2A0 !important',
+        'background': '#A0A2A0 !important'
+      },
+      // Target specific non-gray background colors in inline styles
+      '[style*="background-color: white"], [style*="background-color:white"], [style*="background-color: #fff"], [style*="background-color:#fff"]': {
+        'background-color': '#A0A2A0 !important',
+        'background': '#A0A2A0 !important'
+      },
+      '[style*="background-color: rgb(255"], [style*="background-color:rgb(255"]': {
+        'background-color': '#A0A2A0 !important',
+        'background': '#A0A2A0 !important'
+      },
+      // Skip elements with background: none or transparent
+      '[style*="background: none"]': {
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
       },
       // Target classes that commonly have backgrounds
       '[class*="bg-"], [class*="background"], [class*="Background"]': {
@@ -396,8 +303,10 @@ const SITE_MODIFICATIONS = {
         'background': '#A0A2A0 !important',
         'background-image': 'none !important'
       },
-      // Remove all shadows
+      // Remove all shadows AND force all backgrounds to gray
       '*': {
+        'background-color': '#A0A2A0 !important',
+        'background': '#A0A2A0 !important',
         'box-shadow': 'none !important',
         'text-shadow': 'none !important'
       },
@@ -423,11 +332,44 @@ const SITE_MODIFICATIONS = {
         'background-color': 'transparent !important',
         'opacity': '0 !important'
       },
+      // Generic fix for absolute positioned containers (common in lazy-loaded images)
+      // These spans wrap images with position:absolute
+      'span[style*="position: absolute"][style*="inset: 0"], span[style*="position:absolute"][style*="inset:0"]': {
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
+      },
+      // Parent spans that contain absolute positioned elements
+      'span[style*="box-sizing: border-box"][style*="display: block"], span[style*="box-sizing:border-box"][style*="display:block"]': {
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
+      },
+      // DIVs that are flex containers for images - make them transparent
+      'div.flex.items-center.justify-center.relative': {
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
+      },
+      // Also any div with these flex classes (various combinations)
+      'div[class*="flex"][class*="items-center"][class*="justify-center"]': {
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
+      },
+      // Divs that have height style and contain images (common pattern)
+      'div[style*="height:"][class*="relative"]': {
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
+      },
       // CRITICAL: Images must be visible and not have gray background
       'img': {
         'opacity': '1 !important',
         'visibility': 'visible !important',
         'display': 'inline-block !important',
+        'background': 'transparent !important',
+        'background-color': 'transparent !important'
+      },
+      // Images with absolute positioning (common pattern for lazy-loaded images)
+      'img[style*="position: absolute"], img[style*="position:absolute"]': {
+        'opacity': '1 !important',
+        'visibility': 'visible !important',
         'background': 'transparent !important',
         'background-color': 'transparent !important'
       },
@@ -1032,11 +974,7 @@ const SITE_MODIFICATIONS = {
         'background-color': '#A0A2A0',
         'background': '#A0A2A0'
       },
-      // Game board container backgrounds
-      '.Game, .game-container, .game-view': {
-        'background-color': '#A0A2A0',
-        'background': '#A0A2A0'
-      },
+
       // Player cards/info areas
       '.player-container, .player-card, .player-info': {
         'background-color': '#A0A2A0',
@@ -1067,6 +1005,11 @@ const SITE_MODIFICATIONS = {
         'background': '#A0A2A0'
       },
       'body.light .ChatHeader input': {
+        'background-color': '#A0A2A0',
+        'background': '#A0A2A0'
+      },
+      // Game board container backgrounds
+      '.Game, .game-container, .game-view': {
         'background-color': '#A0A2A0',
         'background': '#A0A2A0'
       },

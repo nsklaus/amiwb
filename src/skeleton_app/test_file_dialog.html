@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>File Dialog Test</title>
+</head>
+<body>
+    <h1>Test File Dialogs</h1>
+
+    <h2>File Input (Open)</h2>
+    <input type="file" id="fileOpen">
+
+    <h2>Download Test (Save)</h2>
+    <a href="data:text/plain,Hello World" download="test.txt">Download Test File</a>
+
+    <script>
+        // Log when file is selected
+        document.getElementById('fileOpen').addEventListener('change', function(e) {
+            console.log('File selected:', e.target.files[0]);
+        });
+    </script>
+</body>
+</html>

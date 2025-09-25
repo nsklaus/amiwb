@@ -176,9 +176,6 @@ void editpad_run(EditPad *ep) {
                         int parent_menu = event.xclient.data.l[2];  // Parent menu (for submenus)
                         int is_submenu = event.xclient.data.l[3];   // 1 if this is a submenu selection
 
-                        log_error("[DEBUG] Menu event: menu=%d, item=%d, parent=%d, is_sub=%d",
-                                  menu_index, item_index, parent_menu, is_submenu);
-
                         // Handle File menu (index 0)
                         if (!is_submenu && menu_index == 0) {
                             switch (item_index) {

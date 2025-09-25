@@ -1073,6 +1073,7 @@ void set_active_window(Canvas *c) {
     compositor_sync_stacking(display);
     Window focus = (c->client_win != None) ? c->client_win : c->win;
     XSetInputFocus(display, focus, RevertToParent, CurrentTime);
+    XSync(display, False); // Ensure focus change completes before any drag operations
     redraw_canvas(c);
     
     // Check for app menus on client windows
@@ -1875,7 +1876,8 @@ static inline TitlebarHit hit_test(Canvas *c, int x, int y) {
         if (x >= right - (BUTTON_LOWER_SIZE + BUTTON_MAXIMIZE_SIZE + BUTTON_ICONIFY_SIZE)) return HIT_ICONIFY;
         return HIT_TITLE;
     }
-    if (x >= c->width - BORDER_WIDTH_RIGHT && y >= c->height - BORDER_HEIGHT_BOTTOM) return HIT_RESIZE;
+    // Check if click is in the resize button area (20x20 in bottom-right corner)
+    if (x >= c->width - BUTTON_RESIZE_SIZE && y >= c->height - BUTTON_RESIZE_SIZE) return HIT_RESIZE;
     return HIT_NONE;
 }
 
@@ -1920,6 +1922,8 @@ static void handle_desktop_button(Canvas *canvas, XButtonEvent *event) {
 
 static Bool handle_frame_controls(Canvas *canvas, XButtonEvent *event) {
     TitlebarHit hit = hit_test(canvas, event->x, event->y);
+
+
     if (event->button != Button1) return False;
     switch (hit) {
         case HIT_CLOSE:
@@ -1990,6 +1994,8 @@ static Bool handle_drag_motion(XMotionEvent *event) {
         window_start_x += delta_x;
         // Clamp y to ensure titlebar is below menubar
         window_start_y = max(window_start_y + delta_y, MENUBAR_HEIGHT);
+
+
         XMoveWindow(display, dragging_canvas->win, window_start_x, window_start_y);
         dragging_canvas->x = window_start_x;
         dragging_canvas->y = window_start_y;
@@ -2007,13 +2013,16 @@ static Bool handle_drag_motion(XMotionEvent *event) {
             ce.x = window_start_x + BORDER_WIDTH_LEFT;
             ce.y = window_start_y + BORDER_HEIGHT_TOP;
             // Client dimensions (subtract decorations from frame size)
-            ce.width = dragging_canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT;
+            int right_border = get_right_border_width(dragging_canvas);
+            ce.width = dragging_canvas->width - BORDER_WIDTH_LEFT - right_border;
             ce.height = dragging_canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
+
             ce.border_width = 0;
             ce.above = None;
             ce.override_redirect = False;
             XSendEvent(display, dragging_canvas->client_win, False,
                       StructureNotifyMask, (XEvent *)&ce);
+
         }
 
         return True;
@@ -2200,7 +2209,7 @@ void intuition_handle_button_release(XButtonEvent *event) {
     if (resize_is_active()) {
         resize_end();
     }
-    
+
     dragging_canvas = NULL;
     scrolling_canvas = NULL;
     arrow_scroll_canvas = NULL;  // Stop arrow button auto-repeat

@@ -81,7 +81,7 @@ static void create_initial_resize_buffers(Canvas *canvas, int start_width, int s
  */
 void resize_begin(Canvas *canvas, int mouse_x, int mouse_y) {
     if (!canvas) return;
-    
+
     // Update size hints at start of resize (like dwm does)
     if (canvas->client_win != None) {
         // Refresh size hints from client
@@ -131,7 +131,8 @@ void resize_begin(Canvas *canvas, int mouse_x, int mouse_y) {
     g_resize.start_height = canvas->height;
     g_resize.active = true;
     g_resize.min_interval_ms = 16; // ~60 FPS throttle for resize
-    
+
+
     // Mark canvas as being resized
     canvas->resizing_interactive = true;
     
@@ -271,8 +272,8 @@ void resize_motion(int mouse_x, int mouse_y) {
  */
 void resize_end(void) {
     if (!g_resize.active || !g_resize.canvas) return;
-    
-    // printf("[RESIZE] Finished resize at %dx%d\n", 
+
+    // printf("[RESIZE] Finished resize at %dx%d\n",
     //        g_resize.canvas->width, g_resize.canvas->height);
     
     // Check if this is GIMP with incorrect size hints
