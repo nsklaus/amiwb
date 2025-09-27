@@ -23,3 +23,6 @@ void compositor_sync_stacking(Display *dpy);
 
 // Debug: dump compositor stacking/paint order with an optional tag
 void compositor_dump_order(const char *tag);
+
+// Performance metrics: output current compositor performance data
+void compositor_log_metrics(void);

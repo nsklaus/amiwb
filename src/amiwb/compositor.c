@@ -2,6 +2,8 @@
 #include "config.h"
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <time.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xdamage.h>
@@ -43,6 +45,59 @@ static int g_composite_event_base = 0, g_composite_error_base = 0;
 
 // Motion event batching to reduce repaints
 static bool g_pending_repaint = false;
+
+// Performance metrics tracking
+typedef struct {
+    // Frame timing
+    struct timespec last_frame_time;
+    struct timespec current_frame_start;
+    uint64_t frame_count;
+    double total_frame_time_ms;
+    double worst_frame_time_ms;
+
+    // Render statistics
+    uint64_t full_repaints;
+    uint64_t damage_events;
+    uint64_t composite_calls;
+
+    // Window statistics
+    int window_count;
+    int visible_windows;
+
+    // Picture management (for future cache tracking)
+    uint64_t picture_creates;
+    uint64_t picture_destroys;
+
+    // NEW: Damage region tracking
+    uint64_t damage_pixels_total;    // Total pixels marked damaged
+    uint64_t pixels_actually_drawn;  // Pixels we actually repainted
+
+    // NEW: Repaint reason breakdown
+    uint64_t repaints_damage;        // Due to XDamageNotify
+    uint64_t repaints_configure;     // Due to ConfigureNotify
+    uint64_t repaints_map;           // Due to Map/Unmap/Create/Destroy
+    uint64_t repaints_expose;        // Due to Expose events
+
+    // NEW: Damage coalescing (for future optimization)
+    uint64_t damage_events_coalesced; // Events batched together
+    uint64_t frames_throttled;       // Frames delayed for throttling
+
+    // NEW: Time spent breakdown
+    double time_in_repaint_ms;       // Total time in repaint()
+    double time_in_composite_ms;     // Time doing XRenderComposite
+    double time_processing_events_ms; // Time in event handling
+
+    // CPU tracking fix
+    struct timespec metrics_start_time;  // When we started collecting metrics
+} CompositorMetrics;
+
+static CompositorMetrics g_metrics = {0};
+
+// Calculate time difference in milliseconds
+static double time_diff_ms(struct timespec *start, struct timespec *end) {
+    return (end->tv_sec - start->tv_sec) * 1000.0 +
+           (end->tv_nsec - start->tv_nsec) / 1000000.0;
+}
 
 // Helper function to safely free X11 resources with sync
 static void safe_sync_and_free_picture(Display *dpy, Picture *pict) {
@@ -258,9 +313,16 @@ static void build_win_list(Display *dpy) {
 
 static void repaint(Display *dpy) {
     if (!g_overlay_pict) return;
+
+    // Start frame timing
+    clock_gettime(CLOCK_MONOTONIC, &g_metrics.current_frame_start);
     // Ensure back buffer exists and matches screen size
     unsigned int sw, sh;
     get_screen_dimensions(dpy, g_overlay, &sw, &sh);
+
+    // Track pixels being repainted (currently always full screen)
+    uint64_t screen_pixels = (uint64_t)sw * sh;
+    g_metrics.pixels_actually_drawn += screen_pixels;
     if (!g_back_pm) {
         g_back_pm = XCreatePixmap(dpy, g_root, sw, sh, 32);
         XRenderPictFormat *bf = XRenderFindStandardFormat(dpy, PictStandardARGB32);
@@ -324,6 +386,7 @@ static void repaint(Display *dpy) {
         // Use cached values - no X11 calls!
         unsigned int ww = (unsigned int)it->width, wh = (unsigned int)it->height;
         int op = (it->depth == 32) ? PictOpOver : PictOpSrc;
+        g_metrics.composite_calls++;
         XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, it->x, it->y, ww,wh);
         count++;
     }
@@ -334,6 +397,7 @@ static void repaint(Display *dpy) {
         // Use cached values - no X11 calls!
         unsigned int ww = (unsigned int)it->width, wh = (unsigned int)it->height;
         int op = (it->depth == 32) ? PictOpOver : PictOpSrc;
+        g_metrics.composite_calls++;
         XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, it->x, it->y, ww,wh);
         count++;
     }
@@ -344,6 +408,7 @@ static void repaint(Display *dpy) {
         // Use cached values - no X11 calls!
         unsigned int ww = (unsigned int)it->width, wh = (unsigned int)it->height;
         int op = (it->depth == 32) ? PictOpOver : PictOpSrc;
+        g_metrics.composite_calls++;
         XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, it->x, it->y, ww,wh);
         count++;
     }
@@ -353,6 +418,7 @@ static void repaint(Display *dpy) {
         // These must always be on top (GTK popup menus, tooltips, etc)
         unsigned int ww = (unsigned int)it->width, wh = (unsigned int)it->height;
         int op = (it->depth == 32) ? PictOpOver : PictOpSrc;
+        g_metrics.composite_calls++;
         XRenderComposite(dpy, op, it->pict, None, g_back_pict, 0,0,0,0, it->x, it->y, ww,wh);
         count++;
     }
@@ -360,6 +426,137 @@ static void repaint(Display *dpy) {
     composite_picture_full_screen(dpy, g_back_pict, g_overlay_pict, sw, sh);
     // fprintf(stderr, "[comp] repaint windows=%u\n", count);
     XFlush(dpy);
+
+    // End frame timing and update metrics
+    struct timespec frame_end;
+    clock_gettime(CLOCK_MONOTONIC, &frame_end);
+
+    double frame_time = time_diff_ms(&g_metrics.current_frame_start, &frame_end);
+    g_metrics.total_frame_time_ms += frame_time;
+    g_metrics.frame_count++;
+
+    if (frame_time > g_metrics.worst_frame_time_ms) {
+        g_metrics.worst_frame_time_ms = frame_time;
+    }
+
+    g_metrics.last_frame_time = frame_end;
+    g_metrics.full_repaints++;  // Currently always full repaint
+    g_metrics.window_count = count;
+    g_metrics.visible_windows = count;  // For now, all are visible
+}
+
+void compositor_log_metrics(void) {
+    if (g_metrics.frame_count == 0) {
+        log_error("[METRICS] No frames rendered yet");
+        return;
+    }
+
+    double avg_frame = g_metrics.total_frame_time_ms / g_metrics.frame_count;
+    double rps = (avg_frame > 0) ? 1000.0 / avg_frame : 0;
+
+    log_error("[METRICS] ===== Performance Snapshot =====");
+    log_error("[METRICS] Compositor: %s", g_active ? "ACTIVE" : "INACTIVE");
+
+    log_error("[METRICS] Frame Statistics:");
+    log_error("[METRICS]   Frames rendered: %lu", g_metrics.frame_count);
+    log_error("[METRICS]   Average RPS: %.1f (Repaints/Second)", rps);
+    log_error("[METRICS]   Avg frame time: %.2f ms", avg_frame);
+    log_error("[METRICS]   Worst frame time: %.2f ms", g_metrics.worst_frame_time_ms);
+
+    log_error("[METRICS] Render Statistics:");
+    log_error("[METRICS]   Full repaints: %lu (100.0%% - no partial yet)", g_metrics.full_repaints);
+    log_error("[METRICS]   Damage events: %lu", g_metrics.damage_events);
+    log_error("[METRICS]   Damage events per frame: %.1f",
+              (double)g_metrics.damage_events / g_metrics.frame_count);
+
+    log_error("[METRICS] GPU Operations:");
+    log_error("[METRICS]   XRenderComposite calls: %lu", g_metrics.composite_calls);
+    log_error("[METRICS]   Composites per frame: %.1f",
+              (double)g_metrics.composite_calls / g_metrics.frame_count);
+
+    log_error("[METRICS] Window Statistics:");
+    log_error("[METRICS]   Windows in last frame: %d", g_metrics.window_count);
+    log_error("[METRICS]   Visible windows: %d", g_metrics.visible_windows);
+
+    // NEW: Repaint reason breakdown
+    if (g_metrics.repaints_damage + g_metrics.repaints_configure + g_metrics.repaints_map > 0) {
+        log_error("[METRICS] Repaint Triggers:");
+        log_error("[METRICS]   Damage events: %lu (%.1f%%)", g_metrics.repaints_damage,
+                  (100.0 * g_metrics.repaints_damage) / g_metrics.frame_count);
+        log_error("[METRICS]   Configure events: %lu (%.1f%%)", g_metrics.repaints_configure,
+                  (100.0 * g_metrics.repaints_configure) / g_metrics.frame_count);
+        log_error("[METRICS]   Map/Unmap events: %lu (%.1f%%)", g_metrics.repaints_map,
+                  (100.0 * g_metrics.repaints_map) / g_metrics.frame_count);
+    }
+
+    // NEW: Pixel efficiency tracking
+    if (g_metrics.pixels_actually_drawn > 0) {
+        log_error("[METRICS] Pixel Efficiency:");
+        double megapixels_drawn = g_metrics.pixels_actually_drawn / 1000000.0;
+        log_error("[METRICS]   Total megapixels drawn: %.1f", megapixels_drawn);
+        log_error("[METRICS]   Megapixels per frame: %.2f",
+                  megapixels_drawn / g_metrics.frame_count);
+        // When we add damage tracking, we can show efficiency ratio
+    }
+
+    // Check for Picture leaks (when we add tracking)
+    if (g_metrics.picture_creates > 0 || g_metrics.picture_destroys > 0) {
+        log_error("[METRICS] Picture Management:");
+        log_error("[METRICS]   Pictures created: %lu", g_metrics.picture_creates);
+        log_error("[METRICS]   Pictures destroyed: %lu", g_metrics.picture_destroys);
+        long leaked = (long)(g_metrics.picture_creates - g_metrics.picture_destroys);
+        if (leaked > 0) {
+            log_error("[METRICS]   WARNING: Pictures leaked: %ld", leaked);
+        }
+    }
+
+    // CPU usage (fixed calculation)
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    // Calculate total elapsed time since metrics started
+    double total_elapsed_ms = time_diff_ms(&g_metrics.metrics_start_time, &now);
+    if (total_elapsed_ms > 0) {
+        // total_frame_time_ms is cumulative time spent in repaint()
+        double cpu_percent = (g_metrics.total_frame_time_ms / total_elapsed_ms) * 100.0;
+        log_error("[METRICS] CPU Usage:");
+        log_error("[METRICS]   Compositor CPU: %.1f%% (%.1fms work in %.1fms elapsed)",
+                  cpu_percent, g_metrics.total_frame_time_ms, total_elapsed_ms);
+
+        // Calculate efficiency - how much time per frame vs how much we should need
+        if (g_metrics.frame_count > 0) {
+            double ms_per_frame = g_metrics.total_frame_time_ms / g_metrics.frame_count;
+            double ideal_fps = 120.0; // Monitor refresh rate
+            double ideal_ms_between_frames = 1000.0 / ideal_fps; // 8.33ms at 120Hz
+            double efficiency = (ms_per_frame / ideal_ms_between_frames) * 100.0;
+            log_error("[METRICS]   Frame efficiency: %.1f%% (%.2fms per frame, ideal <%.1fms)",
+                      efficiency, ms_per_frame, ideal_ms_between_frames);
+        }
+    }
+
+    // Memory usage
+    FILE *status = fopen("/proc/self/status", "r");
+    if (status) {
+        char line[256];
+        while (fgets(line, sizeof(line), status)) {
+            if (strncmp(line, "VmRSS:", 6) == 0) {
+                int rss_kb;
+                if (sscanf(line, "VmRSS: %d kB", &rss_kb) == 1) {
+                    log_error("[METRICS] Memory:");
+                    log_error("[METRICS]   RSS: %.1f MB", rss_kb / 1024.0);
+                }
+                break;
+            }
+        }
+        fclose(status);
+    }
+
+    log_error("[METRICS] ===========================");
+
+    // Reset metrics for next interval
+    g_metrics = (CompositorMetrics){0};
+    clock_gettime(CLOCK_MONOTONIC, &g_metrics.metrics_start_time);
+    g_metrics.last_frame_time = g_metrics.metrics_start_time;
 }
 
 bool init_compositor(Display *dpy) {
@@ -452,6 +649,11 @@ bool init_compositor(Display *dpy) {
     // Build initial window list and paint once
     build_win_list(dpy);
     g_active = true;
+
+    // Initialize metrics start time
+    clock_gettime(CLOCK_MONOTONIC, &g_metrics.metrics_start_time);
+    g_metrics.last_frame_time = g_metrics.metrics_start_time;
+
     compositor_repaint(dpy);
     // Compositor active - no need to log success
     return true;
@@ -483,6 +685,7 @@ void compositor_handle_event(Display *dpy, XEvent *ev) {
     int type = ev->type;
     if (type == MapNotify || type == UnmapNotify || type == DestroyNotify || type == CreateNotify || type == ReparentNotify) {
         build_win_list(dpy);
+        g_metrics.repaints_map++;  // Track map/unmap repaints
         repaint(dpy);
         return;
     }
@@ -528,16 +731,19 @@ void compositor_handle_event(Display *dpy, XEvent *ev) {
         // CRITICAL: Only repaint immediately if size changed
         // For position changes, mark pending to batch them
         if (size_changed) {
+            g_metrics.repaints_configure++;  // Track configure repaints
             repaint(dpy);
             g_pending_repaint = false; // Clear pending since we just repainted
         } else if (position_changed) {
             // Mark that we need a repaint, but don't do it yet
             // This batches multiple rapid position changes
             g_pending_repaint = true;
+            g_metrics.repaints_configure++;  // Will repaint later
         }
         return;
     }
     if (type == g_damage_event_base + XDamageNotify) {
+        g_metrics.damage_events++;
         XDamageNotifyEvent *de = (XDamageNotifyEvent*)ev;
         for (CompWin *it = g_list; it; it = it->next) {
             if (it->damage == de->damage && it->damage != 0) {
@@ -549,6 +755,7 @@ void compositor_handle_event(Display *dpy, XEvent *ev) {
                 break;
             }
         }
+        g_metrics.repaints_damage++;  // Track damage repaints
         repaint(dpy);
     }
 }

@@ -55,7 +55,9 @@ void grab_global_shortcuts(Display *display, Window root) {
              Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+R (Restart)
     XGrabKey(display, XKeysymToKeycode(display, XK_s),
              Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+S (Suspend)
-    
+    XGrabKey(display, XKeysymToKeycode(display, XK_d),
+             Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+D (Debug/Metrics)
+
     // Workbench operations - ALWAYS grabbed
     XGrabKey(display, XKeysymToKeycode(display, XK_e),
              Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+E (Execute)
@@ -778,6 +780,12 @@ void handle_key_press(XKeyEvent *event) {
             // Super+Shift+M: Cycle to previous window
             if (keysym == XK_m || keysym == XK_M) {
                 cycle_prev_window();
+                return;
+            }
+            // Super+Shift+D: Performance metrics debug
+            if (keysym == XK_d || keysym == XK_D) {
+                log_error("[METRICS] Performance snapshot requested");
+                compositor_log_metrics();
                 return;
             }
         } else {
