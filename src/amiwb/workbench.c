@@ -3195,14 +3195,99 @@ static void open_directory(FileIcon *icon, Canvas *current_canvas) {
 // Public function to open directory by path (for IPC from ReqASL)
 void workbench_open_directory(const char *path) {
     if (!path || !path[0]) return;
-    
+
     // Create temporary icon just to reuse open_directory
     FileIcon temp_icon = {0};
     temp_icon.path = (char *)path;
     temp_icon.type = TYPE_DRAWER;
-    
+
     // Call existing function
     open_directory(&temp_icon, NULL);
+}
+
+// Public function to create a new drawer/directory with icon
+// This handles the "New Drawer" menu action properly
+void workbench_create_new_drawer(Canvas *target_canvas) {
+    if (!target_canvas) return;
+
+    // Get the target directory path
+    char target_path[PATH_SIZE];
+    strncpy(target_path, target_canvas->path, PATH_SIZE - 1);
+    target_path[PATH_SIZE - 1] = '\0';
+
+    // Find a unique name for the new drawer
+    char new_dir_name[NAME_SIZE];
+    char full_path[PATH_SIZE];
+    int counter = 0;
+
+    while (1) {
+        if (counter == 0) {
+            snprintf(new_dir_name, NAME_SIZE, "Unnamed_dir");
+        } else {
+            snprintf(new_dir_name, NAME_SIZE, "Unnamed_dir_%d", counter);
+        }
+
+        int ret = snprintf(full_path, PATH_SIZE, "%s/%s", target_path, new_dir_name);
+        if (ret >= PATH_SIZE) {
+            log_error("[ERROR] Path too long for new directory: %s/%s", target_path, new_dir_name);
+            return;
+        }
+
+        // Check if directory already exists
+        struct stat st;
+        if (stat(full_path, &st) != 0) {
+            // Directory doesn't exist, we can use this name
+            break;
+        }
+        counter++;
+
+        if (counter > 999) {
+            log_error("[ERROR] Cannot find unique name for new directory");
+            return;
+        }
+    }
+
+    // Create the directory
+    if (mkdir(full_path, 0755) != 0) {
+        log_error("[ERROR] Failed to create directory: %s - %s", full_path, strerror(errno));
+        return;
+    }
+
+    // Create icon for the new directory WITHOUT triggering mass re-layout
+    // This follows the same pattern used in archive extraction
+    const char *icon_path = definfo_for_file(new_dir_name, true);
+    if (!icon_path) {
+        log_error("[WARNING] No def_dir.info available for directory icon");
+        // Directory was created but we can't show an icon for it
+        // User can refresh manually if needed
+        return;
+    }
+
+    // Find a free position for the new icon
+    int new_x, new_y;
+    find_free_slot(target_canvas, &new_x, &new_y);
+
+    // Create the directory icon with proper metadata
+    FileIcon *new_icon = create_icon_with_metadata(
+        icon_path,
+        target_canvas,
+        new_x,
+        new_y,
+        full_path,      // Full path to the new directory
+        new_dir_name,   // Display name
+        TYPE_DRAWER     // It's a directory
+    );
+
+    if (new_icon) {
+        // Update canvas bounds and redraw WITHOUT triggering re-layout
+        // This is the key to avoiding mass icon rearrangement
+        compute_content_bounds(target_canvas);
+        compute_max_scroll(target_canvas);
+        redraw_canvas(target_canvas);
+        // Success - no logging per "Silent Success, Loud Failure" philosophy
+    } else {
+        log_error("[ERROR] Failed to create icon for new directory: %s", full_path);
+    }
 }
 
 FileIcon *find_icon(Window win, int x, int y) {

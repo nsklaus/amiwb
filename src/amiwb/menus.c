@@ -2704,71 +2704,21 @@ void trigger_select_contents_action(void) {
 
 // Trigger new drawer action (from menu or Super+N)
 void trigger_new_drawer_action(void) {
-    Canvas *target_canvas = NULL;
-    char target_path[PATH_SIZE];
-    
     // Determine where to create the new drawer
     Canvas *active_window = get_active_window();
-    
+    Canvas *target_canvas = NULL;
+
     if (active_window && active_window->type == WINDOW) {
         // Create in active window's directory
         target_canvas = active_window;
-        strncpy(target_path, active_window->path, PATH_SIZE - 1);
-        target_path[PATH_SIZE - 1] = '\0';
     } else {
         // Create on desktop
-        Canvas *desktop = get_desktop_canvas();
-        if (desktop) {
-            target_canvas = desktop;
-            strncpy(target_path, desktop->path, PATH_SIZE - 1);
-            target_path[PATH_SIZE - 1] = '\0';
-        } else {
-            return;
-        }
+        target_canvas = get_desktop_canvas();
     }
-    
-    // Find a unique name for the new drawer
-    char new_dir_name[NAME_SIZE];
-    char full_path[PATH_SIZE];
-    int counter = 0;
-    
-    while (1) {
-        if (counter == 0) {
-            snprintf(new_dir_name, NAME_SIZE, "Unnamed_dir");
-        } else {
-            snprintf(new_dir_name, NAME_SIZE, "Unnamed_dir_%d", counter);
-        }
-        
-        int ret = snprintf(full_path, PATH_SIZE, "%s/%s", target_path, new_dir_name);
-        if (ret >= PATH_SIZE) {
-            // Path too long, stop trying
-            log_error("[ERROR] Path too long for new directory: %s/%s", target_path, new_dir_name);
-            return;
-        }
-        
-        // Check if directory already exists
-        struct stat st;
-        if (stat(full_path, &st) != 0) {
-            // Directory doesn't exist, we can use this name
-            break;
-        }
-        counter++;
-        
-        if (counter > 999) {
-            return;
-        }
-    }
-    
-    // Create the directory
-    if (mkdir(full_path, 0755) == 0) {
-        
-        // Refresh the target canvas to show the new drawer
-        if (target_canvas) {
-            refresh_canvas_from_directory(target_canvas, target_path);
-            // icon_cleanup now called inside refresh_canvas_from_directory
-            redraw_canvas(target_canvas);
-        }
-    } else {
+
+    if (target_canvas) {
+        // Delegate to workbench module - proper separation of concerns
+        workbench_create_new_drawer(target_canvas);
     }
 }
 

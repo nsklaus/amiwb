@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=AmiWB-Minimal
+Comment=Minimalist AmigaOS-inspired theme
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=AmiWB-Minimal
+MetacityTheme=AmiWB-Minimal
+IconTheme=hicolor
+CursorTheme=default
+ButtonLayout=:minimize,maximize,close

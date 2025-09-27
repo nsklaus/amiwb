@@ -6,8 +6,8 @@ INCLUDES = -I../.. -I../../src -I/usr/include/freetype2 -I/usr/include/X11/Xft
 LIBS = -lSM -lICE -lXext -lXmu -lX11 -lXrender -lXfixes -lXdamage \
        -lXft -lXrandr -lXcomposite -lm -lImlib2 -lfontconfig
 
-# Toolkit library location
-TOOLKIT_LIB = ../../libamiwb-toolkit.a
+# Toolkit library
+TOOLKIT_LIB = -L../.. -lamiwb
 
 # Source files (excluding reqasl_hook.c which is built separately)
 SRCS = $(filter-out reqasl_hook.c, $(wildcard *.c))
@@ -21,8 +21,8 @@ HOOK = reqasl_hook.so
 all: $(EXEC) $(HOOK)
 
 # Build reqasl
-$(EXEC): $(OBJS) $(TOOLKIT_LIB)
-	$(CC) $(OBJS) $(TOOLKIT_LIB) $(LIBS) -o $(EXEC)
+$(EXEC): $(OBJS)
+	$(CC) $(OBJS) $(TOOLKIT_LIB) $(LIBS) -Wl,-rpath,'$$ORIGIN/../..' -Wl,-rpath,/usr/local/lib -o $(EXEC)
 
 # Build reqasl hook library
 $(HOOK): reqasl_hook.c

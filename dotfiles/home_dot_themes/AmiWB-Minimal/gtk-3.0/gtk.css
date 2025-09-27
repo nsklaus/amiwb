@@ -1,0 +1,461 @@
+/* AmiWB-Minimal GTK3 Theme */
+/* AmigaOS-inspired minimalist theme */
+
+/* Color definitions */
+@define-color ami_gray #A0A2A0;
+@define-color ami_blue #586FB0;
+@define-color ami_white #FFFFFF;
+@define-color ami_black #000000;
+@define-color ami_dark_gray #808080;
+@define-color ami_inactive_gray #8A8A8A;
+
+/* Base reset - minimal, preserves GTK defaults */
+* {
+    font-family: "Source Code Pro Semibold", monospace;
+    font-size: 9pt;
+    font-weight: 600;
+    padding: 0;
+    margin: 0;
+    min-height: 0;
+    min-width: 0;
+    outline: none;
+    -gtk-outline-radius: 0;
+}
+
+/* Default spacing between elements */
+box > *,
+hbox > *,
+vbox > * {
+    margin: 2px;
+}
+
+/* ============= WINDOW & BASE ============= */
+window {
+    background-color: @ami_gray;
+    color: @ami_black;
+}
+
+.background {
+    background-color: @ami_gray;
+    color: @ami_black;
+}
+
+/* ============= BUTTONS ============= */
+button {
+    padding: 0px 6px;
+    min-height: 16px;  /* 16px + 2px borders = 18px total */
+    max-height: 16px;
+    background-color: @ami_gray;
+    color: @ami_black;
+    border-style: solid;
+    border-width: 1px;
+    border-left-color: @ami_white;
+    border-top-color: @ami_white;
+    border-right-color: @ami_black;
+    border-bottom-color: @ami_black;
+    margin: 2px;
+}
+
+button:hover {
+    background-color: shade(@ami_gray, 1.1);
+}
+
+button:active,
+button:checked {
+    background-color: @ami_blue;
+    color: @ami_black;
+    border-left-color: @ami_black;
+    border-top-color: @ami_black;
+    border-right-color: @ami_white;
+    border-bottom-color: @ami_white;
+    padding: 1px 5px 0px 7px; /* Slight shift for pressed effect, maintain height */
+}
+
+button:disabled {
+    background-color: @ami_gray;
+    color: @ami_dark_gray;
+    opacity: 0.8;
+}
+
+/* ============= MENUS ============= */
+/* Menu container */
+menu {
+    background-color: @ami_gray;
+    border: 1px solid @ami_black;
+    padding: 2px;
+}
+
+/* Normal menu items */
+menuitem {
+    padding: 2px 8px;
+    min-height: 16px;
+    background-color: @ami_gray;
+    color: @ami_black;
+}
+
+/* Hover state - only for enabled items */
+menuitem:hover:not(:disabled) {
+    background-color: @ami_blue;
+    color: @ami_white;
+}
+
+/* Disabled menu items */
+menuitem:disabled {
+    background-color: @ami_gray;
+    color: @ami_dark_gray;
+}
+
+/* Force child elements transparent */
+menuitem * {
+    background: transparent;
+    color: inherit;
+}
+
+/* Menubar */
+menubar {
+    background-color: @ami_gray;
+    padding: 0;
+}
+
+menubar > menuitem {
+    padding: 2px 6px;
+    min-height: 18px;
+}
+
+menubar > menuitem:hover {
+    background-color: @ami_blue;
+    color: @ami_white;
+}
+
+/* ============= ENTRIES ============= */
+entry {
+    padding: 0px 4px;
+    min-height: 16px;  /* 16px + 2px borders = 18px total */
+    max-height: 16px;
+    background-color: @ami_gray;
+    color: @ami_black;
+    border-style: solid;
+    border-width: 1px;
+    /* Inset 3D effect - opposite of buttons */
+    border-left-color: @ami_black;
+    border-top-color: @ami_black;
+    border-right-color: @ami_white;
+    border-bottom-color: @ami_white;
+    margin: 2px;
+}
+
+entry selection {
+    background-color: @ami_blue;
+    color: @ami_white;
+}
+
+/* ============= SCROLLBARS ============= */
+scrollbar {
+    opacity: 1;
+    background-color: @ami_gray;
+}
+
+scrollbar trough {
+    background-color: shade(@ami_gray, 0.95);
+    border: 1px solid @ami_dark_gray;
+    min-width: 10px;
+    min-height: 10px;
+}
+
+scrollbar slider {
+    background-color: @ami_black;
+    border: none;
+    min-width: 10px;
+    min-height: 30px;
+}
+
+scrollbar slider:hover {
+    background-color: shade(@ami_black, 1.3);
+}
+
+/* Force scrollbars always visible */
+* {
+    -gtk-overlay-scrolling: false;
+}
+
+/* ============= LISTS & CONTAINERS ============= */
+treeview,
+list {
+    background-color: @ami_gray;
+    color: @ami_black;
+}
+
+/* Container border */
+scrolledwindow {
+    border: 1px solid @ami_black;
+}
+
+scrolledwindow treeview,
+scrolledwindow list {
+    border: none;
+}
+
+treeview:selected,
+list row:selected {
+    background-color: @ami_blue;
+    color: @ami_white;
+}
+
+/* List headers */
+treeview header button {
+    padding: 2px 4px;
+    min-height: 18px;
+    background-color: @ami_gray;
+    border: 1px solid @ami_dark_gray;
+}
+
+/* ============= NOTEBOOKS/TABS ============= */
+/*notebook {
+    background-color: @ami_gray;
+}*/
+
+/*notebook header {
+    background-color: @ami_gray;
+}*/
+
+notebook header.top {
+    border-bottom: 1px solid @ami_black;
+}
+
+notebook tab {
+    padding: 4px 6px;
+    background-color: @ami_inactive_gray;
+    color: @ami_black;
+    border: 1px solid @ami_black;
+    border-bottom-color: @ami_gray;
+    margin: 0 -1px 0 0;
+    transition: background-color 0.1s;
+}
+
+/* First tab - no negative left margin */
+notebook header tab:first-child {
+    margin-left: 0;
+}
+
+/* Inactive tabs explicitly */
+notebook header tab:not(:checked) {
+    background-color: @ami_inactive_gray;
+}
+
+/* Active tab - no bottom border */
+notebook header.top tab:checked,
+notebook header.top tab:active,
+notebook header.top tab:selected {
+    background-color: @ami_gray;
+    border-bottom-color: @ami_gray;
+    margin-bottom: -1px;
+}
+
+/* Force refresh on hover to help state changes */
+notebook header tab:hover {
+    background-color: shade(@ami_inactive_gray, 1.05);
+}
+
+notebook header tab:checked:hover {
+    background-color: @ami_gray;
+}
+
+notebook stack {
+    border: 1px solid @ami_black;
+    border-top: none;
+    padding: 4px;
+}
+
+/* ============= TOOLBARS ============= */
+toolbar {
+    padding: 2px;
+    background-color: @ami_gray;
+}
+
+toolbar button {
+    margin: 0 2px;
+    padding: 2px;
+    min-width: 22px;
+    min-height: 22px;
+}
+
+toolbar button:first-child {
+    margin-left: 0;
+}
+
+toolbar button:last-child {
+    margin-right: 0;
+}
+
+/* Icon sizing */
+toolbar button image,
+button image {
+    min-width: 18px;
+    min-height: 18px;
+    -gtk-icon-size: 18px;
+}
+
+/* ============= DROPDOWNS/COMBOBOX ============= */
+combobox button.combo {
+    padding-right: 20px;
+}
+
+combobox arrow {
+    min-width: 16px;
+    -gtk-icon-source: -gtk-icontheme("pan-down-symbolic");
+    color: @ami_black;
+}
+
+combobox menu {
+    border: 1px solid @ami_black;
+}
+
+/* Dropdown button indicator */
+button.combo::after {
+    content: "▼";
+    margin-left: 4px;
+}
+
+/* ============= PROGRESSBAR ============= */
+progressbar {
+    min-height: 8px;
+}
+
+progressbar trough {
+    background-color: @ami_gray;
+    border: 1px solid @ami_dark_gray;
+}
+
+progressbar progress {
+    background-color: @ami_blue;
+    min-height: 6px;
+}
+
+/* ============= CHECKBOXES & RADIOS ============= */
+checkbutton check,
+radiobutton radio {
+    min-width: 14px;
+    min-height: 14px;
+    margin: 0 4px 0 0;
+    background-color: shade(@ami_gray, 1.15);
+    border: 1px solid @ami_black;
+}
+
+checkbutton check:checked {
+    background-color: @ami_blue;
+}
+
+radiobutton radio {
+    border-radius: 50%;
+}
+
+radiobutton radio:checked {
+    background-color: @ami_blue;
+}
+
+/* ============= TOOLTIPS ============= */
+tooltip {
+    background-color: shade(@ami_gray, 1.1);
+    color: @ami_black;
+    border: 1px solid @ami_black;
+    padding: 2px 4px;
+}
+
+/* ============= SEPARATORS ============= */
+separator {
+    background-color: @ami_dark_gray;
+    min-width: 1px;
+    min-height: 1px;
+}
+
+/* ============= FRAMES ============= */
+frame {
+    border: 1px solid @ami_dark_gray;
+    padding: 2px;
+}
+
+frame > label {
+    margin: 0 2px;
+}
+
+/* ============= TEXTVIEW ============= */
+textview,
+textview text {
+    background-color: @ami_gray;
+    color: @ami_black;
+}
+
+textview text selection {
+    background-color: @ami_blue;
+    color: @ami_white;
+}
+
+/* ============= DIALOG ============= */
+dialog {
+    background-color: @ami_gray;
+}
+
+dialog .dialog-action-area button {
+    margin: 2px;
+}
+
+/* ============= SIDEBAR ============= */
+.sidebar {
+    background-color: shade(@ami_gray, 0.95);
+    border-right: 1px solid @ami_dark_gray;
+}
+
+/* ============= SPINBUTTONS ============= */
+spinbutton {
+    background-color: @ami_gray;
+    border-style: solid;
+    border-width: 1px;
+    border-left-color: @ami_black;
+    border-top-color: @ami_black;
+    border-right-color: @ami_white;
+    border-bottom-color: @ami_white;
+    margin: 2px;
+}
+
+spinbutton entry {
+    border: none;
+    margin: 0;
+    background-color: @ami_gray;
+}
+
+spinbutton button {
+    margin: 0;
+    min-height: 9px;
+    min-width: 12px;
+    padding: 0;
+}
+
+/* ============= SPECIAL FIXES ============= */
+/* Disable animations */
+* {
+    transition: none;
+    animation: none;
+}
+
+/* Fix overlay elements */
+.background.popup {
+    background-color: @ami_gray;
+}
+
+/* Popover menus */
+popover {
+    background-color: @ami_gray;
+    border: 1px solid @ami_black;
+}
+
+popover modelbutton {
+    padding: 2px 8px;
+    min-height: 16px;
+    background-color: transparent;
+    color: @ami_black;
+}
+
+popover modelbutton:hover {
+    background-color: @ami_blue;
+    color: @ami_white;
+}

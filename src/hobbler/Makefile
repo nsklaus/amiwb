@@ -8,8 +8,8 @@ LIBS = -lSM -lICE -lXext -lXmu -lX11 -lXrender -lXfixes -lXdamage \
        -lXft -lXrandr -lXcomposite -lm -lImlib2 -lfontconfig \
        $(shell pkg-config --libs webkit2gtk-4.0)
 
-# Toolkit library location
-TOOLKIT_LIB = ../../libamiwb-toolkit.a
+# Toolkit library
+TOOLKIT_LIB = -L../.. -lamiwb
 
 # Source files
 SRCS = $(wildcard *.c)
@@ -22,8 +22,8 @@ EXEC = hobbler
 all: $(EXEC)
 
 # Build hobbler
-$(EXEC): $(OBJS) $(TOOLKIT_LIB)
-	$(CC) $(OBJS) $(TOOLKIT_LIB) $(LIBS) -o $(EXEC)
+$(EXEC): $(OBJS)
+	$(CC) $(OBJS) $(TOOLKIT_LIB) $(LIBS) -Wl,-rpath,'$$ORIGIN/../..' -Wl,-rpath,/usr/local/lib -o $(EXEC)
 
 # Pattern rule for object files
 %.o: %.c

@@ -26,25 +26,25 @@ TOOLKIT_OBJS = $(TOOLKIT_SRCS:.c=.o)
 
 # Outputs
 AMIWB_EXEC = amiwb
-TOOLKIT_LIB = libamiwb-toolkit.a
+TOOLKIT_LIB = libamiwb.so
 
 # Default target
 all: $(TOOLKIT_LIB) $(AMIWB_EXEC)
 
-# Toolkit library
+# Toolkit shared library
 $(TOOLKIT_LIB): $(TOOLKIT_OBJS)
-	$(AR) rcs $@ $(TOOLKIT_OBJS)
+	$(CC) -shared -o $@ $(TOOLKIT_OBJS) $(LIBS)
 
 # amiwb window manager
 $(AMIWB_EXEC): $(AMIWB_OBJS) $(TOOLKIT_LIB)
-	$(CC) $(AMIWB_OBJS) $(TOOLKIT_LIB) $(LIBS) -o $@
+	$(CC) $(AMIWB_OBJS) -L. -lamiwb $(LIBS) -Wl,-rpath,'$$ORIGIN' -Wl,-rpath,/usr/local/lib -o $@
 
 # Pattern rules for object files
 $(AMIWB_DIR)/%.o: $(AMIWB_DIR)/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
 
 $(TOOLKIT_DIR)/%.o: $(TOOLKIT_DIR)/%.c
-	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -fPIC -c $< -o $@
 
 # Clean
 clean:
@@ -52,10 +52,11 @@ clean:
 
 # Install
 install: $(TOOLKIT_LIB) $(AMIWB_EXEC)
-	# Install toolkit library and headers
+	# Install toolkit shared library and headers
 	mkdir -p /usr/local/lib
-	cp $(TOOLKIT_LIB) /usr/local/lib/libamiwb-toolkit.a.new
-	mv /usr/local/lib/libamiwb-toolkit.a.new /usr/local/lib/libamiwb-toolkit.a
+	cp $(TOOLKIT_LIB) /usr/local/lib/libamiwb.so.new
+	mv /usr/local/lib/libamiwb.so.new /usr/local/lib/libamiwb.so
+	ldconfig
 	mkdir -p /usr/local/include/amiwb/toolkit
 	cp $(TOOLKIT_DIR)/*.h /usr/local/include/amiwb/toolkit/
 	# Install amiwb binary
@@ -101,7 +102,8 @@ install: $(TOOLKIT_LIB) $(AMIWB_EXEC)
 # Uninstall
 uninstall:
 	rm -f /usr/local/bin/amiwb
-	rm -f /usr/local/lib/libamiwb-toolkit.a
+	rm -f /usr/local/lib/libamiwb.so
+	ldconfig
 	rm -rf /usr/local/include/amiwb
 	rm -rf /usr/local/share/amiwb
 	@echo "AmiWB uninstalled"

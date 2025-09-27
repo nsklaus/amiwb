@@ -53,6 +53,7 @@ void open_file(FileIcon *icon);                 // Open file with xdg-open
 FileIcon* create_iconified_icon(Canvas *c);     // Create icon for iconified window
 void restore_iconified(FileIcon *icon);         // Restore iconified window
 void workbench_open_directory(const char *path); // Open directory in new workbench window
+void workbench_create_new_drawer(Canvas *target_canvas); // Create new drawer with icon (no re-layout)
 
 // Launch programs with ReqASL hook
 void launch_with_hook(const char *command);     // Execute command with LD_PRELOAD set

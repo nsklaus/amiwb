@@ -1,0 +1,291 @@
+# AmiWB-Minimal GTK2 Theme
+# AmigaOS-inspired minimalist theme
+
+gtk-font-name = "Source Code Pro Semibold 9"
+gtk-theme-name = "AmiWB-Minimal"
+gtk-icon-theme-name = "hicolor"
+gtk-toolbar-style = GTK_TOOLBAR_ICONS
+gtk-toolbar-icon-size = GTK_ICON_SIZE_SMALL_TOOLBAR
+gtk-button-images = 0
+gtk-menu-images = 0
+gtk-enable-event-sounds = 0
+gtk-enable-input-feedback-sounds = 0
+
+style "ami-default" {
+    # AmigaOS Colors
+    bg[NORMAL]        = "#A0A2A0"
+    bg[PRELIGHT]      = "#B0B2B0"
+    bg[SELECTED]      = "#586FB0"
+    bg[INSENSITIVE]   = "#A0A2A0"
+    bg[ACTIVE]        = "#586FB0"
+
+    fg[NORMAL]        = "#000000"
+    fg[PRELIGHT]      = "#000000"
+    fg[SELECTED]      = "#FFFFFF"
+    fg[INSENSITIVE]   = "#808080"
+    fg[ACTIVE]        = "#FFFFFF"
+
+    base[NORMAL]      = "#A0A2A0"
+    base[PRELIGHT]    = "#B0B2B0"
+    base[SELECTED]    = "#586FB0"
+    base[INSENSITIVE] = "#A0A2A0"
+    base[ACTIVE]      = "#586FB0"
+
+    text[NORMAL]      = "#000000"
+    text[PRELIGHT]    = "#000000"
+    text[SELECTED]    = "#FFFFFF"
+    text[INSENSITIVE] = "#808080"
+    text[ACTIVE]      = "#FFFFFF"
+
+    # Compact spacing
+    xthickness = 1
+    ythickness = 1
+
+    # Widget spacing
+    GtkWidget::focus-line-width = 0
+    GtkWidget::focus-padding = 0
+    GtkWidget::interior-focus = 0
+    GtkWidget::internal-padding = 0
+
+    # Button settings for 3D effect
+    GtkButton::child-displacement-x = 1
+    GtkButton::child-displacement-y = 1
+    GtkButton::default-border = { 0, 0, 0, 0 }
+    GtkButton::inner-border = { 2, 2, 1, 1 }
+
+    # Compact checkboxes/radios
+    GtkCheckButton::indicator-size = 14
+    GtkCheckButton::indicator-spacing = 2
+    GtkRadioButton::indicator-size = 14
+
+    # Small paned handles
+    GtkPaned::handle-size = 3
+
+    # Scrollbar settings - always visible
+    GtkScrollbar::min-slider-length = 30
+    GtkScrollbar::slider-width = 10
+    GtkScrollbar::trough-border = 1
+    GtkScrollbar::has-backward-stepper = 0
+    GtkScrollbar::has-forward-stepper = 0
+
+    # Compact menus
+    GtkMenuBar::internal-padding = 0
+    GtkMenuBar::shadow-type = GTK_SHADOW_NONE
+    GtkMenu::horizontal-padding = 0
+    GtkMenu::vertical-padding = 0
+    GtkMenuItem::horizontal-padding = 4
+    GtkMenuItem::vertical-padding = 2
+
+    # Toolbar with proper spacing
+    GtkToolbar::internal-padding = 2
+    GtkToolbar::space-size = 4
+    GtkToolbar::button-relief = GTK_RELIEF_NORMAL
+
+    # Tree/list views
+    GtkTreeView::expander-size = 12
+    GtkTreeView::vertical-separator = 0
+    GtkTreeView::horizontal-separator = 0
+
+    # Notebook tabs
+    GtkNotebook::tab-overlap = -1
+    GtkNotebook::tab-curvature = 0
+
+    # Entry fields
+    GtkEntry::inner-border = { 1, 1, 1, 1 }
+
+    # Progress bars
+    GtkProgressBar::min-horizontal-bar-height = 8
+    GtkProgressBar::min-vertical-bar-width = 8
+
+    # Use clearlooks engine for 3D effects
+    engine "clearlooks" {
+        radius = 0.0
+        style = CLASSIC
+        contrast = 1.0
+    }
+}
+
+style "ami-button" = "ami-default" {
+    xthickness = 2
+    ythickness = 0  # Reduced for 18px total height
+
+    # 3D bevel effect through engine
+    engine "clearlooks" {
+        style = CLASSIC
+        reliefstyle = 2
+    }
+
+    GtkButton::interior-focus = 0
+    GtkButton::inner-border = { 2, 2, 0, 0 }
+}
+
+style "ami-menu" = "ami-default" {
+    xthickness = 2
+    ythickness = 2
+
+    bg[NORMAL] = "#A0A2A0"
+    fg[NORMAL] = "#000000"
+
+    # Ensure solid background
+    engine "clearlooks" {
+        style = CLASSIC
+        radius = 0
+    }
+}
+
+style "ami-menuitem" = "ami-default" {
+    xthickness = 4
+    ythickness = 2
+
+    # Normal state
+    bg[NORMAL] = "#A0A2A0"
+    fg[NORMAL] = "#000000"
+
+    # Hover state - blue background, white text
+    bg[PRELIGHT] = "#586FB0"
+    fg[PRELIGHT] = "#FFFFFF"
+
+    # Disabled state - gray text
+    fg[INSENSITIVE] = "#808080"
+}
+
+style "ami-menubar" = "ami-default" {
+    bg[NORMAL] = "#A0A2A0"
+}
+
+style "ami-toolbar" = "ami-default" {
+    xthickness = 2
+    ythickness = 2
+
+    GtkToolbar::internal-padding = 2
+    GtkToolbar::space-size = 4
+}
+
+style "ami-scrollbar" = "ami-default" {
+    # Black scrollbar sliders
+    bg[NORMAL]   = "#A0A2A0"  # Trough
+    bg[PRELIGHT] = "#202020"  # Slider hover
+    bg[ACTIVE]   = "#000000"  # Slider pressed
+
+    GtkScrollbar::slider-width = 10
+    GtkScrollbar::trough-border = 1
+
+    engine "clearlooks" {
+        colorize_scrollbar = FALSE
+        style = CLASSIC
+    }
+}
+
+style "ami-notebook" = "ami-default" {
+    xthickness = 2
+    ythickness = 2
+
+    # Inactive tabs - slightly darker
+    bg[NORMAL] = "#8A8A8A"
+    # Active tab - normal background
+    bg[ACTIVE] = "#A0A2A0"
+
+    GtkNotebook::tab-overlap = -2
+    GtkNotebook::tab-curvature = 0
+
+    engine "clearlooks" {
+        style = CLASSIC
+        radius = 0
+    }
+}
+
+style "ami-entry" = "ami-default" {
+    xthickness = 3
+    ythickness = 1  # Reduced for 18px total height
+
+    # Gray background for entries and text areas
+    base[NORMAL] = "#A0A2A0"
+    base[SELECTED] = "#586FB0"
+    text[SELECTED] = "#FFFFFF"
+
+    # Inset 3D border effect
+    engine "clearlooks" {
+        style = CLASSIC
+        reliefstyle = 1  # Inset relief
+    }
+
+    GtkEntry::inner-border = { 0, 0, 0, 0 }
+}
+
+style "ami-treeview" = "ami-default" {
+    xthickness = 1
+    ythickness = 1
+
+    engine "clearlooks" {
+        style = CLASSIC
+    }
+}
+
+style "ami-treeview-header" = "ami-button" {
+    xthickness = 2
+    ythickness = 1
+
+    bg[NORMAL] = "#A0A2A0"
+}
+
+style "ami-tooltips" = "ami-default" {
+    xthickness = 3
+    ythickness = 3
+
+    bg[NORMAL] = "#B0B2B0"
+    fg[NORMAL] = "#000000"
+}
+
+style "ami-progressbar" = "ami-default" {
+    bg[SELECTED] = "#586FB0"
+    fg[PRELIGHT] = "#FFFFFF"
+
+    xthickness = 1
+    ythickness = 1
+}
+
+style "ami-combobox" = "ami-default" {
+    xthickness = 2
+    ythickness = 2
+}
+
+style "ami-frame" = "ami-default" {
+    xthickness = 1
+    ythickness = 1
+}
+
+style "ami-textview" = "ami-default" {
+    # Gray background for text areas
+    base[NORMAL] = "#A0A2A0"
+    base[SELECTED] = "#586FB0"
+    text[NORMAL] = "#000000"
+    text[SELECTED] = "#FFFFFF"
+}
+
+# Apply styles
+class "GtkWidget"      style "ami-default"
+class "GtkButton"      style "ami-button"
+class "GtkMenu"        style "ami-menu"
+class "GtkMenuItem"    style "ami-menuitem"
+class "GtkMenuBar"     style "ami-menubar"
+class "GtkToolbar"     style "ami-toolbar"
+class "GtkScrollbar"   style "ami-scrollbar"
+class "GtkNotebook"    style "ami-notebook"
+class "GtkEntry"       style "ami-entry"
+class "GtkTreeView"    style "ami-treeview"
+class "GtkProgressBar" style "ami-progressbar"
+class "GtkComboBox"    style "ami-combobox"
+class "GtkCombo"       style "ami-combobox"
+class "GtkFrame"       style "ami-frame"
+class "GtkTooltip"     style "ami-tooltips"
+class "GtkTextView"    style "ami-textview"
+
+widget_class "*MenuItem.*"    style "ami-menuitem"
+widget_class "*MenuBar.*"     style "ami-menubar"
+widget_class "*Toolbar*"      style "ami-toolbar"
+widget_class "*Notebook*"     style "ami-notebook"
+widget_class "*GtkTreeView*"  style "ami-treeview"
+widget_class "*<GtkTreeView>*" style "ami-treeview-header"
+widget_class "*.<GtkTreeView>.<GtkButton>" style "ami-treeview-header"
+
+widget "gtk-tooltip*" style "ami-tooltips"
