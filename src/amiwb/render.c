@@ -1,7 +1,7 @@
 // File: render.c
 #define _POSIX_C_SOURCE 200809L
 #include "render.h"
-#include "intuition.h"  // For is_restarting()
+#include "intuition/itn_public.h"  // For is_restarting()
 #include "workbench.h"
 #include "config.h"
 #include "amiwbrc.h"  // For config access
@@ -16,7 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "resize.h"
 #include "font_manager.h"
 
 // Global UI colors
@@ -273,7 +272,7 @@ void init_render(void) {
     // Initialize cached checkerboard pattern for scrollbars
     create_checkerboard_pattern(ctx);
     
-    Canvas *desk = get_desktop_canvas();
+    Canvas *desk = itn_canvas_get_desktop();
     if (desk) redraw_canvas(desk);
 
     // Initialize colors
@@ -475,7 +474,7 @@ void redraw_canvas(Canvas *canvas) {
     
     // PERFORMANCE OPTIMIZATION: During interactive resize, only redraw the canvas being resized
     // BUT: Always allow icon rendering - just skip buffer updates
-    Canvas *resizing = resize_get_canvas();
+    Canvas *resizing = itn_resize_get_target();
     if (resizing && canvas != resizing) {
         return; // Skip redrawing non-resizing windows during resize
     }
@@ -525,7 +524,7 @@ void redraw_canvas(Canvas *canvas) {
 
 /*    } else {
         // Fill only content area for workbench windows
-        int visible_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+        int visible_w = canvas->width - BORDER_WIDTH_LEFT - (canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT);
         int visible_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color,
             BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP, visible_w, visible_h);
@@ -541,7 +540,7 @@ void redraw_canvas(Canvas *canvas) {
             // Compute visible content bounds (viewport) for clipping
             int view_left = canvas->scroll_x;
             int view_top = canvas->scroll_y;
-            int view_right = view_left + (canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas));
+            int view_right = view_left + (canvas->width - BORDER_WIDTH_LEFT - (canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT));
             int view_bottom = view_top + (canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);
 
             if (canvas->type == WINDOW && canvas->view_mode == VIEW_NAMES) {
@@ -566,7 +565,7 @@ void redraw_canvas(Canvas *canvas) {
                             XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)label, (int)strlen(label), &ext);
                             int padding = 10; // small horizontal padding
                             int sel_w = ext.xOff + padding;
-                            int max_row_w = (canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas));
+                            int max_row_w = (canvas->width - BORDER_WIDTH_LEFT - (canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT));
                             if (sel_w > max_row_w) sel_w = max_row_w; // do not exceed frame
                             // Background fill: always draw base gray for the viewport row band
                             XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &canvas->bg_color,
@@ -884,7 +883,7 @@ void redraw_canvas(Canvas *canvas) {
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, BORDER_WIDTH_LEFT -1, 20, 1, canvas->height); 
 
         // right border
-        int right_border_width = get_right_border_width(canvas);
+        int right_border_width = (canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT);
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, canvas->width - right_border_width, BORDER_HEIGHT_TOP, right_border_width, canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);  
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width - right_border_width, 20, 1, canvas->height); 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -1, 0, 1, canvas->height); 
@@ -1071,7 +1070,7 @@ void redraw_canvas(Canvas *canvas) {
             // Horizontal scrollbar track - use actual window dimensions like vertical scrollbar
             int hb_x = BORDER_WIDTH_LEFT + 10;  // TRACK_MARGIN = 10
             int hb_y = canvas->height - BORDER_HEIGHT_BOTTOM + 4;  // Inside border
-            int hb_w = (canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas)) - 54 - 10;  // TRACK_RESERVED=54, TRACK_MARGIN=10
+            int hb_w = (canvas->width - BORDER_WIDTH_LEFT - (canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT)) - 54 - 10;  // TRACK_RESERVED=54, TRACK_MARGIN=10
             int hb_h = BORDER_HEIGHT_BOTTOM - 8;  // Inside border height
             draw_checkerboard(ctx->dpy, dest, hb_x, hb_y+1, hb_w, hb_h, color1, color2);    // Draw checkerboard track
 

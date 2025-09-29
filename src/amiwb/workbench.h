@@ -4,7 +4,7 @@
 #ifndef WORKBENCH_H
 #define WORKBENCH_H
 
-#include "intuition.h"
+#include "intuition/itn_public.h"
 #include "icons.h"
 
 #define INITIAL_ICON_CAPACITY 16

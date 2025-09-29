@@ -8,7 +8,7 @@
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
-#include "intuition.h"
+#include "intuition/itn_public.h"
 #include "icons.h"
 
 void init_render(void);               // Initialize render ctx, fonts, wallpapers

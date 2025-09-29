@@ -10,7 +10,7 @@
 #include <dirent.h>
 #include "diskdrives.h"
 #include "workbench.h"
-#include "intuition.h"
+#include "intuition/itn_internal.h"
 #include "render.h"
 #include "config.h"
 
@@ -142,7 +142,7 @@ static void add_new_drive(const char *device, const char *mount_point, const cha
     drive->is_mounted = true;
     
     // Get desktop canvas
-    Canvas *desktop = get_desktop_canvas();
+    Canvas *desktop = itn_canvas_get_desktop();
     if (!desktop) return;
     
     // Create icon at temporary position - icon_cleanup will arrange it properly
@@ -229,7 +229,7 @@ static void remove_missing_drives(bool *found) {
     
     // Refresh desktop if any icons were removed
     if (any_removed) {
-        Canvas *desktop = get_desktop_canvas();
+        Canvas *desktop = itn_canvas_get_desktop();
         if (desktop) {
             redraw_canvas(desktop);
         }
@@ -618,7 +618,7 @@ void eject_drive(FileIcon *icon) {
                 drive_manager.drive_count--;
                 
                 // Refresh desktop to show the icon is gone
-                Canvas *desktop = get_desktop_canvas();
+                Canvas *desktop = itn_canvas_get_desktop();
                 if (desktop) {
                     redraw_canvas(desktop);
                 }

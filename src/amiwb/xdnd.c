@@ -2,7 +2,7 @@
 #include "icons.h"  // For FileIcon type
 #include "config.h" // For PATH_SIZE, NAME_SIZE constants
 #include "workbench.h" // For workbench_cleanup_drag_state
-#include "intuition.h" // For find_canvas to exclude our own windows
+#include "intuition/itn_public.h" // For itn_canvas_find_by_window to exclude our own windows
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -5,7 +5,7 @@
 #define ICONINFO_H
 
 #include "config.h"
-#include "intuition.h"
+#include "intuition/itn_public.h"
 #include "icons.h"
 #include "../toolkit/inputfield.h"
 #include "../toolkit/button.h"

@@ -1,6 +1,6 @@
 // File: icons.c
 #include "config.h"
-#include "intuition.h"
+#include "intuition/itn_internal.h"
 #include "icons.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
@@ -1351,7 +1351,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
 void free_icon(FileIcon *icon) {
     if (!icon) return;
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     if (!dpy) return;
     if (icon->normal_picture) XRenderFreePicture(dpy, icon->normal_picture);
     if (icon->selected_picture) XRenderFreePicture(dpy, icon->selected_picture);

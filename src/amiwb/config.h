@@ -28,6 +28,10 @@
 #define ICON_SPACING 70         // Spacing between icons in grid (increased).
 #define MAX_FILES 10000         // Max icons per canvas.
 
+// Window size constraints
+#define MIN_WINDOW_WIDTH 100    // Minimum window width in pixels
+#define MIN_WINDOW_HEIGHT 50    // Minimum window height in pixels
+
 // Buffer sizes for paths and filenames
 // These are reasonable sizes that cover 99.9% of real-world usage
 // while being memory-efficient for a lightweight desktop
@@ -85,6 +89,13 @@ extern char *iconify_path;
 
 #define max(a,b) ((a) > (b) ? (a) : (b))
 #define min(a,b) ((a) < (b) ? (a) : (b))
+
+// Utility function to clamp a value between min and max
+static inline int clamp_value_between(int value, int min_val, int max_val) {
+    if (value < min_val) return min_val;
+    if (value > max_val) return max_val;
+    return value;
+}
 
 #define DEBUG false         // enable debug output
 #define MIN_KNOB_SIZE 10    // Minimum size for scrollbar knobs in pixels

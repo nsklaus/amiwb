@@ -3,6 +3,7 @@
 #include "dialogs.h"
 #include "render.h"
 #include "config.h"
+#include "intuition/itn_internal.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
@@ -114,8 +115,8 @@ void show_rename_dialog(const char *old_name,
     g_dialogs = dialog;
     
     // Show the dialog and set it as active window
-    XMapRaised(get_display(), dialog->canvas->win);
-    set_active_window(dialog->canvas);  // Make dialog active so it can receive focus
+    XMapRaised(itn_core_get_display(), dialog->canvas->win);
+    itn_focus_set_active(dialog->canvas);  // Make dialog active so it can receive focus
     
     
     redraw_canvas(dialog->canvas);
@@ -185,8 +186,8 @@ void show_execute_dialog(void (*on_ok)(const char *command),
     g_dialogs = dialog;
     
     // Show the dialog and set it as active window
-    XMapRaised(get_display(), dialog->canvas->win);
-    set_active_window(dialog->canvas);
+    XMapRaised(itn_core_get_display(), dialog->canvas->win);
+    itn_focus_set_active(dialog->canvas);
     redraw_canvas(dialog->canvas);
 }
 
@@ -210,7 +211,7 @@ void close_dialog(Dialog *dialog) {
     if (dialog->input_field) {
         // Make sure to close any open dropdown first
         if (dialog->input_field->dropdown_open) {
-            inputfield_hide_completions(dialog->input_field, get_display());
+            inputfield_hide_completions(dialog->input_field, itn_core_get_display());
         }
         inputfield_destroy(dialog->input_field);
         dialog->input_field = NULL;
@@ -291,7 +292,7 @@ Dialog *get_dialog_for_canvas(Canvas *canvas) {
 
 // 3D drawing primitives
 static void draw_inset_box(Picture dest, int x, int y, int w, int h) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     
     // Outer border - inset effect (light source top-left)
     XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE, x, y, 1, h);        // Left outer (white)
@@ -318,7 +319,8 @@ static void calculate_layout(Dialog *dialog, int *input_x, int *input_y, int *in
     // Account for window borders in layout calculations
     int content_left = BORDER_WIDTH_LEFT;
     int content_top = BORDER_HEIGHT_TOP;
-    int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+    // Dialogs use client window borders (8px right border)
+    int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
     // int content_height = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;  // May be used later
     
     // Input box: starts after "New Name:" label, positioned below title with small gap
@@ -359,7 +361,7 @@ static void draw_checkerboard_pattern(Picture dest, int x, int y, int w, int h);
 static void render_text_content(Dialog *dialog, Picture dest, 
                                int input_x, int input_y, int input_w,
                                int ok_x, int ok_y, int cancel_x, int cancel_y) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     Canvas *canvas = dialog->canvas;
     XftFont *font = get_font();
     if (!font) return;
@@ -376,7 +378,7 @@ static void render_text_content(Dialog *dialog, Picture dest,
     XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &text_color, &xft_text);
     
     if (dialog->dialog_type == DIALOG_DELETE_CONFIRM) {
-        //int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+        //int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
         int line_y = BORDER_HEIGHT_TOP + 30;
         int text_left_x = BORDER_WIDTH_LEFT + 15;  // Left margin inside inner window
         
@@ -436,7 +438,7 @@ static void render_text_content(Dialog *dialog, Picture dest,
         
         XGlyphInfo title_ext;
         XftTextExtentsUtf8(dpy, font, (FcChar8*)title_text, strlen(title_text), &title_ext);
-        int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+        int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
         int title_x = BORDER_WIDTH_LEFT + (content_width - title_ext.xOff) / 2;
         int title_y = BORDER_HEIGHT_TOP + 20;
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, title_x, title_y, 
@@ -470,7 +472,7 @@ static void render_text_content(Dialog *dialog, Picture dest,
         
         XGlyphInfo title_ext;
         XftTextExtentsUtf8(dpy, font, (FcChar8*)title_text, strlen(title_text), &title_ext);
-        int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+        int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
         int title_x = BORDER_WIDTH_LEFT + (content_width - title_ext.xOff) / 2;
         int title_y = BORDER_HEIGHT_TOP + 20;
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, title_x, title_y, 
@@ -501,7 +503,7 @@ static void render_text_content(Dialog *dialog, Picture dest,
 
 // Draw checkerboard pattern for delete confirmation dialog
 static void draw_checkerboard_pattern(Picture dest, int x, int y, int w, int h) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     
     // Use same checker size as scrollbars (2x2 pixels)
     int checker_size = 2;
@@ -528,13 +530,13 @@ void render_dialog_content(Canvas *canvas) {
     if (!dialog) return;
     
     
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     Picture dest = canvas->canvas_render;
     
     // Clear only the content area inside the borders to dialog gray
     int content_x = BORDER_WIDTH_LEFT;
     int content_y = BORDER_HEIGHT_TOP;
-    int content_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+    int content_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
     int content_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
     XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, content_x, content_y, content_w, content_h);
     
@@ -548,7 +550,7 @@ void render_dialog_content(Canvas *canvas) {
         int border_thickness = 10;
         int content_left = BORDER_WIDTH_LEFT;
         int content_top = BORDER_HEIGHT_TOP;
-        int content_width = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+        int content_width = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
         // int content_height = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;  // May be used later
         
         // Bottom area: encompasses the buttons
@@ -617,7 +619,7 @@ void render_dialog_content(Canvas *canvas) {
         dialog->cancel_button->y = cancel_y;
 
         // Render toolkit buttons
-        Display *dpy = get_display();
+        Display *dpy = itn_core_get_display();
         button_render(dialog->ok_button, dest, dpy, canvas->xft_draw);
         button_render(dialog->cancel_button, dest, dpy, canvas->xft_draw);
     }
@@ -629,7 +631,7 @@ void render_dialog_content(Canvas *canvas) {
 // Event handlers
 bool dialogs_handle_key_press(XKeyEvent *event) {
     // Find the dialog for the active window
-    Canvas *active = get_active_window();
+    Canvas *active = itn_focus_get_active();
     if (!active || active->type != DIALOG) return false;
     
     Dialog *dialog = get_dialog_for_canvas(active);
@@ -687,7 +689,7 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
             if (event->button == Button4 || event->button == Button5) {
                 // Call InputField's scroll handler
                 int direction = (event->button == Button4) ? -1 : 1;
-                inputfield_handle_dropdown_scroll(d->input_field, direction, get_display());
+                inputfield_handle_dropdown_scroll(d->input_field, direction, itn_core_get_display());
                 return true;  // Consume the event
             }
             
@@ -695,7 +697,7 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
             if (event->button == Button1) {
                 if (inputfield_handle_completion_click(d->input_field, event->x, event->y)) {
                     // Selection was made, hide the dropdown
-                    inputfield_hide_completions(d->input_field, get_display());
+                    inputfield_hide_completions(d->input_field, itn_core_get_display());
                     redraw_canvas(d->canvas);
                     return true;
                 }
@@ -704,7 +706,7 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
         }
     }
     
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     
     if (!canvas || canvas->type != DIALOG) return false;
     
@@ -759,7 +761,7 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
             if (inputfield_handle_click(dialog->input_field, event->x, event->y)) {
                 // Now calculate and set cursor position
                 int pos = inputfield_pos_from_x(dialog->input_field, event->x, 
-                                               get_display(), dialog->font);
+                                               itn_core_get_display(), dialog->font);
                 dialog->input_field->cursor_pos = pos;
                 dialog->input_field->mouse_selecting = true;
                 dialog->input_field->mouse_select_start = pos;
@@ -778,7 +780,7 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
 bool dialogs_handle_button_release(XButtonEvent *event) {
     if (!event) return false;
 
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas || canvas->type != DIALOG) return false;
 
     Dialog *dialog = get_dialog_for_canvas(canvas);
@@ -834,7 +836,7 @@ bool dialogs_handle_button_release(XButtonEvent *event) {
 bool dialogs_handle_motion(XMotionEvent *event) {
     if (!event) return false;
     
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas || canvas->type != DIALOG) return false;
     
     Dialog *dialog = get_dialog_for_canvas(canvas);
@@ -842,7 +844,7 @@ bool dialogs_handle_motion(XMotionEvent *event) {
     
     // Handle mouse motion for InputField selection
     if (dialog->input_field && dialog->input_field->mouse_selecting) {
-        if (inputfield_handle_mouse_motion(dialog->input_field, event->x, event->y, get_display())) {
+        if (inputfield_handle_mouse_motion(dialog->input_field, event->x, event->y, itn_core_get_display())) {
             redraw_canvas(dialog->canvas);
             return true;
         }
@@ -924,8 +926,8 @@ void show_delete_confirmation(const char *message,
     g_dialogs = dialog;
     
     // Show the dialog and set it as active window
-    XMapRaised(get_display(), dialog->canvas->win);
-    set_active_window(dialog->canvas);
+    XMapRaised(itn_core_get_display(), dialog->canvas->win);
+    itn_focus_set_active(dialog->canvas);
     redraw_canvas(dialog->canvas);
 }
 
@@ -973,16 +975,16 @@ ProgressDialog* show_progress_dialog(ProgressOperation op, const char *title) {
     g_progress_dialogs = dialog;
     
     // Show the dialog
-    XMapRaised(get_display(), dialog->canvas->win);
-    set_active_window(dialog->canvas);
+    XMapRaised(itn_core_get_display(), dialog->canvas->win);
+    itn_focus_set_active(dialog->canvas);
     
     // Force X11 to process the map request
-    XSync(get_display(), False);
+    XSync(itn_core_get_display(), False);
     
     redraw_canvas(dialog->canvas);
     
     // Force an immediate flush to ensure the window is visible
-    XFlush(get_display());
+    XFlush(itn_core_get_display());
     
     return dialog;
 }
@@ -1001,7 +1003,7 @@ void update_progress_dialog(ProgressDialog *dialog, const char *file, float perc
     }
     
     redraw_canvas(dialog->canvas);
-    XFlush(get_display());  // Force immediate display update
+    XFlush(itn_core_get_display());  // Force immediate display update
 }
 
 // Close progress dialog
@@ -1136,7 +1138,7 @@ Canvas* create_progress_window(ProgressOperation op, const char *title) {
     }
     
     // Center on screen
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     int screen = DefaultScreen(dpy);
     int screen_width = DisplayWidth(dpy, screen);
     int screen_height = DisplayHeight(dpy, screen);
@@ -1157,7 +1159,7 @@ Canvas* create_progress_window(ProgressOperation op, const char *title) {
     
     // Show, raise and make it the active window
     XMapRaised(dpy, canvas->win);
-    set_active_window(canvas);  // Make this the active window (handles focus and active state)
+    itn_focus_set_active(canvas);  // Make this the active window (handles focus and active state)
     XSync(dpy, False);
     
     return canvas;
@@ -1170,7 +1172,7 @@ void render_progress_dialog_content(Canvas *canvas) {
         return;
     }
     
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     Picture dest = canvas->canvas_render;
     
     
@@ -1196,7 +1198,7 @@ void render_progress_dialog_content(Canvas *canvas) {
     // Clear content area to dialog gray
     int content_x = BORDER_WIDTH_LEFT;
     int content_y = BORDER_HEIGHT_TOP;
-    int content_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+    int content_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
     int content_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
     
     XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, content_x, content_y, content_w, content_h);

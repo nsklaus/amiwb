@@ -3,7 +3,7 @@
 #define EVENTS_H
 
 #include <X11/Xlib.h>
-#include "intuition.h"
+#include "intuition/itn_public.h"
 #include "workbench.h"
 #include "menus.h"
 

@@ -2,7 +2,7 @@
 #ifndef ICONS_H
 #define ICONS_H
 
-#include "intuition.h"
+#include "intuition/itn_public.h"
 
 typedef enum IconType { TYPE_FILE, TYPE_DRAWER, TYPE_ICONIFIED, TYPE_DEVICE } IconType;
 

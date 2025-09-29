@@ -3,8 +3,8 @@
 // by locking routing to the initial press target.
 #include "menus.h"
 #include "events.h"
-#include "compositor.h"
-#include "intuition.h"
+// #include "compositor.h"  // Now using itn modules
+#include "intuition/itn_public.h"  // Public intuition API
 #include "workbench.h"
 #include "dialogs.h"
 #include "iconinfo.h"  // For iconinfo_check_size_calculations
@@ -25,6 +25,11 @@
 #include <strings.h> // strcasecmp
 #include <stdlib.h> // getenv
 #include <time.h>
+#include <sys/timerfd.h>  // For timerfd_create (Phase 1)
+#include <errno.h>        // For error reporting
+
+// External variable from intuition modules for RandR events
+extern int randr_event_base;
 
 // External functions to trigger actions from menus.c
 extern void trigger_execute_action(void);
@@ -183,79 +188,106 @@ void init_events(void) {
 // Central dispatcher that forwards X events to subsystems. We translate
 // coordinates and reroute presses so each canvas receives coherent input.
 void handle_events(void) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     if (!dpy) { return; }
 
     // entering event loop
     XEvent event;
 
-    // X connection file descriptor for select - may be used in future for select() based event loop
-    // int fd = ConnectionNumber(dpy);  
+    // PHASE 1: Use select() for event-driven operation
+    int x_fd = ConnectionNumber(dpy);
+
+    // Create frame timer for compositor (Phase 1)
+    static int frame_timer_fd = -1;
+    frame_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    if (frame_timer_fd < 0) {
+        log_error("[SCHEDULER] Failed to create frame timer: %s", strerror(errno));
+        // Fall back to old behavior if timer creation fails
+    } else {
+        // Inform itn_render module about the timer FD
+        itn_render_set_timer_fd(frame_timer_fd);
+        // Frame timer is now handled by itn_render module only
+        // Silent success - timer created successfully
+    }
 
     // Log cap management
-    // unsigned int iter = 0;  // May be used for future debugging
+    #if LOGGING_ENABLED && LOG_CAP_ENABLED
+    unsigned int iter = 0;  // For log truncation
+    #endif
     time_t last_time_check = 0;
     time_t last_drive_check = 0;  // For diskdrives polling
-    
+
     while (running) {
-        // Check for events with timeout for periodic updates
-        if (XPending(dpy)) {
-            // Deliver events as-is. If coalescing is needed, keep the last motion
-            // per target window rather than discarding all motions globally.
-            XNextEvent(dpy, &event);
-        } else {
-            // No events pending, check if we should update time
-            time_t now = time(NULL);
-            if (now - last_time_check >= 1) {  // Check every second
-                last_time_check = now;
-                update_menubar_time();  // Will only redraw if minute changed
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(x_fd, &read_fds);
+
+        int max_fd = x_fd;
+
+        // Add frame timer to select set if available
+        if (frame_timer_fd >= 0) {
+            FD_SET(frame_timer_fd, &read_fds);
+            if (frame_timer_fd > max_fd) max_fd = frame_timer_fd;
+        }
+
+        // Frame scheduling is now handled entirely by itn_render module
+        // via itn_render_schedule_frame() when damage occurs.
+        // Removing duplicate scheduling that was causing conflicts.
+
+        // Use select with a 1-second timeout for periodic tasks
+        struct timeval timeout = {1, 0};  // 1 second timeout for time/drive checks
+        int ready = select(max_fd + 1, &read_fds, NULL, NULL, &timeout);
+
+        if (ready < 0) {
+            if (errno != EINTR) {
+                log_error("[EVENTS] select() failed: %s", strerror(errno));
             }
-            
-            // Check for drive changes every 2 seconds
-            if (now - last_drive_check >= 1) {  // Poll every 1 second instead of 2
-                last_drive_check = now;
-                extern void diskdrives_poll(void);
-                diskdrives_poll();
-            }
-            
-            // Check progress dialogs for updates
-            workbench_check_progress_dialogs();
-            
-            // Check iconinfo dialogs for directory size calculations
-            iconinfo_check_size_calculations();
-            
-            // Check for arrow button auto-repeat
-            intuition_check_arrow_scroll_repeat();
-            
-            // Very brief sleep to avoid busy-waiting but remain responsive
-            usleep(1000);  // 1ms - much more responsive
             continue;
         }
 
-        // Periodically enforce log cap (optional)
-        #if LOGGING_ENABLED && LOG_CAP_ENABLED
-        if ((++iter % 1000u) == 0u && g_log_path[0]) {
-            struct stat st;
-            if (stat(g_log_path, &st) == 0 && st.st_size > (off_t)LOG_CAP_BYTES) {
-                FILE *lf = fopen(g_log_path, "w"); // truncate
-                if (lf) {
-                    setvbuf(lf, NULL, _IOLBF, 0);
-                    dup2(fileno(lf), fileno(stdout));
-                    dup2(fileno(lf), fileno(stderr));
-                    // Log truncated silently
+        // Handle frame timer expiration
+        if (frame_timer_fd >= 0 && FD_ISSET(frame_timer_fd, &read_fds)) {
+            // Use itn_render_consume_timer to properly handle the timer
+            // This reads the timer, clears g_frame_scheduled, and reschedules if needed
+            itn_render_consume_timer();
+            // Then process the frame if there's damage
+            itn_render_process_frame();
+        }
+
+        // Handle X11 events
+        if (FD_ISSET(x_fd, &read_fds)) {
+            while (XPending(dpy)) {
+                XNextEvent(dpy, &event);
+
+                // Periodically enforce log cap (optional)
+                #if LOGGING_ENABLED && LOG_CAP_ENABLED
+                if ((++iter % 1000u) == 0u && g_log_path[0]) {
+                    struct stat st;
+                    if (stat(g_log_path, &st) == 0 && st.st_size > (off_t)LOG_CAP_BYTES) {
+                        FILE *lf = fopen(g_log_path, "w"); // truncate
+                        if (lf) {
+                            setvbuf(lf, NULL, _IOLBF, 0);
+                            dup2(fileno(lf), fileno(stdout));
+                            dup2(fileno(lf), fileno(stderr));
+                            // Log truncated silently
+                        }
+                    }
                 }
-            }
-        }
-        #endif
-        
-        
-        // Let the compositor see every event so it can maintain damage/topology
-        compositor_handle_event(dpy, &event);
+                #endif
 
-        if (event.type == randr_event_base + RRScreenChangeNotify) {
-            intuition_handle_rr_screen_change(
-                (XRRScreenChangeNotifyEvent *)&event);
-            continue;
+                // Route events to appropriate itn modules
+                // Check for damage events
+                extern int g_damage_event_base;
+                if (event.type == g_damage_event_base + XDamageNotify) {
+                    itn_composite_process_damage((XDamageNotifyEvent *)&event);
+                } else {
+                    // Compositor events now handled by itn modules
+                }
+
+                if (event.type == randr_event_base + RRScreenChangeNotify) {
+                    intuition_handle_rr_screen_change(
+                        (XRRScreenChangeNotifyEvent *)&event);
+                    continue;
         }
 
         switch (event.type) {
@@ -290,10 +322,10 @@ void handle_events(void) {
                 XMapEvent *map_event = &event.xmap;
                 
                 // Check if it's a client window OR a frame window
-                Canvas *canvas = find_canvas_by_client(map_event->window);
+                Canvas *canvas = itn_canvas_find_by_client(map_event->window);
                 if (!canvas) {
                     // Maybe it's a frame window?
-                    canvas = find_canvas(map_event->window);
+                    canvas = itn_canvas_find_by_window(map_event->window);
                     if (canvas) {
                         // Found canvas
                     }
@@ -304,8 +336,8 @@ void handle_events(void) {
                     // Simple, brutal, effective - no negotiation with GTK
                     if (canvas->is_transient) {
                         // Center dialog on screen
-                        int screen_width = DisplayWidth(get_display(), DefaultScreen(get_display()));
-                        int screen_height = DisplayHeight(get_display(), DefaultScreen(get_display()));
+                        int screen_width = DisplayWidth(itn_core_get_display(), DefaultScreen(itn_core_get_display()));
+                        int screen_height = DisplayHeight(itn_core_get_display(), DefaultScreen(itn_core_get_display()));
                         int frame_x = (screen_width - canvas->width) / 2;
                         int frame_y = (screen_height - canvas->height) / 2;
                         if (frame_y < MENUBAR_HEIGHT) frame_y = MENUBAR_HEIGHT;
@@ -313,23 +345,23 @@ void handle_events(void) {
                         // Get ACTUAL position of frame window - not the lies in canvas
                         int real_x = 0, real_y = 0;
                         Window child;
-                        XTranslateCoordinates(get_display(), canvas->win, 
-                                            DefaultRootWindow(get_display()),
+                        XTranslateCoordinates(itn_core_get_display(), canvas->win, 
+                                            DefaultRootWindow(itn_core_get_display()),
                                             0, 0, &real_x, &real_y, &child);
                         
                         // Position mismatch detected - silent per logging rules
                         
                         // ALWAYS force move - don't trust canvas position
-                        XMoveWindow(get_display(), canvas->win, frame_x, frame_y);
-                        XSync(get_display(), False);
+                        XMoveWindow(itn_core_get_display(), canvas->win, frame_x, frame_y);
+                        XSync(itn_core_get_display(), False);
                         
                         canvas->x = frame_x;
                         canvas->y = frame_y;
                         
                         // Force client to correct position within frame (only if this IS the client)
                         if (map_event->window == canvas->client_win) {
-                            XMoveWindow(get_display(), map_event->window, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
-                            XSync(get_display(), False);
+                            XMoveWindow(itn_core_get_display(), map_event->window, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
+                            XSync(itn_core_get_display(), False);
                         }
                         
                         // Debug: What window are we actually verifying?
@@ -343,8 +375,8 @@ void handle_events(void) {
                         }
                         
                         // Verify it actually moved
-                        XTranslateCoordinates(get_display(), canvas->win, 
-                                            DefaultRootWindow(get_display()),
+                        XTranslateCoordinates(itn_core_get_display(), canvas->win, 
+                                            DefaultRootWindow(itn_core_get_display()),
                                             0, 0, &real_x, &real_y, &child);
                         if (real_x != frame_x || real_y != frame_y) {
                             log_error("[ERROR] Move FAILED! Still at %d,%d instead of %d,%d",
@@ -359,29 +391,29 @@ void handle_events(void) {
                         // Re-show frame if it was hidden
                         if (canvas->win != None) {
                             XWindowAttributes frame_attrs;
-                            if (XGetWindowAttributes(get_display(), canvas->win, &frame_attrs) &&
+                            if (XGetWindowAttributes(itn_core_get_display(), canvas->win, &frame_attrs) &&
                                 frame_attrs.map_state == IsUnmapped) {
                                 
                                 // Map the window first
-                                XMapWindow(get_display(), canvas->win);
-                                XSync(get_display(), False);
+                                XMapWindow(itn_core_get_display(), canvas->win);
+                                XSync(itn_core_get_display(), False);
                                 
                                 // Calculate center position
-                                int screen_width = DisplayWidth(get_display(), DefaultScreen(get_display()));
-                                int screen_height = DisplayHeight(get_display(), DefaultScreen(get_display()));
+                                int screen_width = DisplayWidth(itn_core_get_display(), DefaultScreen(itn_core_get_display()));
+                                int screen_height = DisplayHeight(itn_core_get_display(), DefaultScreen(itn_core_get_display()));
                                 int center_x = (screen_width - canvas->width) / 2;
                                 int center_y = (screen_height - canvas->height) / 2;
                                 if (center_y < MENUBAR_HEIGHT) center_y = MENUBAR_HEIGHT;
                                 
                                 // Move to center
-                                XMoveWindow(get_display(), canvas->win, center_x, center_y);
-                                XSync(get_display(), False);
+                                XMoveWindow(itn_core_get_display(), canvas->win, center_x, center_y);
+                                XSync(itn_core_get_display(), False);
                                 
                                 // VERIFY it moved - if not, the client is the culprit
                                 int actual_x = 0, actual_y = 0;
                                 Window child;
-                                XTranslateCoordinates(get_display(), canvas->win,
-                                                    DefaultRootWindow(get_display()),
+                                XTranslateCoordinates(itn_core_get_display(), canvas->win,
+                                                    DefaultRootWindow(itn_core_get_display()),
                                                     0, 0, &actual_x, &actual_y, &child);
                                 
                                 if (actual_x != center_x || actual_y != center_y) {
@@ -399,9 +431,9 @@ void handle_events(void) {
                     
                     // Always raise and activate transient dialogs when they map
                     if (canvas->is_transient && canvas->win != None) {
-                        XRaiseWindow(get_display(), canvas->win);
-                        XSetInputFocus(get_display(), map_event->window, RevertToParent, CurrentTime);
-                        set_active_window(canvas);
+                        XRaiseWindow(itn_core_get_display(), canvas->win);
+                        XSetInputFocus(itn_core_get_display(), map_event->window, RevertToParent, CurrentTime);
+                        itn_focus_set_active(canvas);
                     }
                 }
                 intuition_handle_map_notify(map_event);
@@ -460,12 +492,40 @@ void handle_events(void) {
                 break;
             default:
                 break;
+                }
+
+                // Note: compositor_flush_pending is no longer needed with Phase 1
+                // The frame scheduler handles all batching automatically
+            }  // End of while (XPending(dpy))
+        }  // End of if (FD_ISSET(x_fd, &read_fds))
+
+        // Handle periodic tasks when select times out or between events
+        if (ready == 0 || 1) {  // Always check periodic tasks
+            time_t now = time(NULL);
+
+            // Check if we should update time
+            if (now - last_time_check >= 1) {  // Check every second
+                last_time_check = now;
+                update_menubar_time();  // Will only redraw if minute changed
+            }
+
+            // Check for drive changes every second
+            if (now - last_drive_check >= 1) {
+                last_drive_check = now;
+                extern void diskdrives_poll(void);
+                diskdrives_poll();
+            }
+
+            // Check progress dialogs for updates
+            workbench_check_progress_dialogs();
+
+            // Check iconinfo dialogs for directory size calculations
+            iconinfo_check_size_calculations();
+
+            // Check for arrow button auto-repeat
+            intuition_check_arrow_scroll_repeat();
         }
-        
-        // Flush any pending compositor repaints after processing events
-        // This batches multiple position updates from rapid motion events
-        compositor_flush_pending(dpy);
-    }
+    }  // End of while (running)
 }
 
 // Ask the main loop to exit cleanly.
@@ -475,13 +535,13 @@ void quit_event_loop(void) {
 
 // Walk up ancestors to find a Canvas window and translate coordinates
 static Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, int *out_y) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     Window root = DefaultRootWindow(dpy);
     Window cur = w;
     // rx, ry removed - were unused
     // Resolving event canvas
     while (cur && cur != root) {
-        Canvas *c = find_canvas(cur);
+        Canvas *c = itn_canvas_find_by_window(cur);
         if (c) {
             // Translate original event coords to this canvas window coords
             int tx=0, ty=0; Window dummy;
@@ -524,22 +584,22 @@ void handle_button_press(XButtonEvent *event) {
     }
     
     int cx = event->x, cy = event->y; // may be rewritten
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     // Handle button press
     // If the press is on a managed client, activate its frame, replay pointer, and translate
     if (!canvas) {
-        Canvas *owner = find_canvas_by_client(event->window);
+        Canvas *owner = itn_canvas_find_by_client(event->window);
         if (owner) {
-            set_active_window(owner);
+            itn_focus_set_active(owner);
             // We grabbed buttons on the client in frame_client_window();
             // allow the click to proceed to the client after focusing
             // XAllowEvents: Controls what happens to grabbed events
             // ReplayPointer means "pretend the grab never happened" - 
             // the click goes through to the client window normally
             // This lets us intercept clicks for focus, then pass them along
-            XAllowEvents(get_display(), ReplayPointer, event->time);
+            XAllowEvents(itn_core_get_display(), ReplayPointer, event->time);
             // translate coords from client to frame canvas
-            Window dummy; XTranslateCoordinates(get_display(), event->window, owner->win, event->x, event->y, &cx, &cy, &dummy);
+            Window dummy; XTranslateCoordinates(itn_core_get_display(), event->window, owner->win, event->x, event->y, &cx, &cy, &dummy);
             canvas = owner;
             // Route to frame
         }
@@ -551,14 +611,14 @@ void handle_button_press(XButtonEvent *event) {
     // If the desktop got the press but a window is actually under the pointer,
     // reroute the event to the topmost WINDOW canvas at the pointer's root coords.
     if (canvas->type == DESKTOP) {
-        Display *dpy = get_display();
+        Display *dpy = itn_core_get_display();
         Window root = DefaultRootWindow(dpy);
         // Query stacking order
         Window root_ret, parent_ret, *children = NULL; unsigned int n = 0;
         if (XQueryTree(dpy, root, &root_ret, &parent_ret, &children, &n)) {
             // Children array is bottom-to-top; scan from topmost down.
             for (int i = (int)n - 1; i >= 0; --i) {
-                Canvas *c = find_canvas(children[i]);
+                Canvas *c = itn_canvas_find_by_window(children[i]);
                 if (!c || (c->type != WINDOW && c->type != DIALOG)) continue;
                 // Validate the X window is still valid and viewable
                 XWindowAttributes a; 
@@ -571,7 +631,7 @@ void handle_button_press(XButtonEvent *event) {
                     Window dummy; int tx=0, ty=0;
                     XTranslateCoordinates(dpy, root, c->win, rx, ry, &tx, &ty, &dummy);
                     // Reroute to frame
-                    set_active_window(c);
+                    itn_focus_set_active(c);
                     XButtonEvent ev = *event; ev.window = c->win; ev.x = tx; ev.y = ty;
                     intuition_handle_button_press(&ev);
                     workbench_handle_button_press(&ev);
@@ -590,7 +650,7 @@ void handle_button_press(XButtonEvent *event) {
         g_press_target = canvas->win; // route motion/release to this menu until release
     } else if (canvas->type == WINDOW || canvas->type == DIALOG) {
         // Activate and forward to window/dialog frame
-        set_active_window(canvas);
+        itn_focus_set_active(canvas);
         XButtonEvent ev = create_translated_button_event(event, canvas->win, cx, cy);
         
         // For dialogs, try dialog-specific handling first
@@ -610,7 +670,7 @@ void handle_button_press(XButtonEvent *event) {
         // If dialog didn't consume the event, handle as normal window
         if (!dialog_consumed) {
             intuition_handle_button_press(&ev);
-            if (!intuition_last_press_consumed()) {
+            if (!itn_events_last_press_consumed()) {
                 workbench_handle_button_press(&ev);
             }
         }
@@ -628,10 +688,10 @@ void handle_button_press(XButtonEvent *event) {
 void handle_button_release(XButtonEvent *event) {
     // If we have a press target, translate release to it
     if (g_press_target) {
-        Display *dpy = get_display();
+        Display *dpy = itn_core_get_display();
         
         // First check if g_press_target window still exists
-        Canvas *target_canvas = find_canvas(g_press_target);
+        Canvas *target_canvas = itn_canvas_find_by_window(g_press_target);
         if (!target_canvas) {
             g_press_target = 0;
             return;
@@ -650,7 +710,7 @@ void handle_button_release(XButtonEvent *event) {
         XSync(dpy, False);  // Force error to occur now if any
         
         XButtonEvent ev = *event; ev.window = g_press_target; ev.x = tx; ev.y = ty;
-        Canvas *tc = find_canvas(g_press_target);
+        Canvas *tc = itn_canvas_find_by_window(g_press_target);
         if (tc && tc->type == MENU) {
             menu_handle_button_release(&ev);
         } else {
@@ -678,7 +738,7 @@ void handle_button_release(XButtonEvent *event) {
         return;
     }
     int cx = event->x, cy = event->y; // fallback path
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) canvas = resolve_event_canvas(event->window, event->x, event->y, &cx, &cy);
     if (!canvas) { return; }
     XButtonEvent ev = create_translated_button_event(event, canvas->win, cx, cy);
@@ -779,13 +839,13 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+Shift+M: Cycle to previous window
             if (keysym == XK_m || keysym == XK_M) {
-                cycle_prev_window();
+                itn_focus_cycle_prev();
                 return;
             }
             // Super+Shift+D: Performance metrics debug
             if (keysym == XK_d || keysym == XK_D) {
                 log_error("[METRICS] Performance snapshot requested");
-                compositor_log_metrics();
+                itn_render_log_metrics();
                 return;
             }
         } else {
@@ -802,7 +862,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+R: Rename selected icon (only if no client window has focus)
             if (keysym == XK_r || keysym == XK_R) {
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 if (!active || active->client_win == None) {
                     trigger_rename_action();
                     return;
@@ -811,7 +871,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+I: Icon Information (only if no client window has focus)
             if (keysym == XK_i || keysym == XK_I) {
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 if (!active || active->client_win == None) {
                     trigger_icon_info_action();
                     return;
@@ -820,7 +880,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+;: Clean up icons (only if no client window has focus)
             if (keysym == XK_semicolon) {
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 if (!active || active->client_win == None) {
                     trigger_cleanup_action();
                     return;
@@ -839,7 +899,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+P: Open parent directory (only if no client window has focus)
             if (keysym == XK_p || keysym == XK_P) {
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 if (!active || active->client_win == None) {
                     trigger_parent_action();
                     return;
@@ -848,7 +908,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+O: Open selected icon (only if no client window has focus)
             if (keysym == XK_o || keysym == XK_O) {
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 if (!active || active->client_win == None) {
                     trigger_open_action();
                     return;
@@ -857,7 +917,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+C: Copy selected icon (only if no client window has focus)
             if (keysym == XK_c || keysym == XK_C) {
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 if (!active || active->client_win == None) {
                     // Only trigger icon copy if it's a Workbench window
                     trigger_copy_action();
@@ -867,7 +927,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+D: Delete selected icon (only if no client window has focus)
             if (keysym == XK_d || keysym == XK_D) {
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 if (!active || active->client_win == None) {
                     trigger_delete_action();
                     return;
@@ -876,7 +936,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+N: New Drawer (only if no client window has focus)
             if (keysym == XK_n || keysym == XK_N) {
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 if (!active || active->client_win == None) {
                     trigger_new_drawer_action();
                     return;
@@ -885,7 +945,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+A: Select Contents (only if no client window has focus)
             if (keysym == XK_a || keysym == XK_A) {
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 if (!active || active->client_win == None) {
                     trigger_select_contents_action();
                     return;
@@ -894,7 +954,7 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+M: Cycle to next window
             if (keysym == XK_m || keysym == XK_M) {
-                cycle_next_window();
+                itn_focus_cycle_next();
                 return;
             }
         }
@@ -902,7 +962,7 @@ void handle_key_press(XKeyEvent *event) {
     }
     
     // Check if active window is a dialog and route keyboard events to it
-    Canvas *active = get_active_window();
+    Canvas *active = itn_focus_get_active();
     if (active && active->type == DIALOG) {
         bool dialog_consumed = false;
         
@@ -934,7 +994,7 @@ void handle_expose(XExposeEvent *event) {
 
 // A client asks to be mapped; give it an AmiWB frame.
 void handle_map_request(XMapRequestEvent *event) {
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) {
         intuition_handle_map_request(event);
     }
@@ -942,7 +1002,7 @@ void handle_map_request(XMapRequestEvent *event) {
 
 // Client wants to move/resize - this is THE ONLY way clients should resize
 void handle_configure_request(XConfigureRequestEvent *event) {
-    Canvas *canvas = find_canvas_by_client(event->window);
+    Canvas *canvas = itn_canvas_find_by_client(event->window);
     if (canvas) {
         // Managed window - handle the request properly
         intuition_handle_configure_request(event);
@@ -956,7 +1016,7 @@ void handle_configure_request(XConfigureRequestEvent *event) {
         changes.border_width = event->border_width;
         changes.sibling = event->above;
         changes.stack_mode = event->detail;
-        XConfigureWindow(get_display(), event->window, event->value_mask, &changes);
+        XConfigureWindow(itn_core_get_display(), event->window, event->value_mask, &changes);
     }
 }
 
@@ -966,7 +1026,7 @@ void handle_configure_request(XConfigureRequestEvent *event) {
 void handle_property_notify(XPropertyEvent *event) {
     if (!event) return;
     
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     
     // First check for AMIWB_OPEN_DIRECTORY property on root window (from ReqASL)
     if (event->window == DefaultRootWindow(dpy)) {
@@ -995,10 +1055,10 @@ void handle_property_notify(XPropertyEvent *event) {
     }
     
     // Now check for properties on client windows
-    Canvas *canvas = find_canvas_by_client(event->window);
+    Canvas *canvas = itn_canvas_find_by_client(event->window);
     if (!canvas) {
         // Try to find by main window too
-        canvas = find_canvas(event->window);
+        canvas = itn_canvas_find_by_window(event->window);
         if (!canvas) {
             return;
         }
@@ -1062,18 +1122,18 @@ void handle_property_notify(XPropertyEvent *event) {
 void handle_motion_notify(XMotionEvent *event) {
     // If we're in an active interaction, forward motion to the press target
     if (g_press_target) {
-        Display *dpy = get_display();
+        Display *dpy = itn_core_get_display();
         Window dummy; int tx=0, ty=0;
         // Translate from source to target using root coords for robustness
         int rx = event->x_root, ry = event->y_root;
         XTranslateCoordinates(dpy, DefaultRootWindow(dpy), g_press_target, rx, ry, &tx, &ty, &dummy);
         XMotionEvent ev = *event; ev.window = g_press_target; ev.x = tx; ev.y = ty;
-        Canvas *tc = find_canvas(g_press_target);
+        Canvas *tc = itn_canvas_find_by_window(g_press_target);
         if (tc && tc->type == MENU) {
             handle_menu_canvas_motion(tc, &ev, tx, ty);
         } else {
             // While scrolling a scrollbar, do not send motion to icons
-            if (!(tc && tc->type == WINDOW && intuition_is_scrolling_active())) {
+            if (!(tc && tc->type == WINDOW && itn_events_is_scrolling_active())) {
                 workbench_handle_motion_notify(&ev);
             }
             if (tc && (tc->type == WINDOW || tc->type == DIALOG)) {
@@ -1090,7 +1150,7 @@ void handle_motion_notify(XMotionEvent *event) {
     }
 
     int cx = event->x, cy = event->y;
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     // Suppress motion logging to avoid log spam
     if (!canvas) canvas = resolve_event_canvas(event->window, event->x, event->y, &cx, &cy);
     if (!canvas) {
@@ -1102,7 +1162,7 @@ void handle_motion_notify(XMotionEvent *event) {
         handle_menu_canvas_motion(canvas, event, cx, cy);
     } else {
         XMotionEvent ev = create_translated_motion_event(event, canvas->win, cx, cy);
-        if (!(canvas->type == WINDOW && intuition_is_scrolling_active())) {
+        if (!(canvas->type == WINDOW && itn_events_is_scrolling_active())) {
             workbench_handle_motion_notify(&ev);
         }
         if (canvas->type == WINDOW || canvas->type == DIALOG) {
@@ -1114,7 +1174,7 @@ void handle_motion_notify(XMotionEvent *event) {
 // Handle ConfigureNotify events - ONLY for our own frame windows
 void handle_configure_notify(XConfigureEvent *event) {
     // Only handle ConfigureNotify for OUR frame windows
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (canvas && (canvas->type == WINDOW || canvas->type == DIALOG)) {
         intuition_handle_configure_notify(event);
     }
@@ -1123,7 +1183,16 @@ void handle_configure_notify(XConfigureEvent *event) {
 }
 
 void handle_unmap_notify(XUnmapEvent *event) {
-    Canvas *canvas = find_canvas_by_client(event->window);
+    // First check if it's an override-redirect window being unmapped
+    extern bool itn_composite_remove_override(Window win);
+    if (itn_composite_remove_override(event->window)) {
+        // Was an override window - schedule frame to remove it from display
+        extern void itn_render_schedule_frame(void);
+        itn_render_schedule_frame();
+        return;
+    }
+
+    Canvas *canvas = itn_canvas_find_by_client(event->window);
     if (canvas) {
         
         // For transient windows, track unmaps
@@ -1141,15 +1210,15 @@ void handle_unmap_notify(XUnmapEvent *event) {
                 // Just hide our frame, don't destroy anything
                 // GTK dialogs will send DestroyNotify when they're really done
                 if (canvas->win != None) {
-                    XUnmapWindow(get_display(), canvas->win);
+                    XUnmapWindow(itn_core_get_display(), canvas->win);
                 }
                 
                 // Restore focus to parent window when dialog is hidden
                 if (parent_win != None) {
-                    Canvas *parent_canvas = find_canvas_by_client(parent_win);
+                    Canvas *parent_canvas = itn_canvas_find_by_client(parent_win);
                     if (parent_canvas) {
-                        set_active_window(parent_canvas);
-                        XSetInputFocus(get_display(), parent_win, RevertToParent, CurrentTime);
+                        itn_focus_set_active(parent_canvas);
+                        XSetInputFocus(itn_core_get_display(), parent_win, RevertToParent, CurrentTime);
                     }
                 }
                 
@@ -1163,9 +1232,9 @@ void handle_unmap_notify(XUnmapEvent *event) {
 }
 
 void handle_destroy_notify(XDestroyWindowEvent *event) {    
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) {
-        canvas = find_canvas_by_client(event->window);
+        canvas = itn_canvas_find_by_client(event->window);
     }
 
     if (canvas) {

@@ -4,6 +4,7 @@
 #include "render.h"
 #include "config.h"
 #include "workbench.h"
+#include "intuition/itn_internal.h"
 #include "../toolkit/button.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
@@ -164,8 +165,8 @@ void show_icon_info_dialog(FileIcon *icon) {
     g_iconinfo_dialogs = dialog;
     
     // Show the dialog
-    XMapRaised(get_display(), dialog->canvas->win);
-    set_active_window(dialog->canvas);
+    XMapRaised(itn_core_get_display(), dialog->canvas->win);
+    itn_focus_set_active(dialog->canvas);
     
     redraw_canvas(dialog->canvas);
 }
@@ -443,7 +444,7 @@ static Picture create_2x_icon(FileIcon *icon) {
         return None;
     }
     
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     if (!dpy) {
         log_error("[ERROR] create_2x_icon: NULL display");
         return None;
@@ -484,7 +485,7 @@ static Picture create_2x_icon(FileIcon *icon) {
 bool iconinfo_handle_key_press(XKeyEvent *event) {
     if (!event) return false;
     
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) return false;
     
     IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
@@ -567,7 +568,7 @@ bool iconinfo_handle_key_press(XKeyEvent *event) {
 bool iconinfo_handle_button_press(XButtonEvent *event) {
     if (!event) return false;
     
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) return false;
     
     IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
@@ -619,7 +620,7 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
         field_clicked = true;
     }
     // Check comment listview for clicks
-    else if (dialog->comment_list && listview_handle_click(dialog->comment_list, event->x, event->y, get_display(), get_font())) {
+    else if (dialog->comment_list && listview_handle_click(dialog->comment_list, event->x, event->y, itn_core_get_display(), get_font())) {
         // Get selected item and put it in the comment field for editing
         int selected = dialog->comment_list->selected_index;
         if (selected >= 0 && selected < dialog->comment_list->item_count) {
@@ -671,7 +672,7 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
 bool iconinfo_handle_button_release(XButtonEvent *event) {
     if (!event) return false;
     
-    Canvas *canvas = find_canvas(event->window);
+    Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) return false;
     
     IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
@@ -783,7 +784,7 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
     
     // Free resources
     if (dialog->icon_2x != None) {
-        XRenderFreePicture(get_display(), dialog->icon_2x);
+        XRenderFreePicture(itn_core_get_display(), dialog->icon_2x);
     }
     
     // Destroy input fields
@@ -824,7 +825,7 @@ void close_icon_info_dialog_by_canvas(Canvas *canvas) {
         
         // Free resources
         if (dialog->icon_2x != None) {
-            XRenderFreePicture(get_display(), dialog->icon_2x);
+            XRenderFreePicture(itn_core_get_display(), dialog->icon_2x);
         }
         
         // Destroy input fields
@@ -883,7 +884,7 @@ void render_iconinfo_content(Canvas *canvas) {
     IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
     if (!dialog) return;
     
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     if (!dpy) return;
     
     Picture dest = canvas->canvas_render;
@@ -892,7 +893,7 @@ void render_iconinfo_content(Canvas *canvas) {
     // Clear content area to gray
     int content_x = BORDER_WIDTH_LEFT;
     int content_y = BORDER_HEIGHT_TOP;
-    int content_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+    int content_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
     int content_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
     XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, content_x, content_y, content_w, content_h);
     

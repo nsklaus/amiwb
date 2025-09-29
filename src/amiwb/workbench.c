@@ -3,8 +3,8 @@
 #define _DEFAULT_SOURCE  // For usleep
 #include "workbench.h"
 #include "render.h"
-#include "intuition.h"
-#include "compositor.h"
+#include "intuition/itn_internal.h"
+// #include "compositor.h"  // Now using itn modules
 #include "config.h"  // Added to include config.h for max/min macros
 #include "events.h"  // For clear_press_target_if_matches
 #include "dialogs.h"  // For progress dialog support
@@ -439,7 +439,7 @@ static void start_drag_icon(FileIcon *icon, int x, int y) {
     dragged_icon = icon;
     drag_start_x = x;
     drag_start_y = y;
-    drag_source_canvas = find_canvas(icon->display_window);
+    drag_source_canvas = itn_canvas_find_by_window(icon->display_window);
     // Do not hide yet; wait for movement threshold
     saved_source_window = icon->display_window;
     // Remember original position to restore on failed drop
@@ -448,7 +448,7 @@ static void start_drag_icon(FileIcon *icon, int x, int y) {
     dragging_floating = false;
     drag_active = false;
     // Record root pointer at press
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     int rx, ry, wx, wy; unsigned int mask; Window root_ret, child_ret;
     XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask);
     drag_start_root_x = rx; drag_start_root_y = ry;
@@ -509,7 +509,7 @@ static void continue_drag_icon(XMotionEvent *event, Canvas *canvas) {
 }
 
 static void end_drag_icon(Canvas *canvas) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
 
     // Save drag window position BEFORE destroying it
     saved_drag_win_x = 0; saved_drag_win_y = 0;
@@ -580,7 +580,7 @@ static void end_drag_icon(Canvas *canvas) {
             // Only move if drag was actually activated (movement beyond threshold)
             if (drag_active) {
                 // Get the ACTUAL position of the drag window
-                Display *dpy = get_display();
+                Display *dpy = itn_core_get_display();
                 int drag_icon_screen_x = 0, drag_icon_screen_y = 0;
 
                 // Use the saved drag window position (saved before destroy)
@@ -667,7 +667,7 @@ static void end_drag_icon(Canvas *canvas) {
             // Only move if drag was actually activated (movement beyond threshold)
             if (drag_active) {
                 // Get the ACTUAL position of the drag window
-                Display *dpy = get_display();
+                Display *dpy = itn_core_get_display();
                 int drag_icon_screen_x = 0, drag_icon_screen_y = 0;
 
                 // Use the saved drag window position (saved before destroy)
@@ -779,7 +779,7 @@ static void end_drag_icon(Canvas *canvas) {
         snprintf(src_path_abs, sizeof(src_path_abs), "%s", dragged_icon->path ? dragged_icon->path : "");
 
         // Calculate icon position for async operation
-        Display *dpy = get_display();
+        Display *dpy = itn_core_get_display();
         // Get the ACTUAL position of the drag window
         int drag_icon_screen_x = 0, drag_icon_screen_y = 0;
 
@@ -896,7 +896,7 @@ static void end_drag_icon(Canvas *canvas) {
             char desktop_dir[PATH_SIZE] = {0};
             if (home) snprintf(desktop_dir, sizeof(desktop_dir), "%s/Desktop/", home);
             if (home && strncmp(src_path_abs, desktop_dir, strlen(desktop_dir)) == 0) {
-                Canvas *desktop = get_desktop_canvas();
+                Canvas *desktop = itn_canvas_get_desktop();
                 if (desktop) {
                     remove_icon_by_path_on_canvas(src_path_abs, desktop);
                     refresh_canvas(desktop);
@@ -933,7 +933,7 @@ static void end_drag_icon(Canvas *canvas) {
                 // No actual drag occurred
             } else if (target == drag_source_canvas) {
                 // Same-canvas drag: use exact drag icon position
-                Display *dpy = get_display();
+                Display *dpy = itn_core_get_display();
                 int drag_icon_screen_x = 0, drag_icon_screen_y = 0;
 
                 // Use the saved drag window position (saved before destroy)
@@ -986,7 +986,7 @@ static void end_drag_icon(Canvas *canvas) {
 // Floating drag window impl
 static void create_drag_window(void) {
     // Decide rendering mode
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     // Always use ARGB floating drag window; compositor will composite it
     use_floating_window = true;
     drag_win = None;
@@ -1051,7 +1051,7 @@ static void draw_drag_icon(void) {
     if (!dragged_icon) return;
     if (use_floating_window) {
         if (!target_picture || target_win == None) return;
-        Display *dpy = get_display();
+        Display *dpy = itn_core_get_display();
         // Clear to fully transparent
         XRenderColor clear = {0,0,0,0};
         XRenderFillRectangle(dpy, PictOpSrc, target_picture, &clear, 0, 0, drag_win_w, drag_win_h);
@@ -1083,7 +1083,7 @@ static void draw_drag_icon(void) {
 }
 
 static void update_drag_window_position(int root_x, int root_y) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     last_root_x = root_x; last_root_y = root_y;
     if (use_floating_window) {
         if (drag_win != None) {
@@ -1098,7 +1098,7 @@ static void update_drag_window_position(int root_x, int root_y) {
 }
 
 static void destroy_drag_window(void) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     if (target_picture) { XRenderFreePicture(dpy, target_picture); target_picture = 0; }
     if (drag_win != None) {
         XWindowAttributes wa;
@@ -1124,7 +1124,7 @@ static struct {
 } pointer_cache = {NULL, -1, -1, 0, false};
 
 static Canvas *canvas_under_pointer(void) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     Window root = DefaultRootWindow(dpy);
     Window root_ret, child_ret; int rx, ry, wx, wy; unsigned int mask;
     if (!XQueryPointer(dpy, root, &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask)) return NULL;
@@ -1149,7 +1149,7 @@ static Canvas *canvas_under_pointer(void) {
     // Walk from topmost to bottom to find the topmost WINDOW under pointer
     for (int i = (int)n - 1; i >= 0; --i) {
         Window w = children[i];
-        Canvas *c = find_canvas(w);
+        Canvas *c = itn_canvas_find_by_window(w);
         if (!c) continue;
         if (c->type == MENU) continue; // menus are not drop targets
 
@@ -2456,7 +2456,7 @@ void workbench_check_progress_dialogs(void) {
                                      msg.dest_path, errno, strerror(errno));
                         }
                         
-                        Canvas *canvas = find_canvas(msg.target_window);
+                        Canvas *canvas = itn_canvas_find_by_window(msg.target_window);
                         if (canvas) {
                             // Found the target canvas for icon creation
                             // Get the directory name from the path
@@ -2507,7 +2507,7 @@ void workbench_check_progress_dialogs(void) {
                         // Find the target canvas by window
                         Canvas *target = NULL;
                         if (msg.target_window != None) {
-                            target = find_canvas(msg.target_window);
+                            target = itn_canvas_find_by_window(msg.target_window);
                         }
                         
                         if (target) {
@@ -2825,7 +2825,7 @@ void compute_content_bounds(Canvas *canvas) {
             }
         }
         int padding = 16; // selection + text left pad (same as apply_view_layout)
-        int visible_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+        int visible_w = canvas->width - BORDER_WIDTH_LEFT - (canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT);
         canvas->content_width = max(visible_w, max_text_w + padding);
         canvas->content_height = max_y + 10;
     } else {
@@ -3011,7 +3011,7 @@ void apply_view_layout(Canvas *canvas) {
         }
         free(list);
         int padding = 16; // selection + text left pad
-        int visible_w = canvas->width - BORDER_WIDTH_LEFT - get_right_border_width(canvas);
+        int visible_w = canvas->width - BORDER_WIDTH_LEFT - (canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT);
         canvas->content_width = max(visible_w, max_text_w + padding);
         canvas->content_height = y + 10;
     } else {
@@ -3066,7 +3066,7 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
     // Draw background immediately so long directory scans don't show black
     redraw_canvas(canvas);
     // Ensure compositor pushes the frame now
-    XSync(get_display(), False);
+    XSync(itn_core_get_display(), False);
     // Suppress icon rendering during long scan
     canvas->scanning = true;
     // Recreate prime desktop icons that must always exist
@@ -3161,7 +3161,7 @@ static void open_directory(FileIcon *icon, Canvas *current_canvas) {
     if (existing) {
         // Check if window is iconified (not visible)
         XWindowAttributes attrs;
-        if (XGetWindowAttributes(get_display(), existing->win, &attrs)) {
+        if (XGetWindowAttributes(itn_core_get_display(), existing->win, &attrs)) {
             if (attrs.map_state != IsViewable) {
                 // Window is iconified - find and restore it
                 FileIcon **icon_array = get_icon_array();
@@ -3176,8 +3176,8 @@ static void open_directory(FileIcon *icon, Canvas *current_canvas) {
             }
         }
         // Window is already visible - just raise and activate it
-        set_active_window(existing);
-        XRaiseWindow(get_display(), existing->win);
+        itn_focus_set_active(existing);
+        XRaiseWindow(itn_core_get_display(), existing->win);
         redraw_canvas(existing);
         return;
     }
@@ -3188,7 +3188,7 @@ static void open_directory(FileIcon *icon, Canvas *current_canvas) {
         // icon_cleanup now called inside refresh_canvas_from_directory
         redraw_canvas(new_canvas);
         // Make the newly created window active (raise on top)
-        set_active_window(new_canvas);
+        itn_focus_set_active(new_canvas);
     }
 }
 
@@ -3292,7 +3292,7 @@ void workbench_create_new_drawer(Canvas *target_canvas) {
 
 FileIcon *find_icon(Window win, int x, int y) {
     if (!icon_array || icon_count <= 0) return NULL;
-    Canvas *c = find_canvas(win);
+    Canvas *c = itn_canvas_find_by_window(win);
     int base_x = 0, base_y = 0, sx = 0, sy = 0;
     if (c) {
         if (c->type == WINDOW) { base_x = BORDER_WIDTH_LEFT; base_y = BORDER_HEIGHT_TOP; }
@@ -3353,7 +3353,7 @@ void open_file(FileIcon *icon) {
     if (!icon || !icon->path) return;
     // Directories and devices should be opened within AmiWB (safety guard)
     if (icon->type == TYPE_DRAWER || icon->type == TYPE_DEVICE) {
-        Canvas *c = find_canvas(icon->display_window);
+        Canvas *c = itn_canvas_find_by_window(icon->display_window);
         if (c) open_directory(icon, c);
         return;
     }
@@ -3434,7 +3434,7 @@ static const char* find_icon_with_user_override(const char *icon_name, char *buf
 FileIcon* create_iconified_icon(Canvas *c) {
     if (!c || (c->type != WINDOW && c->type != DIALOG)) return NULL;
     
-    Canvas *desk = get_desktop_canvas();
+    Canvas *desk = itn_canvas_get_desktop();
     if (!desk) return NULL;
     
     // Find next available desktop slot
@@ -3556,9 +3556,13 @@ void restore_iconified(FileIcon *icon) {
     }
 
     // Remap and raise the original window frame
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     XMapRaised(dpy, canvas->win);
     XSync(dpy, False);
+
+    // Need to get a fresh composite pixmap after mapping (unmapping invalidates it)
+    extern void itn_composite_update_canvas_pixmap(Canvas *canvas);
+    itn_composite_update_canvas_pixmap(canvas);
 
     // Prevent the trailing click from deactivating the restored window
     suppress_desktop_deactivate_for_ms(200);
@@ -3571,10 +3575,10 @@ void restore_iconified(FileIcon *icon) {
         nanosleep(&ts, NULL);
     }
 
-    set_active_window(canvas);
-    // Ensure frame visuals and stacking are correct immediately
+    itn_focus_set_active(canvas);
+    // Ensure frame visuals are correct immediately
     redraw_canvas(canvas);
-    compositor_sync_stacking(dpy);
+    // Let compositor handle stacking through events
 
     // Clear press target if it matches the icon's window to prevent crash
     clear_press_target_if_matches(icon->display_window);
@@ -3583,17 +3587,14 @@ void restore_iconified(FileIcon *icon) {
     destroy_icon(icon);
 
     // Refresh desktop layout and visuals
-    Canvas *desktop = get_desktop_canvas();
+    Canvas *desktop = itn_canvas_get_desktop();
     if (desktop) {
         // Do not auto-reorganize; simply refresh
         refresh_canvas(desktop);
     }
 
-    // Re-assert activation and stacking after desktop updates
-    set_active_window(canvas);
+    // Re-assert stacking after desktop updates (activation already done above)
     XRaiseWindow(dpy, canvas->win);
-    compositor_sync_stacking(dpy);
-    redraw_canvas(canvas);
     XSync(dpy, False);
 }
 
@@ -3629,13 +3630,13 @@ static void deselect_all_icons(Canvas *canvas) {
 }
 
 void workbench_handle_button_press(XButtonEvent *event) {
-    Canvas *canvas = find_canvas(event->window); if (!canvas) return;
+    Canvas *canvas = itn_canvas_find_by_window(event->window); if (!canvas) return;
     
     // Clicking on desktop (icon or empty space) should deactivate any active window
     if (canvas->type == DESKTOP) {
         deactivate_all_windows();
         // Set focus to desktop
-        XSetInputFocus(get_display(), canvas->win, RevertToParent, CurrentTime);
+        XSetInputFocus(itn_core_get_display(), canvas->win, RevertToParent, CurrentTime);
     }
     
     FileIcon *icon = find_icon(event->window, event->x, event->y);
@@ -3660,12 +3661,12 @@ void workbench_handle_button_press(XButtonEvent *event) {
 }
 
 void workbench_handle_motion_notify(XMotionEvent *event) {
-    Canvas *canvas = find_canvas(event->window); if (!canvas) return;
+    Canvas *canvas = itn_canvas_find_by_window(event->window); if (!canvas) return;
     continue_drag_icon(event, canvas);
 }
 
 void workbench_handle_button_release(XButtonEvent *event) {
-    Canvas *canvas = find_canvas(event->window); if (canvas) end_drag_icon(canvas);
+    Canvas *canvas = itn_canvas_find_by_window(event->window); if (canvas) end_drag_icon(canvas);
 }
 
 void workbench_cleanup_drag_state(void) {
@@ -3715,7 +3716,7 @@ void init_workbench(void) {
     load_deficons();
     // Scan ~/Desktop directory for files and create icons for them
     // This will also add the prime desktop icons (System/Home)
-    Canvas *desktop = get_desktop_canvas();
+    Canvas *desktop = itn_canvas_get_desktop();
     refresh_canvas_from_directory(desktop, NULL); // NULL means use ~/Desktop
     // icon_cleanup now called inside refresh_canvas_from_directory
     redraw_canvas(desktop);

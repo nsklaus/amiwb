@@ -4,10 +4,10 @@
 #include <stdbool.h>
 #include "menus.h"
 #include "config.h"
-#include "intuition.h"
+#include "intuition/itn_internal.h"
 #include "workbench.h"
 #include "render.h"
-#include "compositor.h"
+// #include "compositor.h"  // Now using itn modules
 #include "dialogs.h"
 #include "iconinfo.h"
 #include "events.h"
@@ -192,14 +192,13 @@ static void rename_file_ok_callback(const char *new_name) {
         }
         
         // Refresh display WITHOUT full directory reload - just update this icon
-        Canvas *canvas = find_canvas(icon->display_window);
+        Canvas *canvas = itn_canvas_find_by_window(icon->display_window);
         if (canvas && canvas->path) {
             // Just redraw the canvas with the updated icon label
             redraw_canvas(canvas);
-            
-            // Force compositor to update
-            compositor_sync_stacking(get_display());
-            XSync(get_display(), False);
+
+            // Let compositor handle updates through events
+            XSync(itn_core_get_display(), False);
         }
         
     } else {
@@ -721,12 +720,8 @@ void cleanup_menus(void) {
         menubar = NULL;
     }
     
-    // Free full menu backup arrays
-    for (int i = 0; i < full_menu_item_count; i++) {
-        free(full_menu_items[i]);
-    }
-    free(full_menu_items);
-    free(full_submenus);
+    // Clear full menu pointers (they point to menubar arrays, already freed above)
+    // Don't free the items - they were already freed with menubar
     full_menu_items = NULL;
     full_submenus = NULL;
     full_menu_item_count = 0;
@@ -815,19 +810,19 @@ Menu *get_menu_by_canvas(Canvas *canvas) {
 
 // Get Show Hidden state from active window or desktop (for checkmark display)
 bool get_global_show_hidden(void) {
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     if (active_window) {
         return active_window->show_hidden;
     }
     // No active window - check desktop
-    Canvas *desktop = get_desktop_canvas();
+    Canvas *desktop = itn_canvas_get_desktop();
     return desktop ? desktop->show_hidden : false;
 }
 
 // Get View Mode from active window (for checkmark display)
 // Returns true if Icons view, false if Names view
 bool get_active_view_is_icons(void) {
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     return active_window ? (active_window->view_mode == VIEW_ICONS) : true;  // Default to Icons
 }
 
@@ -1315,7 +1310,7 @@ static void maybe_open_nested_for_selection(void) {
             // Update enabled states for View Modes submenu
             if (nested_menu->parent_menu && nested_menu->parent_menu->parent_index == 1 && 
                 nested_menu->parent_index == 6) { // View Modes submenu
-                Canvas *active = get_active_window();
+                Canvas *active = itn_focus_get_active();
                 bool desktop_focused = (!active || active->type == DESKTOP);
                 
                 // Enable/disable items based on context
@@ -1429,12 +1424,12 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
         bool has_selected_icon = false;
         bool can_delete = false;
         FileIcon *selected = NULL;
-        Canvas *aw = get_active_window();
+        Canvas *aw = itn_focus_get_active();
         Canvas *check_canvas = NULL;
         
         // If no active window, check desktop
         if (!aw || aw->type == DESKTOP) {
-            check_canvas = get_desktop_canvas();
+            check_canvas = itn_canvas_get_desktop();
         } else if (aw->type == WINDOW) {
             check_canvas = aw;
         }
@@ -1478,7 +1473,7 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
     // Update enabled states for Windows menu based on active window
     // Only do this for system menus, not app menus
     if (!app_menu_active && menu == menubar && index == 1) {  // Windows menu
-        Canvas *aw = get_active_window();
+        Canvas *aw = itn_focus_get_active();
         bool has_active_window = (aw && aw->type == WINDOW);
         bool is_workbench_window = (aw && aw->type == WINDOW && aw->client_win == None);
         bool desktop_focused = (aw == NULL);  // No active window means desktop is focused
@@ -1541,9 +1536,11 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 // Direct comparison - no truncation
                 if (strcmp(item, title) == 0) {
                     // Find the index in canvas_array
+                    Canvas **canvas_array = get_canvas_array();
+                    int canvas_count = get_canvas_count();
                     for (int j = 0; j < canvas_count; j++) {
                         if (canvas_array[j] == c) {
-                            activate_window_by_index(j);
+                            itn_focus_activate_by_index(j);
                             break;
                         }
                     }
@@ -1592,7 +1589,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
         // For nested submenus, we need to send additional info
         if (menu->parent_menu && menu->parent_menu->parent_menu) {
             // This is a nested submenu - send parent menu index in data.l[2]
-            Display *dpy = get_display();
+            Display *dpy = itn_core_get_display();
             if (dpy) {
                 XEvent event;
                 memset(&event, 0, sizeof(event));
@@ -1625,10 +1622,10 @@ void handle_menu_selection(Menu *menu, int item_index) {
         menu->parent_menu->parent_index == 1) {
         // Determine which child: by parent_index in Windows submenu
         if (menu->parent_index == 6) { // View Modes (now at index 6)
-            Canvas *target = get_active_window();
+            Canvas *target = itn_focus_get_active();
             if (!target) {
                 // No active window - use desktop
-                target = get_desktop_canvas();
+                target = itn_canvas_get_desktop();
             }
             if (target) {
                 if (strcmp(item, "Icons") == 0) {
@@ -1668,9 +1665,9 @@ void handle_menu_selection(Menu *menu, int item_index) {
             }
         } else if (menu->parent_index == 6) { // Cycle
             if (strcmp(item, "Next") == 0) {
-                cycle_next_window();
+                itn_focus_cycle_next();
             } else if (strcmp(item, "Previous") == 0) {
-                cycle_prev_window();
+                itn_focus_cycle_prev();
             }
         }
         return;
@@ -1717,10 +1714,10 @@ void handle_menu_selection(Menu *menu, int item_index) {
             } else if (strcmp(item, "Show") == 0) {
                 // TODO: toggle hidden items
             } else if (strcmp(item, "View Icons") == 0) {
-                Canvas *aw = get_active_window();
+                Canvas *aw = itn_focus_get_active();
                 if (aw) set_canvas_view_mode(aw, VIEW_ICONS);
             } else if (strcmp(item, "View Names") == 0) {
-                Canvas *aw = get_active_window();
+                Canvas *aw = itn_focus_get_active();
                 if (aw) set_canvas_view_mode(aw, VIEW_NAMES);
             }
             break;
@@ -1865,7 +1862,7 @@ void set_app_menu(Menu *app_menu) {
 
 // Public function to trigger clean up action (called from menu or global shortcut)
 void trigger_cleanup_action(void) {
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     
     // Clean up active window if it exists, otherwise clean up desktop
     if (active_window && active_window->type == WINDOW) {
@@ -1873,7 +1870,7 @@ void trigger_cleanup_action(void) {
         compute_max_scroll(active_window);
         redraw_canvas(active_window);
     } else {
-        Canvas *desktop = get_desktop_canvas();
+        Canvas *desktop = itn_canvas_get_desktop();
         if (desktop) {
             icon_cleanup(desktop);
             compute_max_scroll(desktop);
@@ -1884,12 +1881,12 @@ void trigger_cleanup_action(void) {
 
 // Public function to trigger refresh action (called from menu or global shortcut)
 void trigger_refresh_action(void) {
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     Canvas *target = active_window;
     
     // If no active window, use desktop
     if (!target || target->type != WINDOW) {
-        target = get_desktop_canvas();
+        target = itn_canvas_get_desktop();
     }
     
     if (target) {
@@ -1915,7 +1912,7 @@ void trigger_refresh_action(void) {
 
 // Public function to trigger close window action (called from menu or global shortcut)
 void trigger_close_action(void) {
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     
     // Only close if there's an active window (not desktop)
     if (active_window && active_window->type == WINDOW) {
@@ -1926,7 +1923,7 @@ void trigger_close_action(void) {
 
 // Public function to trigger open parent action (called from menu or global shortcut)
 void trigger_parent_action(void) {
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     
     // Only works if there's an active window with a path
     if (active_window && active_window->type == WINDOW && active_window->path) {
@@ -1976,8 +1973,8 @@ void trigger_parent_action(void) {
             // Spatial mode: check if window for parent path already exists
             Canvas *existing = find_window_by_path(parent_path);
             if (existing) {
-                set_active_window(existing);
-                XRaiseWindow(get_display(), existing->win);
+                itn_focus_set_active(existing);
+                XRaiseWindow(itn_core_get_display(), existing->win);
                 redraw_canvas(existing);
             } else {
                 // Create new window for parent directory
@@ -2007,8 +2004,8 @@ static void open_file_or_directory(FileIcon *icon) {
         // Check if window for this path already exists
         Canvas *existing = find_window_by_path(icon->path);
         if (existing) {
-            set_active_window(existing);
-            XRaiseWindow(get_display(), existing->win);
+            itn_focus_set_active(existing);
+            XRaiseWindow(itn_core_get_display(), existing->win);
             redraw_canvas(existing);
         } else {
             // Create new window for directory
@@ -2034,12 +2031,12 @@ static void open_file_or_directory(FileIcon *icon) {
 void trigger_open_action(void) {
     // Get the selected icon from active window or desktop
     FileIcon *selected = NULL;
-    Canvas *aw = get_active_window();
+    Canvas *aw = itn_focus_get_active();
     Canvas *check_canvas = NULL;
     
     // If no active window, check desktop
     if (!aw || aw->type == DESKTOP) {
-        check_canvas = get_desktop_canvas();
+        check_canvas = itn_canvas_get_desktop();
     } else if (aw->type == WINDOW) {
         check_canvas = aw;
     }
@@ -2071,12 +2068,12 @@ void trigger_open_action(void) {
 void trigger_copy_action(void) {
     // Get the selected icon from active window or desktop
     FileIcon *selected = NULL;
-    Canvas *aw = get_active_window();
+    Canvas *aw = itn_focus_get_active();
     Canvas *target_canvas = NULL;
     
     // If no active window, check desktop
     if (!aw || aw->type == DESKTOP) {
-        target_canvas = get_desktop_canvas();
+        target_canvas = itn_canvas_get_desktop();
     } else if (aw->type == WINDOW) {
         target_canvas = aw;
     }
@@ -2262,12 +2259,12 @@ void trigger_copy_action(void) {
 void trigger_extract_action(void) {
     // Get the selected icon from active window or desktop
     FileIcon *selected = NULL;
-    Canvas *aw = get_active_window();
+    Canvas *aw = itn_focus_get_active();
     Canvas *target_canvas = NULL;
     
     // If no active window, check desktop
     if (!aw || aw->type == DESKTOP) {
-        target_canvas = get_desktop_canvas();
+        target_canvas = itn_canvas_get_desktop();
     } else if (aw->type == WINDOW) {
         target_canvas = aw;
     }
@@ -2321,12 +2318,12 @@ void trigger_extract_action(void) {
 void trigger_eject_action(void) {
     // Get the selected icon from active window or desktop
     FileIcon *selected = NULL;
-    Canvas *aw = get_active_window();
+    Canvas *aw = itn_focus_get_active();
     Canvas *target_canvas = NULL;
     
     // If no active window, check desktop
     if (!aw || aw->type == DESKTOP) {
-        target_canvas = get_desktop_canvas();
+        target_canvas = itn_canvas_get_desktop();
     } else if (aw->type == WINDOW) {
         target_canvas = aw;
     }
@@ -2442,8 +2439,8 @@ static void execute_pending_deletes(void) {
         compute_content_bounds(g_pending_delete_canvas);
         compute_max_scroll(g_pending_delete_canvas);
         redraw_canvas(g_pending_delete_canvas);
-        compositor_sync_stacking(get_display());
-        XSync(get_display(), False);
+        // Let compositor handle updates through events
+        XSync(itn_core_get_display(), False);
     }
     
     // Clear pending state
@@ -2459,12 +2456,12 @@ static void cancel_pending_deletes(void) {
 
 // Public function to trigger delete action (called from menu or global shortcut)
 void trigger_delete_action(void) {
-    Canvas *aw = get_active_window();
+    Canvas *aw = itn_focus_get_active();
     Canvas *target_canvas = NULL;
     
     // If no active window, check desktop
     if (!aw || aw->type == DESKTOP) {
-        target_canvas = get_desktop_canvas();
+        target_canvas = itn_canvas_get_desktop();
     } else if (aw->type == WINDOW) {
         target_canvas = aw;
     }
@@ -2561,7 +2558,7 @@ void trigger_requester_action(void) {
 
 // Public function to trigger rename action (called from menu or global shortcut)
 void trigger_rename_action(void) {
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     FileIcon *selected = NULL;
     
     // Check conditions for rename:
@@ -2573,7 +2570,7 @@ void trigger_rename_action(void) {
         selected = get_selected_icon_from_canvas(active_window);
     } else if (!active_window) {
         // No active window - check desktop for selected icon
-        Canvas *desktop = get_desktop_canvas();
+        Canvas *desktop = itn_canvas_get_desktop();
         if (desktop) {
             selected = get_selected_icon_from_canvas(desktop);
         }
@@ -2599,7 +2596,7 @@ void trigger_rename_action(void) {
 
 // Trigger icon information dialog (Super+I or Icons > Information menu)
 void trigger_icon_info_action(void) {
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     FileIcon *selected = NULL;
     
     // Check conditions for icon info:
@@ -2611,7 +2608,7 @@ void trigger_icon_info_action(void) {
         selected = get_selected_icon_from_canvas(active_window);
     } else if (!active_window) {
         // No active window - check desktop for selected icon
-        Canvas *desktop = get_desktop_canvas();
+        Canvas *desktop = itn_canvas_get_desktop();
         if (desktop) {
             selected = get_selected_icon_from_canvas(desktop);
         }
@@ -2629,7 +2626,8 @@ void handle_quit_request(void) {
     begin_shutdown();
     // Menus/workbench use canvases; keep render/Display alive until after compositor shut down
     // First, stop compositing (uses the Display)
-    shutdown_compositor(get_display());
+    extern void itn_core_shutdown_compositor(void);
+    itn_core_shutdown_compositor();
     // Then tear down UI modules
     cleanup_menus();
     cleanup_workbench();
@@ -2655,13 +2653,13 @@ void trigger_select_contents_action(void) {
     Canvas *target_canvas = NULL;
     
     // Determine which canvas to select icons in
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     
     if (active_window && active_window->type == WINDOW) {
         target_canvas = active_window;
     } else {
         // No active window - use desktop
-        target_canvas = get_desktop_canvas();
+        target_canvas = itn_canvas_get_desktop();
     }
     
     if (!target_canvas) return;
@@ -2705,7 +2703,7 @@ void trigger_select_contents_action(void) {
 // Trigger new drawer action (from menu or Super+N)
 void trigger_new_drawer_action(void) {
     // Determine where to create the new drawer
-    Canvas *active_window = get_active_window();
+    Canvas *active_window = itn_focus_get_active();
     Canvas *target_canvas = NULL;
 
     if (active_window && active_window->type == WINDOW) {
@@ -2713,7 +2711,7 @@ void trigger_new_drawer_action(void) {
         target_canvas = active_window;
     } else {
         // Create on desktop
-        target_canvas = get_desktop_canvas();
+        target_canvas = itn_canvas_get_desktop();
     }
 
     if (target_canvas) {
@@ -3130,7 +3128,7 @@ static void parse_and_switch_app_menus(const char *app_name, const char *menu_da
 static void update_app_menu_states(Window app_window) {
     if (!app_window || !app_menu_active || !full_submenus) return;
     
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     if (!dpy) return;
     
     // Get the menu states property
@@ -3177,7 +3175,7 @@ static void update_app_menu_states(Window app_window) {
 
 // Send menu selection back to app via client message
 static void send_menu_selection_to_app(Window app_window, int menu_index, int item_index) {
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     if (!dpy) return;
     
     XEvent event;
@@ -3210,7 +3208,7 @@ void check_for_app_menus(Window win) {
         return;
     }
 
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
     if (!dpy) return;
 
     // Define atoms for app properties

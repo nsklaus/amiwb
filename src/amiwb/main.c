@@ -1,11 +1,11 @@
 // File: main.c
-#include "intuition.h"
+#include "intuition/itn_internal.h"
 #include "menus.h"
 #include "dialogs.h"
 #include "iconinfo.h"
 #include "workbench.h"
 #include "events.h"
-#include "compositor.h"
+// #include "compositor.h"  // Now using itn modules
 #include "render.h"
 #include "config.h"
 #include "amiwbrc.h"  // For config loading
@@ -70,7 +70,8 @@ void restart_amiwb(void) {
     
     // Perform minimal cleanup - we're about to exec
     begin_shutdown();
-    shutdown_compositor(get_display());
+    extern void itn_core_shutdown_compositor(void);
+    itn_core_shutdown_compositor();
     cleanup_render();     // Clean up Xft fonts BEFORE closing display
     cleanup_intuition();  // This closes the X display
     
@@ -192,7 +193,7 @@ int main(int argc, char *argv[]) {
     init_intuition();
     
     // Grab global shortcuts so applications can't intercept them
-    grab_global_shortcuts(get_display(), DefaultRootWindow(get_display()));
+    grab_global_shortcuts(itn_core_get_display(), DefaultRootWindow(itn_core_get_display()));
 
     // Rendering second: needs the RenderContext built by intuition
     init_render();
@@ -211,7 +212,7 @@ int main(int argc, char *argv[]) {
 
     // Initialize XDND support
     extern void xdnd_init(Display *dpy);
-    xdnd_init(get_display());
+    xdnd_init(itn_core_get_display());
 
     // Initialize disk drives detection
     extern void diskdrives_init(void);
@@ -219,9 +220,21 @@ int main(int argc, char *argv[]) {
     
     // Initialize events
     init_events();
-    // Start compositor after events are ready. If it fails, continue.
-    if (!init_compositor(get_display())) {
-        fprintf(stderr, "Compositor: could not acquire selection, continuing without\n");
+
+    // Initialize g_display for intuition modules (temporary during migration)
+    extern Display *g_display;
+    g_display = itn_core_get_display();
+
+    // Start compositor - MANDATORY, no fallback!
+    extern bool itn_core_init_compositor(void);
+    if (!itn_core_init_compositor()) {
+        fprintf(stderr, "FATAL: Compositor initialization failed.\n");
+        fprintf(stderr, "Hardware acceleration is MANDATORY - no fallback, no compromise.\n");
+        fprintf(stderr, "Check amiwb.log for details.\n");
+        cleanup_workbench();
+        cleanup_menus();
+        cleanup_intuition();
+        return EXIT_FAILURE;
     }
     
     // Start event loop
@@ -232,7 +245,8 @@ int main(int argc, char *argv[]) {
     // Enter shutdown mode to suppress benign X errors
     begin_shutdown();
     // Stop compositor before closing the Display in cleanup_intuition()
-    shutdown_compositor(get_display());
+    extern void itn_core_shutdown_compositor(void);
+    itn_core_shutdown_compositor();
     // Then tear down UI modules
     cleanup_menus();
     cleanup_dialogs();
@@ -241,7 +255,7 @@ int main(int argc, char *argv[]) {
     diskdrives_cleanup();
     cleanup_workbench();
     extern void xdnd_shutdown(Display *dpy);
-    xdnd_shutdown(get_display());
+    xdnd_shutdown(itn_core_get_display());
     // Clean up render resources BEFORE closing Display (Xft fonts need display)
     cleanup_render();
     // Finally close Display connection
