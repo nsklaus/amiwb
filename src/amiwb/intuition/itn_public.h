@@ -230,11 +230,13 @@ bool itn_events_is_scrolling_active(void);
 
 // --- Render/frame scheduling ---
 void itn_render_set_timer_fd(int fd);
+int itn_render_get_timer_fd(void);
 bool itn_render_needs_frame_scheduled(void);
 struct timespec itn_render_get_next_frame_time(void);
 void itn_render_consume_timer(void);
 void itn_render_process_frame(void);
 void itn_render_log_metrics(void);
+void itn_render_record_damage_event(void);
 
 // --- Compositor ---
 void itn_composite_process_damage(XDamageNotifyEvent *event);
@@ -257,9 +259,31 @@ void suppress_desktop_deactivate_for_ms(int ms);
 // --- Menu operations ---
 void toggle_menubar_and_redraw(void);
 
-// --- Error handling ---
+// --- Error handling and debugging ---
 void install_error_handler(void);
 int x_error_handler(Display *dpy, XErrorEvent *error);
+bool is_window_valid(Display *dpy, Window win);
+Bool safe_get_window_attributes(Display *dpy, Window win, XWindowAttributes *attrs);
+void safe_unmap_window(Display *dpy, Window win);
+Bool safe_translate_coordinates(Display *dpy, Window src_w, Window dest_w,
+                                int src_x, int src_y, int *dest_x, int *dest_y,
+                                Window *child);
+void safe_set_input_focus(Display *dpy, Window win, int revert_to, Time time);
+int debug_get_window_property(Display *dpy, Window win, Atom property,
+                               long offset, long length, Bool delete,
+                               Atom req_type, Atom *actual_type,
+                               int *actual_format, unsigned long *nitems,
+                               unsigned long *bytes_after, unsigned char **prop,
+                               const char *caller_location);
+void enable_property_debug(void);
+void disable_property_debug(void);
+
+// Debug macro to trace property access - use this instead of XGetWindowProperty when debugging
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+#define DEBUG_GET_PROPERTY(dpy, win, prop, off, len, del, req, act_type, act_fmt, nitems, bytes, data) \
+    debug_get_window_property(dpy, win, prop, off, len, del, req, act_type, act_fmt, nitems, bytes, data, \
+                               __FILE__ ":" TOSTRING(__LINE__))
 
 // --- Resize operations ---
 void resize_end(Canvas *canvas);

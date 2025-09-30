@@ -428,14 +428,11 @@ void itn_composite_render_all(void) {
                     continue;
                 }
 
-                // Check if window is still valid before querying attributes
-                // This prevents BadWindow errors when windows are being destroyed
-                if (is_window_valid(dpy, c->win)) {
-                    XWindowAttributes attrs;
-                    if (XGetWindowAttributes(dpy, c->win, &attrs)) {
-                        if (attrs.map_state == IsViewable) {
-                            visible[visible_count++] = c;
-                        }
+                // Safe attribute query handles window destruction race
+                XWindowAttributes attrs;
+                if (safe_get_window_attributes(dpy, c->win, &attrs)) {
+                    if (attrs.map_state == IsViewable) {
+                        visible[visible_count++] = c;
                     }
                 }
             }
@@ -445,12 +442,8 @@ void itn_composite_render_all(void) {
         if (children) XFree(children);
     }
 
-    // Only log when visible count changes to reduce spam
-    static int last_visible_count = -1;
-    if (visible_count != last_visible_count) {
-        log_error("[ERROR] Found %d visible canvases to render", visible_count);
-        last_visible_count = visible_count;
-    }
+    // Compositor is working correctly - no need to log canvas count
+    // (Was: debug logging during development)
 
     // Render in stacking order (bottom to top)
     for (int i = 0; i < visible_count; i++) {
@@ -498,9 +491,9 @@ void itn_composite_render_all(void) {
         while (ow) {
             if (ow->picture) {
                 // Check if window is still valid and mapped
+                // Safe attribute query handles window destruction race
                 XWindowAttributes attrs;
-                if (is_window_valid(dpy, ow->win) &&
-                    XGetWindowAttributes(dpy, ow->win, &attrs) &&
+                if (safe_get_window_attributes(dpy, ow->win, &attrs) &&
                     attrs.map_state == IsViewable) {
 
                     // Update position if it moved

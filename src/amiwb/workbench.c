@@ -515,7 +515,7 @@ static void end_drag_icon(Canvas *canvas) {
     saved_drag_win_x = 0; saved_drag_win_y = 0;
     if (drag_win != None) {
         Window child;
-        XTranslateCoordinates(dpy, drag_win, DefaultRootWindow(dpy),
+        safe_translate_coordinates(dpy, drag_win, DefaultRootWindow(dpy),
                             0, 0, &saved_drag_win_x, &saved_drag_win_y, &child);
     }
 
@@ -603,7 +603,7 @@ static void end_drag_icon(Canvas *canvas) {
 
                 // Translate icon's screen position to desktop window coordinates
                 int tx = 0, ty = 0; Window dummy;
-                XTranslateCoordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
+                safe_translate_coordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
                 int local_x = drag_icon_screen_x - tx;
                 int local_y = drag_icon_screen_y - ty;
 
@@ -690,7 +690,7 @@ static void end_drag_icon(Canvas *canvas) {
 
                 // Translate icon's screen position to desktop window coordinates
                 int tx = 0, ty = 0; Window dummy;
-                XTranslateCoordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
+                safe_translate_coordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
                 int local_x = drag_icon_screen_x - tx;
                 int local_y = drag_icon_screen_y - ty;
 
@@ -803,7 +803,7 @@ static void end_drag_icon(Canvas *canvas) {
         }
 
         int tx = 0, ty = 0; Window dummy;
-        XTranslateCoordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
+        safe_translate_coordinates(dpy, target->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
         int local_x = drag_icon_screen_x - tx;
         int local_y = drag_icon_screen_y - ty;
 
@@ -956,7 +956,7 @@ static void end_drag_icon(Canvas *canvas) {
                 }
 
                 int tx = 0, ty = 0; Window dummy;
-                XTranslateCoordinates(dpy, drag_source_canvas->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
+                safe_translate_coordinates(dpy, drag_source_canvas->win, DefaultRootWindow(dpy), 0, 0, &tx, &ty, &dummy);
                 int local_x = drag_icon_screen_x - tx;
                 int local_y = drag_icon_screen_y - ty;
 
@@ -1039,7 +1039,7 @@ static void create_drag_window(void) {
     } else {
         // fallback to nothing (no canvas painting)
         XWindowAttributes wa;
-        if (XGetWindowAttributes(dpy, drag_win, &wa)) {
+        if (safe_get_window_attributes(dpy, drag_win, &wa)) {
             XDestroyWindow(dpy, drag_win);
         }
         drag_win = None;
@@ -1102,7 +1102,7 @@ static void destroy_drag_window(void) {
     if (target_picture) { XRenderFreePicture(dpy, target_picture); target_picture = 0; }
     if (drag_win != None) {
         XWindowAttributes wa;
-        if (XGetWindowAttributes(dpy, drag_win, &wa)) {
+        if (safe_get_window_attributes(dpy, drag_win, &wa)) {
             XDestroyWindow(dpy, drag_win);
         }
         drag_win = None;
@@ -1134,7 +1134,7 @@ static Canvas *canvas_under_pointer(void) {
         // Quick validation that cached canvas still exists and is visible
         if (pointer_cache.cached_canvas) {
             XWindowAttributes wa;
-            if (XGetWindowAttributes(dpy, pointer_cache.cached_canvas->win, &wa) &&
+            if (safe_get_window_attributes(dpy, pointer_cache.cached_canvas->win, &wa) &&
                 wa.map_state == IsViewable) {
                 return pointer_cache.cached_canvas;
             }
@@ -1159,7 +1159,7 @@ static Canvas *canvas_under_pointer(void) {
             c->y <= ry && ry < c->y + c->height) {
             // Quick visibility check
             XWindowAttributes wa;
-            if (XGetWindowAttributes(dpy, w, &wa) && wa.map_state == IsViewable) {
+            if (safe_get_window_attributes(dpy, w, &wa) && wa.map_state == IsViewable) {
                 // Prefer WINDOW over DESKTOP
                 if (c->type == WINDOW) {
                     best = c;
@@ -3161,7 +3161,7 @@ static void open_directory(FileIcon *icon, Canvas *current_canvas) {
     if (existing) {
         // Check if window is iconified (not visible)
         XWindowAttributes attrs;
-        if (XGetWindowAttributes(itn_core_get_display(), existing->win, &attrs)) {
+        if (safe_get_window_attributes(itn_core_get_display(), existing->win, &attrs)) {
             if (attrs.map_state != IsViewable) {
                 // Window is iconified - find and restore it
                 FileIcon **icon_array = get_icon_array();
@@ -3570,7 +3570,7 @@ void restore_iconified(FileIcon *icon) {
     // Wait briefly until frame is viewable to avoid focusing an unmapped window
     for (int i = 0; i < 50; ++i) { // ~50ms worst-case
         XWindowAttributes wa;
-        if (XGetWindowAttributes(dpy, canvas->win, &wa) && wa.map_state == IsViewable) break;
+        if (safe_get_window_attributes(dpy, canvas->win, &wa) && wa.map_state == IsViewable) break;
         struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; // 1ms
         nanosleep(&ts, NULL);
     }
@@ -3635,8 +3635,8 @@ void workbench_handle_button_press(XButtonEvent *event) {
     // Clicking on desktop (icon or empty space) should deactivate any active window
     if (canvas->type == DESKTOP) {
         deactivate_all_windows();
-        // Set focus to desktop
-        XSetInputFocus(itn_core_get_display(), canvas->win, RevertToParent, CurrentTime);
+        // Set focus to desktop (safe_set_input_focus handles validation and BadMatch errors)
+        safe_set_input_focus(itn_core_get_display(), canvas->win, RevertToParent, CurrentTime);
     }
     
     FileIcon *icon = find_icon(event->window, event->x, event->y);

@@ -84,6 +84,13 @@ static void parse_line(char *line) {
     else if (strcmp(key, "window_tiling") == 0) {
         g_config.window_tiling = atoi(value);
     }
+    // Rendering configuration
+    else if (strcmp(key, "target_fps") == 0) {
+        g_config.target_fps = atoi(value);
+    }
+    else if (strcmp(key, "render_mode") == 0) {
+        g_config.render_mode = atoi(value);
+    }
     // Unknown key - silently ignore
 }
 

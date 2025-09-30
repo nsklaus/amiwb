@@ -20,7 +20,11 @@ typedef struct {
     int desktop_tiling;  // 0=no tile, 1=tile
     char window_background[PATH_SIZE];
     int window_tiling;   // 0=no tile, 1=tile
-    
+
+    // Rendering configuration
+    int target_fps;      // Target framerate (default 120)
+    int render_mode;     // 0=on-demand (default), 1=continuous
+
     // Future expansion space - add new settings here
 } AmiwbConfig;
 

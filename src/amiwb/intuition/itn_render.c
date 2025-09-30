@@ -4,16 +4,19 @@
 #include "../config.h"
 #include "itn_internal.h"
 #include "../render.h"  // For redraw_canvas
+#include "../amiwbrc.h"  // For config access
 #include <X11/Xlib.h>
 #include <time.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
 
 // Frame scheduling state
 int g_frame_timer_fd = -1;
 bool g_frame_scheduled = false;
 int g_target_fps = 120;  // Default 120Hz
+bool g_continuous_mode = false;  // Default on-demand rendering
 
 // Damage accumulation state
 static bool damage_pending = false;
@@ -93,8 +96,9 @@ void itn_render_schedule_frame(void) {
     if (g_frame_timer_fd < 0) return;
     if (g_target_fps <= 0) return;  // Safety check
 
-    // Don't schedule if we don't have damage yet
-    if (!damage_pending) {
+    // In on-demand mode, don't schedule if we don't have damage yet
+    // In continuous mode, always schedule frames
+    if (!g_continuous_mode && !damage_pending) {
         // log_error("[FRAME] Schedule blocked - no damage pending");
         return;
     }
@@ -112,11 +116,16 @@ void itn_render_schedule_frame(void) {
 
     // Calculate delay to next frame
     long delay_ns;
-    if (elapsed_ns < frame_interval_ns) {
-        // Not enough time passed since last frame, wait for remainder
+    if (g_continuous_mode) {
+        // In continuous mode, ALWAYS use full frame interval to ensure
+        // X11 input events get processed between frames
+        // Never use minimal delay - that starves the event loop
+        delay_ns = frame_interval_ns;
+    } else if (elapsed_ns < frame_interval_ns) {
+        // On-demand mode: wait for remainder of frame interval
         delay_ns = frame_interval_ns - elapsed_ns;
     } else {
-        // Enough time has passed, render immediately (minimal delay)
+        // On-demand mode: render immediately with minimal delay
         // Use 100 microseconds (0.1ms) for near-immediate response
         delay_ns = 100000;  // 0.1ms - prevents CPU spinning while being responsive
     }
@@ -130,11 +139,15 @@ void itn_render_schedule_frame(void) {
 
     if (timerfd_settime(g_frame_timer_fd, 0, &its, NULL) == 0) {
         g_frame_scheduled = true;
+    } else {
+        log_error("[RENDER] ERROR: timerfd_settime failed: %s", strerror(errno));
     }
 }
 
 void itn_render_process_frame(void) {
-    if (!damage_pending) {
+    // In on-demand mode, skip if no damage
+    // In continuous mode, always render
+    if (!g_continuous_mode && !damage_pending) {
         // No damage to render, just return
         // Don't clear g_frame_scheduled - let timer handle it
         return;
@@ -178,6 +191,12 @@ void itn_render_process_frame(void) {
 
     // Update frame time
     last_frame_time = time(NULL);
+
+    // In continuous mode, schedule next frame AFTER processing current one
+    // This allows X11 events to be handled between frames
+    if (g_continuous_mode) {
+        itn_render_schedule_frame();
+    }
 }
 
 // Render canvases that have damage (fallback for non-compositor mode)
@@ -217,8 +236,10 @@ void itn_render_consume_timer(void) {
         // Clear the scheduled flag - now new frames can be scheduled
         g_frame_scheduled = false;
 
-        // If we have pending damage, schedule the next frame
-        if (damage_pending) {
+        // DON'T re-schedule here in continuous mode!
+        // This creates a tight loop that starves X11 event processing.
+        // Only schedule if we have pending damage in on-demand mode.
+        if (!g_continuous_mode && damage_pending) {
             itn_render_schedule_frame();
         }
     }
@@ -229,6 +250,11 @@ void itn_render_set_target_fps(int fps) {
     if (fps > 0 && fps <= 240) {  // Reasonable limits
         g_target_fps = fps;
     }
+}
+
+// Record damage event for metrics
+void itn_render_record_damage_event(void) {
+    metrics.damage_events++;
 }
 
 // Get performance metrics
@@ -246,11 +272,30 @@ bool itn_render_init_frame_scheduler(void) {
         return false;
     }
 
-    g_target_fps = 120;  // Default to 120Hz
+    // Read configuration
+    const AmiwbConfig *config = get_config();
+
+    // Apply target FPS from config (default to 120 if not set or invalid)
+    if (config->target_fps > 0 && config->target_fps <= 240) {
+        g_target_fps = config->target_fps;
+        log_error("[RENDER] Target FPS set to %d from config", g_target_fps);
+    } else {
+        g_target_fps = 120;  // Default to 120Hz
+        log_error("[RENDER] Target FPS defaulting to %d", g_target_fps);
+    }
+
+    // Apply render mode from config (0=on-demand, 1=continuous)
+    g_continuous_mode = (config->render_mode == 1);
+    log_error("[RENDER] Render mode: %s", g_continuous_mode ? "CONTINUOUS" : "ON-DEMAND");
 
     // Initialize metrics timestamps
     clock_gettime(CLOCK_MONOTONIC, &metrics.last_frame_time);
     clock_gettime(CLOCK_MONOTONIC, &metrics.metrics_start_time);
+
+    // In continuous mode, kick off the first frame
+    if (g_continuous_mode) {
+        itn_render_schedule_frame();
+    }
 
     return true;
 }

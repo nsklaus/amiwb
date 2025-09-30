@@ -47,10 +47,9 @@ void itn_focus_set_active(Canvas *canvas) {
     // Raise window and accumulate damage
     XRaiseWindow(dpy, canvas->win);
 
-    // Set X11 focus
+    // Set X11 focus (safe_set_input_focus handles validation and BadMatch errors)
     Window focus = (canvas->client_win != None) ? canvas->client_win : canvas->win;
-    XSetInputFocus(dpy, focus, RevertToParent, CurrentTime);
-    XSync(dpy, False); // Ensure focus change completes
+    safe_set_input_focus(dpy, focus, RevertToParent, CurrentTime);
 
     // Redraw decorations with active color
     extern void redraw_canvas(Canvas *c);
@@ -122,7 +121,7 @@ void itn_focus_cycle_next(void) {
 
     // Check if window is iconified (not visible)
     XWindowAttributes attrs;
-    if (XGetWindowAttributes(dpy, next_window->win, &attrs)) {
+    if (safe_get_window_attributes(dpy, next_window->win, &attrs)) {
         if (attrs.map_state != IsViewable) {
             // Window is iconified - find and restore it
             FileIcon **icon_array = get_icon_array();
@@ -172,7 +171,7 @@ void itn_focus_cycle_prev(void) {
 
     // Check if window is iconified (not visible)
     XWindowAttributes attrs;
-    if (XGetWindowAttributes(dpy, prev_window->win, &attrs)) {
+    if (safe_get_window_attributes(dpy, prev_window->win, &attrs)) {
         if (attrs.map_state != IsViewable) {
             // Window is iconified - find and restore it
             FileIcon **icon_array = get_icon_array();
@@ -283,7 +282,7 @@ void itn_focus_activate_by_index(int index) {
 
             // Check if iconified
             XWindowAttributes attrs;
-            if (XGetWindowAttributes(dpy, c->win, &attrs)) {
+            if (safe_get_window_attributes(dpy, c->win, &attrs)) {
                 if (attrs.map_state != IsViewable) {
                     // Find and restore iconified window
                     FileIcon **icon_array = get_icon_array();

@@ -501,9 +501,7 @@ void itn_canvas_destroy(Canvas *canvas) {
         }
 
         // XUnmapWindow: Hide the frame window from screen
-        if (canvas->win != None && is_window_valid(dpy, canvas->win)) {
-            XUnmapWindow(dpy, canvas->win);
-        }
+        safe_unmap_window(dpy, canvas->win);
         // XSync: Force all X11 commands to complete before continuing
         // Without this, commands might queue up and execute out of order
         send_x_command_and_sync();
@@ -707,7 +705,7 @@ void iconify_canvas(Canvas *canvas) {
     if (!dpy) return;
 
     // Hide the window
-    XUnmapWindow(dpy, canvas->win);
+    safe_unmap_window(dpy, canvas->win);
 
     // Mark as not visible for compositor
     canvas->comp_visible = false;
@@ -847,7 +845,7 @@ void frame_existing_client_windows(void) {
                    &children, &nchildren)) {
         for (unsigned int i = 0; i < nchildren; i++) {
             XWindowAttributes attrs;
-            if (!XGetWindowAttributes(dpy, children[i], &attrs)) {
+            if (!safe_get_window_attributes(dpy, children[i], &attrs)) {
                 continue;
             }
 
@@ -866,7 +864,7 @@ bool is_viewable_client(Window win) {
     if (!dpy || !win) return false;
 
     XWindowAttributes attrs;
-    if (!XGetWindowAttributes(dpy, win, &attrs)) return false;
+    if (!safe_get_window_attributes(dpy, win, &attrs)) return false;
 
     return (attrs.map_state == IsViewable &&
             attrs.class == InputOutput &&

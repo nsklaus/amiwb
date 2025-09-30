@@ -39,4 +39,23 @@ desktop_tiling = 0
 window_background = /usr/local/share/amiwb/patterns/pattern8.png
 window_tiling = 1
 
+# Rendering Configuration
+# Control how the compositor renders frames
+
+# Render Mode:
+#   0 = on-demand (default) - Only renders when content changes
+#       Very power efficient (1-10 actual FPS), great for battery life
+#       Still responsive - renders immediately when you interact
+#   1 = continuous - Renders continuously at target_fps
+#       Smoother animations and cursor movement
+#       Higher power consumption but consistent frame timing
+render_mode = 0
+
+# Target FPS:
+#   Sets the maximum framerate (default 120)
+#   Common values: 30, 60, 120, 144
+#   Lower values use less power
+#   Only matters in continuous mode or during active interaction
+target_fps = 120
+
 # Future settings will be added here...

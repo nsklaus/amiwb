@@ -109,13 +109,6 @@ bool running = true;
 // Gated debug helper (wire to env later if needed)
 static inline int wb_dbg(void) { return 0; }
 
-// Helper to check if a window is still valid
-static inline bool is_window_valid(Display *dpy, Window win) {
-    if (win == None) return false;
-    XWindowAttributes attrs;
-    return XGetWindowAttributes(dpy, win, &attrs) == True;
-}
-
 // Helper function to create event copy with translated coordinates
 static XButtonEvent create_translated_button_event(XButtonEvent *original, Window target_window, int new_x, int new_y) {
     XButtonEvent ev = *original;
@@ -197,17 +190,10 @@ void handle_events(void) {
     // PHASE 1: Use select() for event-driven operation
     int x_fd = ConnectionNumber(dpy);
 
-    // Create frame timer for compositor (Phase 1)
-    static int frame_timer_fd = -1;
-    frame_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    // Get frame timer FD from itn_render (already created during initialization)
+    int frame_timer_fd = itn_render_get_timer_fd();
     if (frame_timer_fd < 0) {
-        log_error("[SCHEDULER] Failed to create frame timer: %s", strerror(errno));
-        // Fall back to old behavior if timer creation fails
-    } else {
-        // Inform itn_render module about the timer FD
-        itn_render_set_timer_fd(frame_timer_fd);
-        // Frame timer is now handled by itn_render module only
-        // Silent success - timer created successfully
+        log_error("[EVENTS] Frame timer not available - rendering disabled");
     }
 
     // Log cap management
@@ -245,16 +231,7 @@ void handle_events(void) {
             continue;
         }
 
-        // Handle frame timer expiration
-        if (frame_timer_fd >= 0 && FD_ISSET(frame_timer_fd, &read_fds)) {
-            // Use itn_render_consume_timer to properly handle the timer
-            // This reads the timer, clears g_frame_scheduled, and reschedules if needed
-            itn_render_consume_timer();
-            // Then process the frame if there's damage
-            itn_render_process_frame();
-        }
-
-        // Handle X11 events
+        // Handle X11 events FIRST - input has priority over rendering
         if (FD_ISSET(x_fd, &read_fds)) {
             while (XPending(dpy)) {
                 XNextEvent(dpy, &event);
@@ -345,7 +322,7 @@ void handle_events(void) {
                         // Get ACTUAL position of frame window - not the lies in canvas
                         int real_x = 0, real_y = 0;
                         Window child;
-                        XTranslateCoordinates(itn_core_get_display(), canvas->win, 
+                        safe_translate_coordinates(itn_core_get_display(), canvas->win, 
                                             DefaultRootWindow(itn_core_get_display()),
                                             0, 0, &real_x, &real_y, &child);
                         
@@ -375,7 +352,7 @@ void handle_events(void) {
                         }
                         
                         // Verify it actually moved
-                        XTranslateCoordinates(itn_core_get_display(), canvas->win, 
+                        safe_translate_coordinates(itn_core_get_display(), canvas->win, 
                                             DefaultRootWindow(itn_core_get_display()),
                                             0, 0, &real_x, &real_y, &child);
                         if (real_x != frame_x || real_y != frame_y) {
@@ -391,7 +368,7 @@ void handle_events(void) {
                         // Re-show frame if it was hidden
                         if (canvas->win != None) {
                             XWindowAttributes frame_attrs;
-                            if (XGetWindowAttributes(itn_core_get_display(), canvas->win, &frame_attrs) &&
+                            if (safe_get_window_attributes(itn_core_get_display(), canvas->win, &frame_attrs) &&
                                 frame_attrs.map_state == IsUnmapped) {
                                 
                                 // Map the window first
@@ -412,7 +389,7 @@ void handle_events(void) {
                                 // VERIFY it moved - if not, the client is the culprit
                                 int actual_x = 0, actual_y = 0;
                                 Window child;
-                                XTranslateCoordinates(itn_core_get_display(), canvas->win,
+                                safe_translate_coordinates(itn_core_get_display(), canvas->win,
                                                     DefaultRootWindow(itn_core_get_display()),
                                                     0, 0, &actual_x, &actual_y, &child);
                                 
@@ -432,7 +409,8 @@ void handle_events(void) {
                     // Always raise and activate transient dialogs when they map
                     if (canvas->is_transient && canvas->win != None) {
                         XRaiseWindow(itn_core_get_display(), canvas->win);
-                        XSetInputFocus(itn_core_get_display(), map_event->window, RevertToParent, CurrentTime);
+                        // Safe focus with validation and BadMatch error handling
+                        safe_set_input_focus(itn_core_get_display(), map_event->window, RevertToParent, CurrentTime);
                         itn_focus_set_active(canvas);
                     }
                 }
@@ -499,6 +477,12 @@ void handle_events(void) {
             }  // End of while (XPending(dpy))
         }  // End of if (FD_ISSET(x_fd, &read_fds))
 
+        // Handle frame timer AFTER X11 events - input gets priority
+        if (frame_timer_fd >= 0 && FD_ISSET(frame_timer_fd, &read_fds)) {
+            itn_render_consume_timer();
+            itn_render_process_frame();
+        }
+
         // Handle periodic tasks when select times out or between events
         if (ready == 0 || 1) {  // Always check periodic tasks
             time_t now = time(NULL);
@@ -545,7 +529,7 @@ static Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, in
         if (c) {
             // Translate original event coords to this canvas window coords
             int tx=0, ty=0; Window dummy;
-            XTranslateCoordinates(dpy, w, c->win, in_x, in_y, &tx, &ty, &dummy);
+            safe_translate_coordinates(dpy, w, c->win, in_x, in_y, &tx, &ty, &dummy);
             if (out_x) *out_x = tx;
             if (out_y) *out_y = ty;
             // Canvas resolved
@@ -553,7 +537,7 @@ static Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, in
         }
         // Ensure 'cur' is still a valid window before walking up the tree
         XWindowAttributes wa;
-        if (!XGetWindowAttributes(dpy, cur, &wa)) break;
+        if (!safe_get_window_attributes(dpy, cur, &wa)) break;
         Window root_ret, parent_ret, *children = NULL; unsigned int n = 0;
         if (!XQueryTree(dpy, cur, &root_ret, &parent_ret, &children, &n)) break;
         if (children) XFree(children);
@@ -599,7 +583,7 @@ void handle_button_press(XButtonEvent *event) {
             // This lets us intercept clicks for focus, then pass them along
             XAllowEvents(itn_core_get_display(), ReplayPointer, event->time);
             // translate coords from client to frame canvas
-            Window dummy; XTranslateCoordinates(itn_core_get_display(), event->window, owner->win, event->x, event->y, &cx, &cy, &dummy);
+            Window dummy; safe_translate_coordinates(itn_core_get_display(), event->window, owner->win, event->x, event->y, &cx, &cy, &dummy);
             canvas = owner;
             // Route to frame
         }
@@ -621,15 +605,15 @@ void handle_button_press(XButtonEvent *event) {
                 Canvas *c = itn_canvas_find_by_window(children[i]);
                 if (!c || (c->type != WINDOW && c->type != DIALOG)) continue;
                 // Validate the X window is still valid and viewable
-                XWindowAttributes a; 
-                if (!XGetWindowAttributes(dpy, c->win, &a) || a.map_state != IsViewable) continue;
+                XWindowAttributes a;
+                if (!safe_get_window_attributes(dpy, c->win, &a) || a.map_state != IsViewable) continue;
                 // Hit test in root coordinates against the frame rect
                 int rx = event->x_root, ry = event->y_root;
                 if (rx >= c->x && rx < c->x + c->width &&
                     ry >= c->y && ry < c->y + c->height) {
                     // Translate root coords to frame coords
                     Window dummy; int tx=0, ty=0;
-                    XTranslateCoordinates(dpy, root, c->win, rx, ry, &tx, &ty, &dummy);
+                    safe_translate_coordinates(dpy, root, c->win, rx, ry, &tx, &ty, &dummy);
                     // Reroute to frame
                     itn_focus_set_active(c);
                     XButtonEvent ev = *event; ev.window = c->win; ev.x = tx; ev.y = ty;
@@ -699,14 +683,14 @@ void handle_button_release(XButtonEvent *event) {
         
         // Ensure both source and target windows still exist before translating
         XWindowAttributes src_attrs, dst_attrs;
-        bool src_ok = XGetWindowAttributes(dpy, event->window, &src_attrs);
-        bool dst_ok = XGetWindowAttributes(dpy, g_press_target, &dst_attrs);
+        bool src_ok = safe_get_window_attributes(dpy, event->window, &src_attrs);
+        bool dst_ok = safe_get_window_attributes(dpy, g_press_target, &dst_attrs);
         if (!src_ok || !dst_ok) { g_press_target = 0; return; }
         Window dummy; int tx=0, ty=0;
         
         // Set an error handler to catch X errors
         XSync(dpy, False);  // Clear any pending errors
-        XTranslateCoordinates(dpy, event->window, g_press_target, event->x, event->y, &tx, &ty, &dummy);
+        safe_translate_coordinates(dpy, event->window, g_press_target, event->x, event->y, &tx, &ty, &dummy);
         XSync(dpy, False);  // Force error to occur now if any
         
         XButtonEvent ev = *event; ev.window = g_press_target; ev.x = tx; ev.y = ty;
@@ -1126,7 +1110,7 @@ void handle_motion_notify(XMotionEvent *event) {
         Window dummy; int tx=0, ty=0;
         // Translate from source to target using root coords for robustness
         int rx = event->x_root, ry = event->y_root;
-        XTranslateCoordinates(dpy, DefaultRootWindow(dpy), g_press_target, rx, ry, &tx, &ty, &dummy);
+        safe_translate_coordinates(dpy, DefaultRootWindow(dpy), g_press_target, rx, ry, &tx, &ty, &dummy);
         XMotionEvent ev = *event; ev.window = g_press_target; ev.x = tx; ev.y = ty;
         Canvas *tc = itn_canvas_find_by_window(g_press_target);
         if (tc && tc->type == MENU) {
@@ -1209,16 +1193,15 @@ void handle_unmap_notify(XUnmapEvent *event) {
                 
                 // Just hide our frame, don't destroy anything
                 // GTK dialogs will send DestroyNotify when they're really done
-                if (canvas->win != None) {
-                    XUnmapWindow(itn_core_get_display(), canvas->win);
-                }
+                safe_unmap_window(itn_core_get_display(), canvas->win);
                 
                 // Restore focus to parent window when dialog is hidden
                 if (parent_win != None) {
                     Canvas *parent_canvas = itn_canvas_find_by_client(parent_win);
                     if (parent_canvas) {
                         itn_focus_set_active(parent_canvas);
-                        XSetInputFocus(itn_core_get_display(), parent_win, RevertToParent, CurrentTime);
+                        // Safe focus with validation and BadMatch error handling
+                        safe_set_input_focus(itn_core_get_display(), parent_win, RevertToParent, CurrentTime);
                     }
                 }
                 

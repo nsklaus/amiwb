@@ -146,7 +146,7 @@ bool itn_core_init_compositor(void) {
 
         // Check if window is mapped
         XWindowAttributes attrs;
-        if (XGetWindowAttributes(dpy, c->win, &attrs)) {
+        if (safe_get_window_attributes(dpy, c->win, &attrs)) {
             if (attrs.map_state == IsViewable && !c->comp_damage) {
                 // Setup compositing for this existing canvas
                 itn_composite_setup_canvas(c);
@@ -175,7 +175,7 @@ bool itn_core_init_compositor(void) {
 
             // Check if it's an override-redirect window
             XWindowAttributes attrs;
-            if (XGetWindowAttributes(dpy, w, &attrs)) {
+            if (safe_get_window_attributes(dpy, w, &attrs)) {
                 if (attrs.map_state == IsViewable && attrs.override_redirect &&
                     attrs.class == InputOutput) {
                     // Found an existing override-redirect window
@@ -439,10 +439,152 @@ Canvas *find_window_by_path(const char *path) {
     return NULL;
 }
 
+// Temporary error handler to suppress BadWindow errors during attribute queries
+// This silently ignores expected "window doesn't exist" errors when querying
+// window attributes on windows that may have been destroyed asynchronously
+static int ignore_bad_window_on_get_attrs(Display *dpy, XErrorEvent *error) {
+    if (error->error_code == 3) {  // BadWindow error code
+        // Silently ignore - window was destroyed asynchronously
+        return 0;
+    }
+    // Call the default error handler for other errors
+    extern int x_error_handler(Display *dpy, XErrorEvent *error);
+    return x_error_handler(dpy, error);
+}
+
 bool is_window_valid(Display *dpy, Window win) {
     if (win == None) return false;
+
+    // Install temporary error handler to ignore BadWindow errors
+    // This prevents validation checks from generating error spam when
+    // checking destroyed windows (which is the whole point of validation)
+    XErrorHandler old_handler = XSetErrorHandler(ignore_bad_window_on_get_attrs);
+
     XWindowAttributes attrs;
-    return XGetWindowAttributes(dpy, win, &attrs) == True;
+    Bool result = XGetWindowAttributes(dpy, win, &attrs);
+    XSync(dpy, False);  // Force execution to catch any errors now
+
+    // Restore original error handler
+    XSetErrorHandler(old_handler);
+
+    return result == True;
+}
+
+// Safe XGetWindowAttributes - handles asynchronous window destruction race
+// Even with is_window_valid() checks, window can be destroyed between
+// validation and attribute query due to X11's asynchronous nature
+Bool safe_get_window_attributes(Display *dpy, Window win, XWindowAttributes *attrs) {
+    if (win == None) return False;
+
+    // Install temporary error handler to ignore BadWindow errors
+    XErrorHandler old_handler = XSetErrorHandler(ignore_bad_window_on_get_attrs);
+
+    Bool result = XGetWindowAttributes(dpy, win, attrs);
+    XSync(dpy, False);  // Force execution to catch any errors now
+
+    // Restore original error handler
+    XSetErrorHandler(old_handler);
+
+    return result;
+}
+
+// Safe unmap - validates window exists before unmapping
+void safe_unmap_window(Display *dpy, Window win) {
+    if (is_window_valid(dpy, win)) {
+        XUnmapWindow(dpy, win);
+    }
+}
+
+// Safe translate coordinates - validates windows exist before translating
+Bool safe_translate_coordinates(Display *dpy, Window src_w, Window dest_w,
+                                int src_x, int src_y, int *dest_x, int *dest_y,
+                                Window *child) {
+    // Validate both source and destination windows exist
+    if (!is_window_valid(dpy, src_w) || !is_window_valid(dpy, dest_w)) {
+        // Set outputs to safe defaults
+        if (dest_x) *dest_x = 0;
+        if (dest_y) *dest_y = 0;
+        if (child) *child = None;
+        return False;
+    }
+
+    // Install temporary error handler to catch window destruction race
+    // Even with validation, window can be destroyed before XTranslateCoordinates executes
+    XErrorHandler old_handler = XSetErrorHandler(ignore_bad_window_on_get_attrs);
+
+    Bool result = XTranslateCoordinates(dpy, src_w, dest_w, src_x, src_y, dest_x, dest_y, child);
+    XSync(dpy, False);  // Force execution to catch any errors now
+
+    // Restore original error handler
+    XSetErrorHandler(old_handler);
+
+    return result;
+}
+
+// Temporary error handler to suppress BadMatch errors during SetInputFocus
+// BadMatch occurs when window is destroyed between validation and focus operation
+static int ignore_bad_match_on_focus(Display *dpy, XErrorEvent *error) {
+    if (error->error_code == 8) {  // BadMatch error code
+        // Silently ignore - window destroyed between validation and focus
+        return 0;
+    }
+    // Call the default error handler for other errors
+    extern int x_error_handler(Display *dpy, XErrorEvent *error);
+    return x_error_handler(dpy, error);
+}
+
+// Safe SetInputFocus - handles asynchronous window destruction race
+// Even with is_window_valid() checks, window can be destroyed between
+// validation and focus operation due to X11's asynchronous nature
+void safe_set_input_focus(Display *dpy, Window win, int revert_to, Time time) {
+    // First check if window exists at all
+    if (!is_window_valid(dpy, win)) {
+        return;
+    }
+
+    // Install temporary error handler to ignore BadMatch errors
+    // Window can still be destroyed after validation but before focus
+    XErrorHandler old_handler = XSetErrorHandler(ignore_bad_match_on_focus);
+
+    XSetInputFocus(dpy, win, revert_to, time);
+    XSync(dpy, False);  // Force execution to catch any errors now
+
+    // Restore original error handler
+    XSetErrorHandler(old_handler);
+}
+
+// Debug wrapper for XGetWindowProperty to trace property access
+// Set to 1 to enable verbose property access logging (disabled now that errors are fixed)
+static int g_debug_property_access = 0;
+
+int debug_get_window_property(Display *dpy, Window win, Atom property,
+                               long offset, long length, Bool delete,
+                               Atom req_type, Atom *actual_type,
+                               int *actual_format, unsigned long *nitems,
+                               unsigned long *bytes_after, unsigned char **prop,
+                               const char *caller_location) {
+    if (g_debug_property_access) {
+        char *prop_name = XGetAtomName(dpy, property);
+        log_error("[PROP-DEBUG] %s: XGetWindowProperty(win=0x%lx, prop=%s)",
+                  caller_location, win, prop_name ? prop_name : "unknown");
+        if (prop_name) XFree(prop_name);
+    }
+
+    return XGetWindowProperty(dpy, win, property, offset, length, delete,
+                              req_type, actual_type, actual_format, nitems,
+                              bytes_after, prop);
+}
+
+// Enable property access debugging
+void enable_property_debug(void) {
+    g_debug_property_access = 1;
+    log_error("[PROP-DEBUG] Property access debugging ENABLED");
+}
+
+// Disable property access debugging
+void disable_property_debug(void) {
+    g_debug_property_access = 0;
+    log_error("[PROP-DEBUG] Property access debugging DISABLED");
 }
 
 // ============================================================================
@@ -587,7 +729,7 @@ void menubar_apply_fullscreen(bool fullscreen) {
     if (!menubar) return;
 
     if (fullscreen) {
-        XUnmapWindow(display, menubar->win);
+        safe_unmap_window(display, menubar->win);
     } else {
         XMapWindow(display, menubar->win);
     }
@@ -604,8 +746,8 @@ bool get_window_attrs_with_defaults(Window win, XWindowAttributes *attrs) {
     attrs->class = InputOutput;
     attrs->override_redirect = False;
 
-    // Try to get actual attributes
-    if (XGetWindowAttributes(display, win, attrs)) {
+    // Try to get actual attributes (safe wrapper handles window destruction race)
+    if (safe_get_window_attributes(display, win, attrs)) {
         return true;
     }
 
@@ -627,16 +769,34 @@ int get_canvas_count(void) {
     return canvas_count;
 }
 
-// X11 error handler
+// X11 error handler with request decoding
 int x_error_handler(Display *dpy, XErrorEvent *error) {
     char error_text[256];
     XGetErrorText(dpy, error->error_code, error_text, sizeof(error_text));
 
-    // Log error but don't crash
-    log_error("X Error: %s (code %d, request %d.%d, resource 0x%lx)\n",
+    // Decode common request codes for better diagnostics
+    const char *request_name = "Unknown";
+    switch (error->request_code) {
+        case 2: request_name = "ChangeWindowAttributes"; break;
+        case 3: request_name = "GetWindowAttributes"; break;
+        case 4: request_name = "DestroyWindow"; break;
+        case 8: request_name = "MapWindow"; break;
+        case 10: request_name = "UnmapWindow"; break;
+        case 12: request_name = "ConfigureWindow"; break;
+        case 15: request_name = "QueryTree"; break;
+        case 18: request_name = "ChangeProperty"; break;
+        case 19: request_name = "DeleteProperty"; break;
+        case 20: request_name = "GetProperty"; break;
+        case 38: request_name = "QueryPointer"; break;
+        case 40: request_name = "TranslateCoordinates"; break;
+        case 42: request_name = "SetInputFocus"; break;
+    }
+
+    // Log error with decoded request name
+    log_error("X Error: %s (code %d, request %d.%d [%s], resource 0x%lx)\n",
               error_text, error->error_code,
               error->request_code, error->minor_code,
-              error->resourceid);
+              request_name, error->resourceid);
 
     // Return 0 to continue
     return 0;

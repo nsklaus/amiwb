@@ -184,6 +184,9 @@ void itn_events_handle_damage(XDamageNotifyEvent *event) {
     }
     if (!canvas) return;
 
+    // Record damage event for metrics
+    itn_render_record_damage_event();
+
     // Mark canvas as needing repaint
     canvas->comp_needs_repaint = true;
 
@@ -777,7 +780,8 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
                 Canvas *parent_canvas = itn_canvas_find_by_client(parent_win);
                 if (parent_canvas) {
                     set_active_window(parent_canvas);
-                    XSetInputFocus(display, parent_win, RevertToParent, CurrentTime);
+                    // Safe focus with validation and BadMatch error handling
+                    safe_set_input_focus(display, parent_win, RevertToParent, CurrentTime);
                 }
             }
         } else {
@@ -1112,7 +1116,7 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
     if ((event->value_mask & (CWStackMode | CWSibling)) == (CWStackMode | CWSibling) &&
         event->detail >= 0 && event->detail <= 4) {
         XWindowAttributes sibling_attrs;
-        if (XGetWindowAttributes(display, event->above, &sibling_attrs) && sibling_attrs.map_state == IsViewable) {
+        if (safe_get_window_attributes(display, event->above, &sibling_attrs) && sibling_attrs.map_state == IsViewable) {
             frame_changes.stack_mode = event->detail;
             frame_changes.sibling = event->above;
             frame_mask |= CWStackMode | CWSibling;

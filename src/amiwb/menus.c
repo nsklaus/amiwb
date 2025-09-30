@@ -763,7 +763,7 @@ void toggle_menubar_state(void) {
             XSync(ctx->dpy, False);  // Complete pending operations
             if (ctx && active_menu->canvas->win != None) {
                 clear_press_target_if_matches(active_menu->canvas->win);  // Clear before destroy
-                XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap
             }
             destroy_canvas(active_menu->canvas);
@@ -775,7 +775,7 @@ void toggle_menubar_state(void) {
             XSync(ctx->dpy, False);  // Complete pending operations
             if (ctx && nested_menu->canvas->win != None) {
                 clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-                XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+                safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap
             }
             destroy_canvas(nested_menu->canvas);
@@ -855,7 +855,7 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
         if (active_menu && active_menu->canvas) {
             XSync(ctx->dpy, False);  // Ensure pending operations complete
             if (active_menu->canvas->win != None) {
-                XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap to complete
             }
             destroy_canvas(active_menu->canvas);
@@ -865,7 +865,7 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
         if (nested_menu && nested_menu->canvas) {
             XSync(ctx->dpy, False);  // Ensure pending operations complete
             if (nested_menu->canvas->win != None) {
-                XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+                safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap to complete
             }
             destroy_canvas(nested_menu->canvas);
@@ -895,7 +895,7 @@ static void close_nested_if_any(void) {
         XSync(ctx->dpy, False);  // Complete pending operations
         if (ctx && nested_menu->canvas->win != None) {
             clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
         destroy_canvas(nested_menu->canvas);
@@ -933,7 +933,7 @@ void menu_handle_button_release(XButtonEvent *event) {
         XSync(ctx->dpy, False);  // Complete pending operations
         if (nested_menu->canvas->win != None) {
             clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
         destroy_canvas(nested_menu->canvas);
@@ -944,7 +944,7 @@ void menu_handle_button_release(XButtonEvent *event) {
         XSync(ctx->dpy, False);  // Complete pending operations
         if (active_menu->canvas->win != None) {
             clear_press_target_if_matches(active_menu->canvas->win);  // Clear before destroy
-            XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+            safe_unmap_window(ctx->dpy, active_menu->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
         destroy_canvas(active_menu->canvas);
@@ -967,7 +967,7 @@ void close_all_menus(void) {
     // Close nested menu if open
     if (nested_menu && nested_menu->canvas) {
         if (nested_menu->canvas->win != None) {
-            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
             XSync(ctx->dpy, False);
         }
         destroy_canvas(nested_menu->canvas);
@@ -977,7 +977,7 @@ void close_all_menus(void) {
     // Close active menu if open
     if (active_menu && active_menu->canvas) {
         if (active_menu->canvas->win != None) {
-            XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+            safe_unmap_window(ctx->dpy, active_menu->canvas->win);
             XSync(ctx->dpy, False);
         }
         destroy_canvas(active_menu->canvas);
@@ -1022,7 +1022,7 @@ void close_window_list_if_open(void) {
             XSync(ctx->dpy, False);
             if (active_menu->canvas->win != None) {
                 clear_press_target_if_matches(active_menu->canvas->win);
-                XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                 XSync(ctx->dpy, False);
             }
             destroy_canvas(active_menu->canvas);
@@ -1059,7 +1059,7 @@ static void show_window_list_menu(int x, int y) {
         XSync(ctx->dpy, False);
         if (active_menu->canvas->win != None) {
             clear_press_target_if_matches(active_menu->canvas->win);
-            XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+            safe_unmap_window(ctx->dpy, active_menu->canvas->win);
             XSync(ctx->dpy, False);
         }
         destroy_canvas(active_menu->canvas);
@@ -1157,7 +1157,7 @@ void menu_handle_menubar_press(XButtonEvent *event) {
             XSync(ctx->dpy, False);
             if (active_menu->canvas->win != None) {
                 clear_press_target_if_matches(active_menu->canvas->win);
-                XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                 XSync(ctx->dpy, False);
             }
             destroy_canvas(active_menu->canvas);
@@ -1196,7 +1196,7 @@ void menu_handle_menubar_press(XButtonEvent *event) {
                     XSync(ctx->dpy, False);
                     if (active_menu->canvas->win != None) {
                         clear_press_target_if_matches(active_menu->canvas->win);
-                        XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                        safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                         XSync(ctx->dpy, False);
                     }
                     destroy_canvas(active_menu->canvas);
@@ -1230,7 +1230,7 @@ void menu_handle_menubar_press(XButtonEvent *event) {
                     XSync(ctx->dpy, False);
                     if (active_menu->canvas->win != None) {
                         clear_press_target_if_matches(active_menu->canvas->win);
-                        XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                        safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                         XSync(ctx->dpy, False);
                     }
                     destroy_canvas(active_menu->canvas);
@@ -1278,7 +1278,7 @@ static void maybe_open_nested_for_selection(void) {
             XSync(ctx->dpy, False);  // Complete pending operations
             if (nested_menu->canvas->win != None) {
                 clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-                XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+                safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap
             }
             destroy_canvas(nested_menu->canvas);
@@ -1294,7 +1294,7 @@ static void maybe_open_nested_for_selection(void) {
         // Destroy any existing canvas from previous display to prevent leak
         if (nested_menu->canvas) {
             if (nested_menu->canvas->win != None) {
-                XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+                safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
                 XSync(ctx->dpy, False);
             }
             destroy_canvas(nested_menu->canvas);
@@ -1398,7 +1398,7 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
         XSync(ctx->dpy, False);  // Complete pending operations
         if (ctx && nested_menu->canvas->win != None) {
             clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-            XUnmapWindow(ctx->dpy, nested_menu->canvas->win);
+            safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
         destroy_canvas(nested_menu->canvas);
@@ -1411,7 +1411,7 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
     if (active_menu->canvas) {
         RenderContext *ctx = get_render_context();
         if (ctx && active_menu->canvas->win != None) {
-            XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+            safe_unmap_window(ctx->dpy, active_menu->canvas->win);
             XSync(ctx->dpy, False);
         }
         destroy_canvas(active_menu->canvas);
@@ -1556,7 +1556,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 XSync(ctx->dpy, False);
                 if (active_menu->canvas->win != None) {
                     clear_press_target_if_matches(active_menu->canvas->win);
-                    XUnmapWindow(ctx->dpy, active_menu->canvas->win);
+                    safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                     XSync(ctx->dpy, False);
                 }
                 destroy_canvas(active_menu->canvas);
@@ -3127,10 +3127,15 @@ static void parse_and_switch_app_menus(const char *app_name, const char *menu_da
 // Update menu item states from app window property
 static void update_app_menu_states(Window app_window) {
     if (!app_window || !app_menu_active || !full_submenus) return;
-    
+
     Display *dpy = itn_core_get_display();
     if (!dpy) return;
-    
+
+    // Validate window still exists before querying properties (race: window may have closed)
+    if (!is_window_valid(dpy, app_window)) {
+        return;
+    }
+
     // Get the menu states property
     Atom states_atom = XInternAtom(dpy, "_AMIWB_MENU_STATES", False);
     Atom actual_type;
@@ -3138,7 +3143,7 @@ static void update_app_menu_states(Window app_window) {
     unsigned long nitems, bytes_after;
     unsigned char *states_data = NULL;
     
-    if (XGetWindowProperty(dpy, app_window, states_atom, 0, 65536, False,
+    if (DEBUG_GET_PROPERTY(dpy, app_window, states_atom, 0, 65536, False,
                           AnyPropertyType, &actual_type, &actual_format,
                           &nitems, &bytes_after, &states_data) == Success && states_data) {
         
@@ -3211,6 +3216,12 @@ void check_for_app_menus(Window win) {
     Display *dpy = itn_core_get_display();
     if (!dpy) return;
 
+    // Validate window still exists before querying properties (race: window may have closed)
+    if (!is_window_valid(dpy, win)) {
+        restore_system_menu();
+        return;
+    }
+
     // Define atoms for app properties
     Atom type_atom = XInternAtom(dpy, "_AMIWB_APP_TYPE", False);
     Atom actual_type;
@@ -3219,7 +3230,7 @@ void check_for_app_menus(Window win) {
     unsigned char *app_type = NULL;
 
     // Check if window has _AMIWB_APP_TYPE property
-    if (XGetWindowProperty(dpy, win, type_atom, 0, 1024, False,
+    if (DEBUG_GET_PROPERTY(dpy, win, type_atom, 0, 1024, False,
                           AnyPropertyType, &actual_type, &actual_format,
                           &nitems, &bytes_after, &app_type) == Success && app_type) {
 
@@ -3229,7 +3240,7 @@ void check_for_app_menus(Window win) {
         Atom menu_atom = XInternAtom(dpy, "_AMIWB_MENU_DATA", False);
         unsigned char *menu_data = NULL;
 
-        if (XGetWindowProperty(dpy, win, menu_atom, 0, 65536, False,
+        if (DEBUG_GET_PROPERTY(dpy, win, menu_atom, 0, 65536, False,
                               AnyPropertyType, &actual_type, &actual_format,
                               &nitems, &bytes_after, &menu_data) == Success && menu_data) {
 

@@ -140,7 +140,7 @@ Window xdnd_find_target(Display *dpy, int root_x, int root_y) {
 
     // Walk down the window tree to find deepest window at position
     while (child != None || parent == root) {
-        if (!XTranslateCoordinates(dpy, root, parent, root_x, root_y,
+        if (!safe_translate_coordinates(dpy, root, parent, root_x, root_y,
                                    &win_x, &win_y, &child)) {
             break;
         }
