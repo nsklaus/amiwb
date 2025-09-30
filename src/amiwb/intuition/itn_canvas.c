@@ -478,30 +478,29 @@ void itn_canvas_destroy(Canvas *canvas) {
 
     // If this canvas frames a client, handle it appropriately
     if (canvas->client_win != None) {
-        // XGrabServer: Temporarily lock the X11 server to prevent race conditions
-        // This ensures no other client can change windows while we're cleaning up
-        // Think of it like getting exclusive access to modify critical data
         XGrabServer(dpy);
 
         if (g_restarting) {
             // Restarting - preserve client by unparenting back to root
-            // This keeps the client alive so it can be re-framed after restart
-            // Place client at its actual screen position (frame position + decorations)
             XReparentWindow(dpy, canvas->client_win, root,
                           canvas->x + BORDER_WIDTH_LEFT,
                           canvas->y + BORDER_HEIGHT_TOP);
-            XRemoveFromSaveSet(dpy, canvas->client_win);  // Clean up save-set
+            XRemoveFromSaveSet(dpy, canvas->client_win);
         } else {
             // Normal operation - request client to close
             send_close_request_to_client(canvas->client_win);
         }
 
-        // XUngrabServer: Release the server lock so other clients can work again
-        // IMPORTANT: Always ungrab after grabbing to avoid freezing the desktop!
         XUngrabServer(dpy);
+        XSync(dpy, False);
 
-        // XUnmapWindow: Hide the window from screen (but don't destroy it yet)
-        // Like minimizing a window - it still exists but isn't visible
+        if (g_restarting && canvas->client_win != None) {
+            // Map client on root so it's visible after restart
+            XMapWindow(dpy, canvas->client_win);
+            XSync(dpy, False);
+        }
+
+        // XUnmapWindow: Hide the frame window from screen
         if (canvas->win != None && is_window_valid(dpy, canvas->win)) {
             XUnmapWindow(dpy, canvas->win);
         }
@@ -803,6 +802,33 @@ Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
 
         // Setup event selection on client
         XSelectInput(dpy, client, PropertyChangeMask | StructureNotifyMask);
+
+        // Grab button clicks for click-to-focus behavior
+        // This intercepts clicks even when client has ButtonPressMask set
+        // GrabModeSync + XAllowEvents(ReplayPointer) ensures client still receives the click
+        XGrabButton(dpy, Button1, AnyModifier, client,
+                   False, ButtonPressMask, GrabModeSync, GrabModeAsync,
+                   None, None);
+
+        // Get window title from class hint (application name)
+        // Use res_class (app class like "Firefox", "Kitty") as primary source
+        // This is needed for iconify system to match application icons
+        XClassHint class_hint;
+        if (XGetClassHint(dpy, client, &class_hint)) {
+            if (class_hint.res_class) {
+                frame->title_base = strdup(class_hint.res_class);
+            } else if (class_hint.res_name) {
+                frame->title_base = strdup(class_hint.res_name);
+            }
+            // Free X11 allocated strings
+            if (class_hint.res_class) XFree(class_hint.res_class);
+            if (class_hint.res_name) XFree(class_hint.res_name);
+        }
+
+        // Final fallback
+        if (!frame->title_base) {
+            frame->title_base = strdup("NoNameApp");
+        }
     }
 
     return frame;
@@ -821,12 +847,15 @@ void frame_existing_client_windows(void) {
                    &children, &nchildren)) {
         for (unsigned int i = 0; i < nchildren; i++) {
             XWindowAttributes attrs;
-            if (XGetWindowAttributes(dpy, children[i], &attrs)) {
-                if (attrs.map_state == IsViewable && !should_skip_framing(children[i], &attrs)) {
-                    frame_client_window(children[i], &attrs);
-                }
+            if (!XGetWindowAttributes(dpy, children[i], &attrs)) {
+                continue;
+            }
+
+            if (attrs.map_state == IsViewable && !should_skip_framing(children[i], &attrs)) {
+                frame_client_window(children[i], &attrs);
             }
         }
+
         if (children) XFree(children);
     }
 }

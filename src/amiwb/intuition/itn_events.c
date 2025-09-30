@@ -334,6 +334,12 @@ void intuition_handle_property_notify(XPropertyEvent *event) {
 
 void intuition_handle_button_press(XButtonEvent *event) {
     Canvas *canvas = itn_canvas_find_by_window(event->window);
+
+    // If not found by frame window, check if event is on a client window
+    if (!canvas) {
+        canvas = itn_canvas_find_by_client(event->window);
+    }
+
     if (!canvas) {
         return;
     }
@@ -357,6 +363,13 @@ void intuition_handle_button_press(XButtonEvent *event) {
         return;
 
     set_active_window(canvas);
+
+    // If this click was on the client window itself (grabbed via XGrabButton),
+    // replay it to the client so they receive the click after activation
+    if (event->window == canvas->client_win) {
+        XAllowEvents(display, ReplayPointer, event->time);
+        return;
+    }
 
     // Check for scrollbar interactions FIRST (for workbench windows)
     if (event->button == Button1 && canvas->client_win == None && !canvas->disable_scrollbars) {

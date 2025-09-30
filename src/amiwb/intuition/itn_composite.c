@@ -445,7 +445,12 @@ void itn_composite_render_all(void) {
         if (children) XFree(children);
     }
 
-    // log_error("[COMPOSITE] Found %d visible canvases to render", visible_count);
+    // Only log when visible count changes to reduce spam
+    static int last_visible_count = -1;
+    if (visible_count != last_visible_count) {
+        log_error("[ERROR] Found %d visible canvases to render", visible_count);
+        last_visible_count = visible_count;
+    }
 
     // Render in stacking order (bottom to top)
     for (int i = 0; i < visible_count; i++) {

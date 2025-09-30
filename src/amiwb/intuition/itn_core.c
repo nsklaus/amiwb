@@ -30,17 +30,9 @@ bool g_compositor_active = false;
 int g_damage_event_base = 0;
 int g_damage_error_base = 0;
 
-// Private state - will be used when migration from intuition.c is complete
-// For now these are commented out to avoid warnings
-// static bool g_shutting_down = false;
-// static bool g_restarting = false;
-// static int g_screen;
-// static Window g_root;
-// static int g_width;
-// static int g_height;
-// static int g_depth;
-// static Cursor g_root_cursor;
-// static RenderContext *g_render_context = NULL;
+// Global state flags (exposed for itn_canvas.c)
+bool g_shutting_down = false;
+bool g_restarting = false;
 
 // Global variables (were in intuition.c, now defined here)
 Display *display = NULL;
@@ -266,15 +258,17 @@ Canvas *init_intuition(void) {
     imlib_set_cache_size(0);
     render_load_wallpapers();
 
-    // Frame any existing client windows
-    frame_existing_client_windows();
-
-    // Initialize compositor if configured
+    // Initialize compositor BEFORE framing existing windows
+    // This ensures XCompositeRedirectSubwindows is active when frames are created
     #ifdef USE_COMPOSITOR
     if (USE_COMPOSITOR) {
         itn_core_init_compositor();
     }
     #endif
+
+    // Frame any existing client windows AFTER compositor is initialized
+    // This ensures frames are redirected when created
+    frame_existing_client_windows();
 
     // Redraw the desktop to show wallpaper
     extern void redraw_canvas(Canvas *canvas);
@@ -287,6 +281,18 @@ void cleanup_intuition(void) {
     if (g_compositor_active) {
         itn_core_shutdown_compositor();
     }
+
+    // CRITICAL: Destroy all canvases BEFORE closing display
+    // This triggers client preservation logic if g_restarting is true
+    if (canvas_array && canvas_count > 0) {
+        // Iterate backwards to avoid array shifting issues
+        for (int i = canvas_count - 1; i >= 0; i--) {
+            if (canvas_array[i]) {
+                itn_canvas_destroy(canvas_array[i]);
+            }
+        }
+    }
+
     // Cleanup render context
     if (render_context) {
         free(render_context);
@@ -300,12 +306,10 @@ void cleanup_intuition(void) {
 }
 
 void begin_shutdown(void) {
-    extern bool g_shutting_down;
     g_shutting_down = true;
 }
 
 void begin_restart(void) {
-    extern bool g_restarting;
     g_restarting = true;
 }
 
@@ -445,9 +449,6 @@ bool is_window_valid(Display *dpy, Window win) {
 // State Management Functions
 // ============================================================================
 
-// Global state flags (exposed for itn_canvas.c)
-bool g_shutting_down = false;
-bool g_restarting = false;
 static long long g_deactivate_suppress_until_ms = 0;
 
 // Get current time in milliseconds
