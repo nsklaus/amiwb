@@ -1005,9 +1005,6 @@ void intuition_handle_map_notify(XMapEvent *event) {
     // Handle override-redirect windows FIRST (before checking if managed)
     // These are popup menus, tooltips, etc. that bypass window manager
     if (attrs.override_redirect && attrs.class == InputOutput) {
-        log_error("[MAP] Override-redirect window 0x%lx mapped (x=%d, y=%d, w=%d, h=%d)",
-                  event->window, attrs.x, attrs.y, attrs.width, attrs.height);
-
         // Add to compositor's override list for proper rendering
         itn_composite_add_override(event->window, &attrs);
 
@@ -1297,6 +1294,16 @@ void itn_events_handle_map(XMapEvent *event) {
 void itn_events_handle_unmap(XUnmapEvent *event) {
     if (!event) return;
 
+    // CRITICAL: Check for override-redirect window cleanup FIRST
+    // Tooltips/popups are NOT Canvas windows - they must be removed from compositor
+    // Otherwise we leak OverrideWin structs forever (every tooltip leak ~100 bytes)
+    if (itn_composite_remove_override(event->window)) {
+        // Successfully removed override-redirect window
+        SCHEDULE_FRAME();
+        return;
+    }
+
+    // Not an override-redirect window - check if it's a Canvas
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) {
         canvas = itn_canvas_find_by_client(event->window);

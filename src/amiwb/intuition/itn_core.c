@@ -771,6 +771,28 @@ int get_canvas_count(void) {
 
 // X11 error handler with request decoding
 int x_error_handler(Display *dpy, XErrorEvent *error) {
+    // Suppress compositor errors from short-lived tooltip/popup race conditions
+    // Browser tooltips are destroyed microseconds after mapping, causing errors when:
+    // - Damage events arrive after window destroyed (BadDamage)
+    // - Compositor tries to configure destroyed window (BadWindow on ConfigureWindow)
+    // - Compositor tries to render with freed Picture (RenderBadPicture)
+    // These are harmless and expected for override-redirect windows
+    if (error->error_code == 152) {  // BadDamage
+        return 0;  // Silently ignore
+    }
+
+    // Suppress BadWindow errors specifically on ConfigureWindow (request 12)
+    // This happens when compositor tries to position an already-destroyed tooltip
+    if (error->error_code == BadWindow && error->request_code == 12) {
+        return 0;  // Silently ignore
+    }
+
+    // Suppress RenderBadPicture errors (code 143)
+    // This happens when compositor tries to render an already-destroyed tooltip
+    if (error->error_code == 143) {  // RenderBadPicture
+        return 0;  // Silently ignore
+    }
+
     char error_text[256];
     XGetErrorText(dpy, error->error_code, error_text, sizeof(error_text));
 

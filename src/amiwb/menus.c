@@ -3258,6 +3258,10 @@ void check_for_app_menus(Window win) {
         return;
     }
 
+    // Don't check for menus if menubar not initialized yet (during startup)
+    extern Menu *menubar;
+    if (!menubar) return;
+
     Display *dpy = itn_core_get_display();
     if (!dpy) return;
 

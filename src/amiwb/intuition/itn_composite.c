@@ -50,6 +50,23 @@ typedef struct OverrideWin {
 static OverrideWin *override_list = NULL;
 static int override_count = 0;
 
+// Temporary error handler to suppress errors during compositor setup
+// Tooltips/popups can be destroyed microseconds after mapping, causing:
+// BadWindow, BadDrawable, BadDamage, BadMatch, RenderBadPicture
+static int ignore_compositor_setup_errors(Display *dpy, XErrorEvent *error) {
+    // Silently ignore these expected errors during override window compositing
+    if (error->error_code == BadWindow ||   // code 3
+        error->error_code == BadDrawable || // code 9
+        error->error_code == BadMatch ||    // code 8
+        error->error_code == 152 ||         // BadDamage
+        error->error_code == 143) {         // RenderBadPicture
+        return 0;  // Suppress error
+    }
+    // Call the default error handler for unexpected errors
+    extern int x_error_handler(Display *dpy, XErrorEvent *error);
+    return x_error_handler(dpy, error);
+}
+
 // Helper: Create XRender picture from pixmap
 static Picture create_picture_from_pixmap(Display *dpy, Pixmap pixmap, int depth) {
     if (!pixmap) return None;
@@ -319,28 +336,56 @@ void itn_composite_add_override(Window win, XWindowAttributes *attrs) {
     ow->height = attrs->height;
     ow->depth = attrs->depth;
 
-    // Get composite pixmap
+    // CRITICAL: Tooltips can be destroyed microseconds after mapping
+    // Install temporary error handler to suppress expected errors
+    XErrorHandler old_handler = XSetErrorHandler(ignore_compositor_setup_errors);
+
+    // Verify window still exists before compositing
+    XWindowAttributes verify_attrs;
+    if (!XGetWindowAttributes(dpy, win, &verify_attrs)) {
+        // Window already destroyed - don't composite it
+        XSetErrorHandler(old_handler);
+        free(ow);
+        return;
+    }
+
+    // Get composite pixmap (can fail if window destroyed between checks)
     ow->pixmap = XCompositeNameWindowPixmap(dpy, win);
-    if (ow->pixmap) {
-        // Create XRender picture
+
+    // Create XRender picture
+    if (ow->pixmap && ow->pixmap != None) {
         XRenderPictFormat *format = XRenderFindVisualFormat(dpy, attrs->visual);
         if (format) {
             XRenderPictureAttributes pa = {0};
             pa.subwindow_mode = IncludeInferiors;
             ow->picture = XRenderCreatePicture(dpy, ow->pixmap, format,
-                                              CPSubwindowMode, &pa);
+                                               CPSubwindowMode, &pa);
         }
+    }
 
-        // Create damage tracking for continuous updates
+    // Create damage tracking for continuous updates
+    if (ow->picture && ow->picture != None) {
         ow->damage = XDamageCreate(dpy, win, XDamageReportRawRectangles);
     }
 
-    // Add to list
+    // Force error processing before restoring handler
+    XSync(dpy, False);
+    XSetErrorHandler(old_handler);
+
+    // Validate all resources created successfully
+    if (!ow->pixmap || !ow->picture || !ow->damage) {
+        // Cleanup partial resources
+        if (ow->damage) XDamageDestroy(dpy, ow->damage);
+        if (ow->picture) XRenderFreePicture(dpy, ow->picture);
+        // Don't free pixmap - XComposite owns it
+        free(ow);
+        return;
+    }
+
+    // All resources created successfully - add to list
     ow->next = override_list;
     override_list = ow;
     override_count++;
-
-    log_error("[COMPOSITE] Added override-redirect window 0x%lx (count=%d)", win, override_count);
 }
 
 // Remove an override-redirect window
@@ -358,16 +403,19 @@ bool itn_composite_remove_override(Window win) {
             // Found it - remove from list
             *prev = ow->next;
 
-            // Clean up resources
-            if (ow->damage) XDamageDestroy(dpy, ow->damage);
+            // Clean up resources - CRITICAL: flush pending damage events first
+            // to prevent BadDamage/RenderBadPicture errors from tooltips/popups
+            if (ow->damage) {
+                // Clear all accumulated damage and flush the event queue
+                XDamageSubtract(dpy, ow->damage, None, None);
+                XSync(dpy, False);  // Wait for all pending events to be processed
+                XDamageDestroy(dpy, ow->damage);
+            }
             if (ow->picture) XRenderFreePicture(dpy, ow->picture);
             // Don't free pixmap - XComposite owns it
 
             free(ow);
             override_count--;
-
-            log_error("[COMPOSITE] Removed override-redirect window 0x%lx (count=%d)",
-                     win, override_count);
             return true;
         }
         prev = &ow->next;
@@ -635,6 +683,12 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
     OverrideWin *ow = override_list;
     while (ow) {
         if (ow->damage == ev->damage) {
+            // Defensive check: verify damage object is still valid
+            // (protection against race condition if cleanup happened)
+            if (!ow || ow->damage == None) {
+                return;  // Already destroyed, ignore stale event
+            }
+
             // Mark as needing repaint
             ow->needs_repaint = true;
 
