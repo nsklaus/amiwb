@@ -752,21 +752,12 @@ void toggle_menubar_state(void) {
         menubar->items = full_menu_items;
         menubar->item_count = full_menu_item_count;
         menubar->submenus = full_submenus;
-
-        log_error("[MENU] Toggle: MENUS visible, count=%d, first='%s', items=%p",
-                 full_menu_item_count,
-                 (full_menu_items && full_menu_item_count > 0) ? full_menu_items[0] : "NULL",
-                 full_menu_items);
-
     } else {
         // Switching to logo mode
         menubar->items = logo_items;
         menubar->item_count = logo_item_count;
         menubar->submenus = NULL;
         menubar->selected_item = -1;
-
-        log_error("[MENU] Toggle: LOGO visible, logo='%s'",
-                 (logo_items && logo_item_count > 0) ? logo_items[0] : "NULL");
         if (active_menu && active_menu->canvas) {  // Close any open submenu
             RenderContext *ctx = get_render_context();
             XSync(ctx->dpy, False);  // Complete pending operations
@@ -1568,12 +1559,8 @@ void handle_menu_selection(Menu *menu, int item_index) {
         if (!target) {
             // NULL means "Desktop" option
             iconify_all_windows();
-            log_error("[MENU] Window list: Iconify all (Desktop selected)");
         } else {
             // Activate the window directly using its Canvas pointer
-            log_error("[MENU] Window list: Activating window, title='%s'",
-                     target->title_base ? target->title_base : "Untitled");
-
             // Check if window is iconified and restore it first
             extern FileIcon **get_icon_array(void);
             extern int get_icon_count(void);
@@ -2855,12 +2842,9 @@ void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus
         menubar->items = full_menu_items;
         menubar->submenus = full_submenus;
         menubar->item_count = full_menu_item_count;
-        log_error("[MENU] Switched to app menus (visible): count=%d, first='%s'",
-                 full_menu_item_count, full_menu_items[0]);
     } else {
         // Currently showing logo - keep logo visible but ensure full_menu_items is ready
-        log_error("[MENU] Switched to app menus (logo mode): count=%d, first='%s'",
-                 full_menu_item_count, full_menu_items[0]);
+        // Logo items stay visible; full_menu_items are ready for next toggle
     }
 
     // Mark app menu as active
@@ -2900,12 +2884,9 @@ void restore_system_menu(void) {
         menubar->items = full_menu_items;
         menubar->submenus = full_submenus;
         menubar->item_count = full_menu_item_count;
-        log_error("[MENU] Restored system menus (visible): count=%d, first='%s'",
-                 full_menu_item_count, full_menu_items[0]);
     } else {
         // Currently showing logo - keep logo visible but ensure full_menu_items is ready
-        log_error("[MENU] Restored system menus (logo mode): count=%d, first='%s'",
-                 full_menu_item_count, full_menu_items[0]);
+        // Logo items stay visible; full_menu_items are ready for next toggle
     }
 
     // Mark system menu as active
