@@ -5,7 +5,7 @@
 #include <X11/Xlib.h>
 #include <stdbool.h>
 #include "intuition/itn_public.h"
-#include "workbench.h"
+#include "workbench/wb_public.h"
 
 #define MENU_ITEM_HEIGHT 20     // Menubar and menu item height
 

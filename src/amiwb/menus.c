@@ -5,7 +5,7 @@
 #include "menus.h"
 #include "config.h"
 #include "intuition/itn_internal.h"
-#include "workbench.h"
+#include "workbench/wb_public.h"
 #include "render.h"
 // #include "compositor.h"  // Now using itn modules
 #include "dialogs.h"

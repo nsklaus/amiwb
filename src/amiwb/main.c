@@ -3,7 +3,7 @@
 #include "menus.h"
 #include "dialogs.h"
 #include "iconinfo.h"
-#include "workbench.h"
+#include "workbench/wb_public.h"
 #include "events.h"
 // #include "compositor.h"  // Now using itn modules
 #include "render.h"

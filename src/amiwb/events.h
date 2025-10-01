@@ -4,7 +4,7 @@
 
 #include <X11/Xlib.h>
 #include "intuition/itn_public.h"
-#include "workbench.h"
+#include "workbench/wb_public.h"
 #include "menus.h"
 
 // Function prototypes

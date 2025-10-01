@@ -9,7 +9,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include "diskdrives.h"
-#include "workbench.h"
+#include "workbench/wb_public.h"
 #include "intuition/itn_internal.h"
 #include "render.h"
 #include "config.h"

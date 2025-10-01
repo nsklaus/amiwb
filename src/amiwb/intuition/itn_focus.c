@@ -5,7 +5,7 @@
 #include "itn_internal.h"
 #include <X11/Xlib.h>
 #include "../menus.h"  // For check_for_app_menus
-#include "../workbench.h"  // For icon functions
+#include "../workbench/wb_public.h"
 #include "../render.h"  // For redraw_canvas (temporary)
 
 // External references (temporary during migration)

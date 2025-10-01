@@ -3,7 +3,7 @@
 #include "iconinfo.h"
 #include "render.h"
 #include "config.h"
-#include "workbench.h"
+#include "workbench/wb_public.h"
 #include "intuition/itn_internal.h"
 #include "../toolkit/button.h"
 #include <X11/Xlib.h>

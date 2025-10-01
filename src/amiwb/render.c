@@ -2,7 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "render.h"
 #include "intuition/itn_public.h"  // For is_restarting()
-#include "workbench.h"
+#include "workbench/wb_public.h"
 #include "config.h"
 #include "amiwbrc.h"  // For config access
 #include "menus.h"
