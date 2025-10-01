@@ -704,6 +704,11 @@ void iconify_canvas(Canvas *canvas) {
     Display *dpy = itn_core_get_display();
     if (!dpy) return;
 
+    // Check if this window owns the app menu before iconifying
+    extern Window get_app_menu_window(void);
+    extern void restore_system_menu(void);
+    bool was_menu_owner = (canvas->client_win == get_app_menu_window());
+
     // Hide the window
     safe_unmap_window(dpy, canvas->win);
 
@@ -719,6 +724,16 @@ void iconify_canvas(Canvas *canvas) {
     Canvas *desktop = itn_canvas_get_desktop();
     if (desktop) {
         DAMAGE_CANVAS(desktop);
+    }
+
+    // Iconified window loses active state - activate next window
+    // This also handles menu restoration automatically via focus change
+    if (canvas->active) {
+        canvas->active = false;
+        itn_focus_select_next(canvas);
+    } else if (was_menu_owner) {
+        // Even if not active, if it owned menus, restore system menu
+        restore_system_menu();
     }
 
     SCHEDULE_FRAME();

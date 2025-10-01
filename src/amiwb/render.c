@@ -629,13 +629,20 @@ void redraw_canvas(Canvas *canvas) {
     // ===========
     if (canvas->type == MENU) {
         // InputField handles its own completion dropdown rendering
-        
+
         Menu *menu = get_menu_by_canvas(canvas);
         if (!menu) return;
 
     // Safety check - font might be NULL during shutdown/restart
     XftFont *font = font_manager_get();
     if (!font) return;
+
+    // Defensive check - validate menu data before rendering
+    if (!menu->items || menu->item_count == 0) {
+        log_error("[WARNING] Menu render: NULL or empty items! items=%p, count=%d",
+                 menu->items, menu->item_count);
+        return;
+    }
 
     // Use cached XftDraw instead of creating a new one
     if (!canvas->xft_draw) {
@@ -658,7 +665,10 @@ void redraw_canvas(Canvas *canvas) {
 
     for (int i = 0; i < menu->item_count; i++) {
         const char *label = menu->items[i];
-        if (!label) continue;
+        if (!label) {
+            log_error("[WARNING] Menu render: NULL item at index %d/%d", i, menu->item_count);
+            continue;
+        }
 
         // Check if this menu item should show a checkmark
         bool has_checkmark = (menu->checkmarks && menu->checkmarks[i]);

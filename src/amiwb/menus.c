@@ -748,16 +748,25 @@ bool get_show_menus_state(void) {
 void toggle_menubar_state(void) {
     show_menus = !show_menus;
     if (show_menus) {
-
+        // Switching to menu mode
         menubar->items = full_menu_items;
         menubar->item_count = full_menu_item_count;
         menubar->submenus = full_submenus;
 
+        log_error("[MENU] Toggle: MENUS visible, count=%d, first='%s', items=%p",
+                 full_menu_item_count,
+                 (full_menu_items && full_menu_item_count > 0) ? full_menu_items[0] : "NULL",
+                 full_menu_items);
+
     } else {
+        // Switching to logo mode
         menubar->items = logo_items;
         menubar->item_count = logo_item_count;
         menubar->submenus = NULL;
         menubar->selected_item = -1;
+
+        log_error("[MENU] Toggle: LOGO visible, logo='%s'",
+                 (logo_items && logo_item_count > 0) ? logo_items[0] : "NULL");
         if (active_menu && active_menu->canvas) {  // Close any open submenu
             RenderContext *ctx = get_render_context();
             XSync(ctx->dpy, False);  // Complete pending operations
@@ -1088,17 +1097,48 @@ static void show_window_list_menu(int x, int y) {
     window_menu->enabled[0] = true;
     window_menu->window_refs[0] = NULL;  // Desktop has no window reference
     
-    // Add each window
+    // Add each window with instance numbering for duplicates
+    // Count occurrences of each title to add (1), (2), (3) suffixes
+    int *title_counts = calloc(window_count, sizeof(int));  // Track which instance number we're on
+
     for (int i = 0; i < window_count; i++) {
         Canvas *c = window_list[i];
         const char *title = c->title_base ? c->title_base : "Untitled";
-        
-        // Just use the title directly - no truncation, no suffix
-        window_menu->items[i + 1] = strdup(title);
+
+        // Count how many windows with this title we've seen so far
+        int instance_num = 0;
+        for (int j = 0; j < i; j++) {
+            const char *prev_title = window_list[j]->title_base ? window_list[j]->title_base : "Untitled";
+            if (strcmp(title, prev_title) == 0) {
+                instance_num++;
+            }
+        }
+
+        // Check if there are any more windows with this title after this one
+        bool has_duplicates = false;
+        for (int j = i + 1; j < window_count; j++) {
+            const char *next_title = window_list[j]->title_base ? window_list[j]->title_base : "Untitled";
+            if (strcmp(title, next_title) == 0) {
+                has_duplicates = true;
+                break;
+            }
+        }
+
+        // Build display name with instance number if needed
+        char display_name[256];
+        if (instance_num > 0 || has_duplicates) {
+            snprintf(display_name, sizeof(display_name), "%s (%d)", title, instance_num + 1);
+        } else {
+            snprintf(display_name, sizeof(display_name), "%s", title);
+        }
+
+        window_menu->items[i + 1] = strdup(display_name);
         window_menu->shortcuts[i + 1] = NULL;  // No shortcuts for individual windows
         window_menu->enabled[i + 1] = true;
-        window_menu->window_refs[i + 1] = c;  // Store Canvas pointer for render-time checking
+        window_menu->window_refs[i + 1] = c;  // Store Canvas pointer
     }
+
+    free(title_counts);
     
     window_menu->selected_item = -1;
     window_menu->parent_menu = NULL;
@@ -1521,31 +1561,39 @@ void handle_menu_selection(Menu *menu, int item_index) {
     
     // Handle window list menu (parent_index == -1)
     if (menu->parent_index == -1) {
-        if (strcmp(item, "Desktop") == 0) {
-            // Iconify all windows to show desktop
+        // Use window_refs array instead of string comparison
+        // This fixes both bugs: off-by-one and multiple instances
+        Canvas *target = menu->window_refs[item_index];
+
+        if (!target) {
+            // NULL means "Desktop" option
             iconify_all_windows();
+            log_error("[MENU] Window list: Iconify all (Desktop selected)");
         } else {
-            // Find the window by title and activate it
-            Canvas **window_list;
-            int window_count = get_window_list(&window_list);
-            
-            for (int i = 0; i < window_count; i++) {
-                Canvas *c = window_list[i];
-                const char *title = c->title_base ? c->title_base : "Untitled";
-                
-                // Direct comparison - no truncation
-                if (strcmp(item, title) == 0) {
-                    // Find the index in canvas_array
-                    Canvas **canvas_array = get_canvas_array();
-                    int canvas_count = get_canvas_count();
-                    for (int j = 0; j < canvas_count; j++) {
-                        if (canvas_array[j] == c) {
-                            itn_focus_activate_by_index(j);
-                            break;
-                        }
-                    }
+            // Activate the window directly using its Canvas pointer
+            log_error("[MENU] Window list: Activating window, title='%s'",
+                     target->title_base ? target->title_base : "Untitled");
+
+            // Check if window is iconified and restore it first
+            extern FileIcon **get_icon_array(void);
+            extern int get_icon_count(void);
+            extern void restore_iconified(FileIcon *icon);
+            FileIcon **icon_array = get_icon_array();
+            int icon_count = get_icon_count();
+
+            bool was_iconified = false;
+            for (int i = 0; i < icon_count; i++) {
+                FileIcon *ic = icon_array[i];
+                if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == target) {
+                    restore_iconified(ic);
+                    was_iconified = true;
                     break;
                 }
+            }
+
+            if (!was_iconified) {
+                // Not iconified - just activate it
+                itn_focus_set_active(target);
             }
         }
         
@@ -2799,14 +2847,22 @@ void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus
     full_menu_items = menu_items;
     full_submenus = submenus;
     full_menu_item_count = item_count;
-    
-    // If currently showing menus, update menubar
+
+    // CRITICAL: Always update menubar data to match current mode
+    // This ensures toggle_menubar_state() has valid data
     if (show_menus) {
+        // Currently showing menus - update to app menus immediately
         menubar->items = full_menu_items;
         menubar->submenus = full_submenus;
         menubar->item_count = full_menu_item_count;
+        log_error("[MENU] Switched to app menus (visible): count=%d, first='%s'",
+                 full_menu_item_count, full_menu_items[0]);
+    } else {
+        // Currently showing logo - keep logo visible but ensure full_menu_items is ready
+        log_error("[MENU] Switched to app menus (logo mode): count=%d, first='%s'",
+                 full_menu_item_count, full_menu_items[0]);
     }
-    
+
     // Mark app menu as active
     app_menu_active = true;
     current_app_window = app_window;
@@ -2836,14 +2892,22 @@ void restore_system_menu(void) {
     full_menu_items = system_menu_items;
     full_submenus = system_submenus;
     full_menu_item_count = system_menu_item_count;
-    
-    // If currently showing menus, update menubar
+
+    // CRITICAL: Always update menubar data to match current mode
+    // This ensures toggle_menubar_state() has valid data
     if (show_menus) {
+        // Currently showing menus - update to system menus immediately
         menubar->items = full_menu_items;
         menubar->submenus = full_submenus;
         menubar->item_count = full_menu_item_count;
+        log_error("[MENU] Restored system menus (visible): count=%d, first='%s'",
+                 full_menu_item_count, full_menu_items[0]);
+    } else {
+        // Currently showing logo - keep logo visible but ensure full_menu_items is ready
+        log_error("[MENU] Restored system menus (logo mode): count=%d, first='%s'",
+                 full_menu_item_count, full_menu_items[0]);
     }
-    
+
     // Mark system menu as active
     app_menu_active = false;
     current_app_window = None;

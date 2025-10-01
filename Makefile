@@ -17,7 +17,7 @@ AMIWB_DIR = src/amiwb
 TOOLKIT_DIR = src/toolkit
 
 # Source files
-AMIWB_SRCS = $(wildcard $(AMIWB_DIR)/*.c) $(wildcard $(AMIWB_DIR)/intuition/*.c)
+AMIWB_SRCS = $(wildcard $(AMIWB_DIR)/*.c) $(wildcard $(AMIWB_DIR)/intuition/*.c) $(wildcard $(AMIWB_DIR)/workbench/*.c)
 TOOLKIT_SRCS = $(wildcard $(TOOLKIT_DIR)/*.c)
 
 # Object files
@@ -44,6 +44,9 @@ $(AMIWB_DIR)/%.o: $(AMIWB_DIR)/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
 
 $(AMIWB_DIR)/intuition/%.o: $(AMIWB_DIR)/intuition/%.c
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
+
+$(AMIWB_DIR)/workbench/%.o: $(AMIWB_DIR)/workbench/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
 
 $(TOOLKIT_DIR)/%.o: $(TOOLKIT_DIR)/%.c
