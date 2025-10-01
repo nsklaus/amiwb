@@ -1,7 +1,7 @@
 // Event dispatch and routing between intuition (window frames),
 // workbench (icons), and menus. Keeps interactions coherent
 // by locking routing to the initial press target.
-#include "menus.h"
+#include "menus/menu_public.h"
 #include "events.h"
 // #include "compositor.h"  // Now using itn modules
 #include "intuition/itn_public.h"  // Public intuition API
@@ -487,10 +487,11 @@ void handle_events(void) {
         if (ready == 0 || 1) {  // Always check periodic tasks
             time_t now = time(NULL);
 
-            // Check if we should update time
+            // Check if we should update time and addons
             if (now - last_time_check >= 1) {  // Check every second
                 last_time_check = now;
-                update_menubar_time();  // Will only redraw if minute changed
+                update_menubar_time();      // Will only redraw if minute changed
+                menu_addon_update_all();    // Update CPU, memory, fans, etc.
             }
 
             // Check for drive changes every second

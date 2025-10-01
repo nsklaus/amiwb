@@ -25,6 +25,9 @@ typedef struct {
     int target_fps;      // Target framerate (default 120)
     int render_mode;     // 0=on-demand (default), 1=continuous
 
+    // Menu addons configuration
+    char menu_addons[NAME_SIZE];  // Comma-separated addon list: "clock,cpu,ram"
+
     // Future expansion space - add new settings here
 } AmiwbConfig;
 

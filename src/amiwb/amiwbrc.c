@@ -91,6 +91,10 @@ static void parse_line(char *line) {
     else if (strcmp(key, "render_mode") == 0) {
         g_config.render_mode = atoi(value);
     }
+    // Menu addons
+    else if (strcmp(key, "menu_addons") == 0) {
+        set_string(g_config.menu_addons, value, sizeof(g_config.menu_addons));
+    }
     // Unknown key - silently ignore
 }
 

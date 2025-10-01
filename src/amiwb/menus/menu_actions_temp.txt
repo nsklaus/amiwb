@@ -1,0 +1,24 @@
+// Menu System - Action Handlers Module  
+// All menu action implementations and main selection dispatcher
+
+#include "menu_internal.h"
+#include "menu_public.h"
+#include "../intuition/itn_public.h"
+#include "../workbench/wb_public.h"
+#include "../logging.h"
+#include "../config.h"
+#include <sys/stat.h>
+#include <unistd.h>
+
+// ============================================================================
+// Global State for Actions
+// ============================================================================
+
+// Rename state
+static FileIcon *g_rename_icon = NULL;
+
+// Delete operation state
+static FileIcon *g_pending_delete_icons[256];
+static int g_pending_delete_count = 0;
+static Canvas *g_pending_delete_canvas = NULL;
+

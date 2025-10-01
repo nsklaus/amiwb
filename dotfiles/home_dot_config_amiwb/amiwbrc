@@ -58,4 +58,19 @@ render_mode = 0
 #   Only matters in continuous mode or during active interaction
 target_fps = 120
 
+# Menu Addons
+# Comma-separated list of widgets to show in menubar (logo mode only)
+# Layout: MIDDLE zone (centered) shows cpu/memory/fans, RIGHT zone shows clock
+# Available addons:
+#   - clock:  Shows current date/time (positioned on RIGHT, 40px spacing)
+#   - cpu:    Shows CPU usage percentage (positioned in MIDDLE, 40px spacing)
+#   - memory: Shows available memory in GB (positioned in MIDDLE, 40px spacing)
+#   - fans:   Shows maximum fan RPM (positioned in MIDDLE, 40px spacing)
+# Default: empty (no addons displayed)
+# Examples:
+#   menu_addons = clock
+#   menu_addons = cpu,memory,clock
+#   menu_addons = cpu,memory,fans,clock
+menu_addons = clock
+
 # Future settings will be added here...

@@ -5,7 +5,7 @@
 #include <X11/Xlib.h>
 #include "intuition/itn_public.h"
 #include "workbench/wb_public.h"
-#include "menus.h"
+#include "menus/menu_public.h"
 
 // Function prototypes
 void init_events(void);									// Initialize event handling

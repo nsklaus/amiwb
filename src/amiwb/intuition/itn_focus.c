@@ -4,7 +4,7 @@
 #include "../config.h"
 #include "itn_internal.h"
 #include <X11/Xlib.h>
-#include "../menus.h"  // For check_for_app_menus
+#include "../menus/menu_public.h"  // For check_for_app_menus
 #include "../workbench/wb_public.h"
 #include "../render.h"  // For redraw_canvas (temporary)
 
@@ -89,6 +89,10 @@ void itn_focus_deactivate_all(void) {
         }
     }
     g_active_canvas = NULL;
+
+    // Restore system menus when no window is active (desktop focused)
+    restore_system_menu();
+
     SCHEDULE_FRAME();
 }
 

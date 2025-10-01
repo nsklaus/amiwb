@@ -5,7 +5,8 @@
 #include "workbench/wb_public.h"
 #include "config.h"
 #include "amiwbrc.h"  // For config access
-#include "menus.h"
+#include "menus/menu_public.h"
+#include "menus/menu_internal.h"  // For menu_addon_render_all
 #include "dialogs.h"
 #include "iconinfo.h"
 #include <X11/Xlib.h>
@@ -812,40 +813,14 @@ void redraw_canvas(Canvas *canvas) {
     // No need to destroy - using cached XftDraw
 
         // ============
-        // menu button and date/time - ONLY FOR MENUBAR, NOT DROPDOWNS!
+        // menu button and addons - ONLY FOR MENUBAR, NOT DROPDOWNS!
         // ============
         if (is_menubar && !get_show_menus_state()){
-            
-#if MENU_SHOW_DATE
-            // Display date and time on the right side
-            if (font) {
-                time_t now;
-                time(&now);
-                struct tm *tm_info = localtime(&now);
-                char datetime_buf[64];
-                strftime(datetime_buf, sizeof(datetime_buf), MENUBAR_DATE_FORMAT, tm_info);
-                
-                // Use cached XftDraw for date/time
-                if (canvas->xft_draw) {
-                    XftColor dt_color;
-                    XRenderColor black_color = BLACK;
-                    XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &black_color, &dt_color);
-                    
-                    // Calculate text width to position it properly
-                    XGlyphInfo extents;
-                    XftTextExtentsUtf8(ctx->dpy, font, (FcChar8 *)datetime_buf, strlen(datetime_buf), &extents);
-                    
-                    // Position: end 4 chars (30 pixels) + 4 chars space before menu button
-                    int text_x = canvas->width - 30 - 30 - extents.xOff;
-                    int text_y = font->ascent + (MENU_ITEM_HEIGHT - font->height) / 2 - 1;  // Raised by 1 pixel
-                    
-                    XftDrawStringUtf8(canvas->xft_draw, &dt_color, font, text_x, text_y, 
-                                      (FcChar8 *)datetime_buf, strlen(datetime_buf));
-                    
-                    XftColorFree(ctx->dpy, canvas->visual, canvas->colormap, &dt_color);
-                }
-            }
-#endif
+
+            // Render all menu addons (clock, CPU, RAM, etc.)
+            // Addons only display in logo mode
+            int addon_x = 10;  // Start position for addons (left-to-right)
+            menu_addon_render_all(ctx, canvas, &addon_x, 0);
  
             // menu right side, lower button 
             XRenderFillRectangle(ctx->dpy, PictOpSrc, canvas->canvas_render, &GRAY, canvas->width -28, 0 , 26, 19);
