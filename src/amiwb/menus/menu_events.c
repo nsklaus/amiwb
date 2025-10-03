@@ -45,7 +45,7 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
                 XSync(ctx->dpy, False);  // Wait for unmap to complete
             }
             destroy_canvas(active_menu->canvas);
-            active_menu->canvas = NULL;  // Prevent double-free
+            // Note: destroy_canvas() already sets active_menu->canvas = NULL
             active_menu = NULL;
         }
         if (nested_menu && nested_menu->canvas) {
@@ -55,7 +55,7 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
                 XSync(ctx->dpy, False);  // Wait for unmap to complete
             }
             destroy_canvas(nested_menu->canvas);
-            nested_menu->canvas = NULL;  // Prevent double-free
+            // Note: destroy_canvas() already sets nested_menu->canvas = NULL
             nested_menu = NULL;
         }
         if (menubar->selected_item != -1 &&
@@ -200,8 +200,8 @@ void menu_handle_button_release(XButtonEvent *event) {
     if (!ctx) return;
 
     Menu *target_menu = NULL;
-    if (active_menu && event->window == active_menu->canvas->win) target_menu = active_menu;
-    else if (nested_menu && event->window == nested_menu->canvas->win) target_menu = nested_menu;
+    if (active_menu && active_menu->canvas && event->window == active_menu->canvas->win) target_menu = active_menu;
+    else if (nested_menu && nested_menu->canvas && event->window == nested_menu->canvas->win) target_menu = nested_menu;
     else return;
 
     int item = event->y / MENU_ITEM_HEIGHT;
@@ -449,7 +449,7 @@ void menu_handle_motion_notify(XMotionEvent *event) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
 
-    if (active_menu && event->window == active_menu->canvas->win) {
+    if (active_menu && active_menu->canvas && event->window == active_menu->canvas->win) {
         int prev_selected = active_menu->selected_item;
         int new_item = event->y / MENU_ITEM_HEIGHT;
         if (new_item < 0 || new_item >= active_menu->item_count) {
@@ -469,7 +469,7 @@ void menu_handle_motion_notify(XMotionEvent *event) {
         return;
     }
 
-    if (nested_menu && event->window == nested_menu->canvas->win) {
+    if (nested_menu && nested_menu->canvas && event->window == nested_menu->canvas->win) {
         int prev_selected = nested_menu->selected_item;
         int new_item = event->y / MENU_ITEM_HEIGHT;
         if (new_item < 0 || new_item >= nested_menu->item_count) {

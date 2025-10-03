@@ -464,22 +464,22 @@ static void draw_checkerboard(Display *dpy, Picture dest, int x, int y, int w, i
 // Redraw the entire canvas and its icons. Skips work if surfaces or
 // context are missing, which can occur during early init or teardown.
 void redraw_canvas(Canvas *canvas) {
-    if (!canvas || canvas->width <= 0 || canvas->height <= 0 || 
+    if (!canvas || canvas->width <= 0 || canvas->height <= 0 ||
         canvas->canvas_render == None || canvas->window_render == None) {
         log_error("[REDRAW] Early return: canvas=%p, width=%d, height=%d, canvas_render=%lu, window_render=%lu\n",
-               (void*)canvas, canvas ? canvas->width : -1, canvas ? canvas->height : -1, 
+               (void*)canvas, canvas ? canvas->width : -1, canvas ? canvas->height : -1,
                canvas ? canvas->canvas_render : 0, canvas ? canvas->window_render : 0);
         return;
     }
-    
-    
+
+
     // PERFORMANCE OPTIMIZATION: During interactive resize, only redraw the canvas being resized
     // BUT: Always allow icon rendering - just skip buffer updates
     Canvas *resizing = itn_resize_get_target();
     if (resizing && canvas != resizing) {
         return; // Skip redrawing non-resizing windows during resize
     }
-    
+
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
     

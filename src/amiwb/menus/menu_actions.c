@@ -1269,6 +1269,11 @@ void trigger_new_drawer_action(void) {
 void handle_quit_request(void) {
     // Enter shutdown mode: silence X errors from teardown
     begin_shutdown();
+
+    // CRITICAL: Stop event loop FIRST before closing display
+    // Otherwise event loop continues and calls XPending() on freed display
+    quit_event_loop();
+
     // Menus/workbench use canvases; keep render/Display alive until after compositor shut down
     // First, stop compositing (uses the Display)
     extern void itn_core_shutdown_compositor(void);
@@ -1279,7 +1284,6 @@ void handle_quit_request(void) {
     // Finally close Display and render resources
     cleanup_intuition();
     cleanup_render();
-    quit_event_loop();
 }
 
 void handle_suspend_request(void) {

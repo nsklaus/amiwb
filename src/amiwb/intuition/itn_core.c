@@ -728,11 +728,16 @@ void menubar_apply_fullscreen(bool fullscreen) {
     Canvas *menubar = get_menubar();
     if (!menubar) return;
 
+    // Control compositor visibility without unmapping window
+    // This keeps all rendering resources valid (XftDraw, Pictures, pixmaps)
     if (fullscreen) {
-        safe_unmap_window(display, menubar->win);
+        menubar->comp_visible = false;
     } else {
-        XMapWindow(display, menubar->win);
+        menubar->comp_visible = true;
     }
+
+    // Trigger compositor to update display
+    SCHEDULE_FRAME();
 }
 
 bool get_window_attrs_with_defaults(Window win, XWindowAttributes *attrs) {

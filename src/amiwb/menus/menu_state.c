@@ -26,39 +26,13 @@ void toggle_menubar_state(void) {
         menubar->item_count = full_menu_item_count;
         menubar->submenus = full_submenus;
     } else {
-        // Switching to logo mode
+        // Switching to logo mode - close ALL dropdowns first
+        close_all_menus();
+
         menubar->items = logo_items;
         menubar->item_count = logo_item_count;
         menubar->submenus = NULL;
         menubar->selected_item = -1;
-
-        // Close any open submenu
-        if (active_menu && active_menu->canvas) {
-            RenderContext *ctx = get_render_context();
-            XSync(ctx->dpy, False);  // Complete pending operations
-            if (ctx && active_menu->canvas->win != None) {
-                clear_press_target_if_matches(active_menu->canvas->win);  // Clear before destroy
-                safe_unmap_window(ctx->dpy, active_menu->canvas->win);
-                XSync(ctx->dpy, False);  // Wait for unmap
-            }
-            destroy_canvas(active_menu->canvas);
-            active_menu->canvas = NULL;  // Prevent double-free
-            active_menu = NULL;
-        }
-
-        // Close nested menu if open
-        if (nested_menu && nested_menu->canvas) {
-            RenderContext *ctx = get_render_context();
-            XSync(ctx->dpy, False);  // Complete pending operations
-            if (ctx && nested_menu->canvas->win != None) {
-                clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-                safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
-                XSync(ctx->dpy, False);  // Wait for unmap
-            }
-            destroy_canvas(nested_menu->canvas);
-            nested_menu->canvas = NULL;  // Prevent double-free
-            nested_menu = NULL;
-        }
     }
 
     if (menubar) redraw_canvas(menubar->canvas);
@@ -83,7 +57,9 @@ void update_menubar_time(void) {
         Canvas *menubar_canvas = get_menubar();
         if (menubar_canvas && !get_show_menus_state()) {
             Menu *active = get_active_menu();
-            if (!active || active->parent_index != -1) {
+
+            // Allow update if: no active menu, OR canvas was destroyed (stale pointer), OR not window list
+            if (!active || active->canvas == NULL || active->parent_index != -1) {
                 redraw_canvas(menubar_canvas);
 
                 // Mark canvas as needing compositor update and schedule frame

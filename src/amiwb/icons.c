@@ -172,7 +172,9 @@ static int load_icon_file(const char *name, uint8_t **data, long *size) {
     fseek(fp, 0, SEEK_END);
     *size = ftell(fp);
     rewind(fp);
-    *data = malloc(*size);
+    // Allocate 1 extra byte - read_bits() reads 2 bytes at a time for bit shifting
+    // Without padding, reading the last byte would overflow by 1 byte
+    *data = malloc(*size + 1);
     if (!*data || fread(*data, 1, *size, fp) != *size) {
         free(*data);
         fclose(fp);

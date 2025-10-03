@@ -482,6 +482,11 @@ void itn_composite_render_all(void) {
                 XWindowAttributes attrs;
                 if (safe_get_window_attributes(dpy, c->win, &attrs)) {
                     if (attrs.map_state == IsViewable) {
+                        // Check compositor visibility flag (used for hiding menubar during fullscreen)
+                        // Only skip if explicitly set to false (menubar during fullscreen)
+                        if (c->type == MENU && !c->comp_visible) {
+                            continue;  // Skip hidden menubar
+                        }
                         visible[visible_count++] = c;
                     }
                 }
@@ -506,16 +511,27 @@ void itn_composite_render_all(void) {
             redraw_canvas(c);
         }
 
-        // Ensure canvas has compositing data
+        // Ensure canvas has compositing data - create if missing
         if (!c->comp_pixmap) {
-            log_error("[COMPOSITE] Canvas %d has no comp_pixmap (win=0x%lx)", i, c->win);
-            continue;
+            // Window is mapped but compositor pixmap is missing (race between XMapWindow and MapEvent)
+            // Try to create it now instead of waiting for MapEvent handler
+            c->comp_pixmap = XCompositeNameWindowPixmap(dpy, c->win);
+            if (!c->comp_pixmap) {
+                // Still can't create - window might not be mapped yet, skip for now
+                continue;
+            }
+            // Force repaint since we just created the pixmap (it's empty)
+            c->comp_needs_repaint = true;
         }
 
         if (!c->comp_picture && c->comp_pixmap) {
             int win_depth = c->depth ? c->depth : depth;
             c->comp_picture = create_picture_from_pixmap(dpy, c->comp_pixmap, win_depth);
-            log_error("[COMPOSITE] Created picture for canvas %d", i);
+        }
+
+        // Ensure damage tracking exists (needed for future updates)
+        if (!c->comp_damage) {
+            c->comp_damage = XDamageCreate(dpy, c->win, XDamageReportRawRectangles);
         }
 
         if (c->comp_picture) {

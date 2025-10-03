@@ -528,11 +528,10 @@ void diskdrives_poll(void) {
 }
 
 void diskdrives_cleanup(void) {
-    // Clean up all drive icons
+    // Don't destroy icons here - they're workbench icons that will be cleaned up
+    // by cleanup_workbench(). Just clear our references to prevent dangling pointers.
     for (int i = 0; i < drive_manager.drive_count; i++) {
-        if (drive_manager.drives[i].icon) {
-            destroy_icon(drive_manager.drives[i].icon);
-        }
+        drive_manager.drives[i].icon = NULL;
     }
     drive_manager.drive_count = 0;
 }

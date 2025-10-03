@@ -232,8 +232,10 @@ void handle_events(void) {
         }
 
         // Handle X11 events FIRST - input has priority over rendering
-        if (FD_ISSET(x_fd, &read_fds)) {
-            while (XPending(dpy)) {
+        // Check running flag before XPending - display may be closed during quit
+        if (FD_ISSET(x_fd, &read_fds) && running) {
+            // CRITICAL: Check running on each iteration - quit handler closes display mid-loop
+            while (running && XPending(dpy)) {
                 XNextEvent(dpy, &event);
 
                 // Periodically enforce log cap (optional)
@@ -483,31 +485,28 @@ void handle_events(void) {
             itn_render_process_frame();
         }
 
-        // Handle periodic tasks when select times out
-        if (ready == 0) {  // Check periodic tasks only on timeout
-            time_t now = time(NULL);
+        // CRITICAL: Check periodic tasks on EVERY iteration, not just on select() timeout
+        // This ensures menubar updates even when X events are flooding in (e.g., fullscreen video)
+        time_t now = time(NULL);
 
-            // Check if we should update time and addons
-            if (now - last_time_check >= 1) {  // Check every second
-                last_time_check = now;
-                update_menubar_time();      // Will only redraw if minute changed
-                menu_addon_update_all();    // Update CPU, memory, fans, etc.
-            }
+        // Check if we should update time and addons
+        if (now - last_time_check >= 1) {  // Check every second
+            last_time_check = now;
+            update_menubar_time();      // Will only redraw if minute changed
+            menu_addon_update_all();    // Update CPU, memory, fans, etc.
+        }
 
-            // Check for drive changes every second
-            if (now - last_drive_check >= 1) {
-                last_drive_check = now;
-                extern void diskdrives_poll(void);
-                diskdrives_poll();
-            }
+        // Check for drive changes every second
+        if (now - last_drive_check >= 1) {
+            last_drive_check = now;
+            extern void diskdrives_poll(void);
+            diskdrives_poll();
+        }
 
-            // Check progress dialogs for updates
+        // Check progress dialogs for updates (only on timeout to avoid overhead)
+        if (ready == 0) {
             workbench_check_progress_dialogs();
-
-            // Check iconinfo dialogs for directory size calculations
             iconinfo_check_size_calculations();
-
-            // Check for arrow button auto-repeat
             intuition_check_arrow_scroll_repeat();
         }
     }  // End of while (running)

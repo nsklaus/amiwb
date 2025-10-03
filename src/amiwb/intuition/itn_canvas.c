@@ -3,6 +3,8 @@
 
 #include "../config.h"
 #include "itn_internal.h"
+#include "../workbench/wb_public.h"
+#include "../menus/menu_public.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xdamage.h>
@@ -363,6 +365,9 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
     canvas->consecutive_unmaps = 0;
     canvas->cleanup_scheduled = false;
     canvas->disable_scrollbars = false;
+    // Initialize compositor state
+    canvas->comp_opacity = 1.0;
+    canvas->comp_visible = true;  // Visible by default, can be toggled (e.g., menubar during fullscreen)
     // Initialize maximize toggle support
     canvas->maximized = false;
     canvas->pre_max_x = 0;
@@ -468,6 +473,22 @@ void itn_canvas_destroy(Canvas *canvas) {
             close_dialog_by_canvas(canvas);
             // Try progress dialogs
             close_progress_dialog_by_canvas(canvas);
+        }
+    }
+
+    // CRITICAL: Clear dangling canvas pointers in menu system before destroying
+    // When a menu dropdown canvas is destroyed (compositor cleanup, etc.), the Menu
+    // structure's canvas pointer must be NULLed to prevent double-free on reopen
+    if (canvas->type == MENU) {
+        Menu *active = get_active_menu();
+        if (active && active->canvas == canvas) {
+            active->canvas = NULL;
+        }
+
+        // Also check nested menu (extern because it's static in menu_core.c)
+        extern Menu *nested_menu;
+        if (nested_menu && nested_menu->canvas == canvas) {
+            nested_menu->canvas = NULL;
         }
     }
 
@@ -717,7 +738,6 @@ void iconify_canvas(Canvas *canvas) {
     canvas->comp_mapped = false;
 
     // Create an iconified icon on desktop
-    extern void create_iconified_icon(Canvas *canvas);
     create_iconified_icon(canvas);
 
     // Damage desktop to show new icon
@@ -795,9 +815,10 @@ Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
     int frame_width = attrs->width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT_CLIENT;  // 8+8=16px
     int frame_height = attrs->height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;     // 20+20=40px
 
-    // Position frame, ensuring it's below menubar
-    int frame_x = attrs->x;
-    int frame_y = max(MENUBAR_HEIGHT, attrs->y);
+    // Position frame accounting for border offset (client will be reparented at offset BORDER inside frame)
+    // This prevents accumulation during hot-restart: client at (X,Y) should end up at (X,Y) after framing
+    int frame_x = attrs->x - BORDER_WIDTH_LEFT;
+    int frame_y = max(MENUBAR_HEIGHT, attrs->y - BORDER_HEIGHT_TOP);
 
     // Use the proper canvas creation function that initializes render surfaces
     Canvas *frame = create_canvas_with_client(NULL, frame_x, frame_y,

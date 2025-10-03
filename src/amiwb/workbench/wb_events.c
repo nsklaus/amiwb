@@ -75,14 +75,19 @@ void workbench_handle_button_press(XButtonEvent *event) {
     if (icon && event->button == Button1) {
         // Handle double-click
         if (is_double_click(event->time, icon->last_click_time)) {
+            // Save click time BEFORE opening (open_directory destroys icons)
+            Time click_time = event->time;
+
             if (icon->type == TYPE_DRAWER || icon->type == TYPE_DEVICE) {
                 open_directory(icon, canvas);
+                // Icon is now freed, don't access it
             } else if (icon->type == TYPE_FILE) {
                 open_file(icon);
+                icon->last_click_time = click_time;  // Icon still valid for files
             } else if (icon->type == TYPE_ICONIFIED) {
                 restore_iconified(icon);
+                // Icon freed by restore, don't access
             }
-            icon->last_click_time = event->time;
             redraw_canvas(canvas);
             return;
         }
