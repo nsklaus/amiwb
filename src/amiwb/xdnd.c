@@ -132,6 +132,8 @@ bool xdnd_is_aware(Display *dpy, Window win) {
 
 // Find XDND-aware window at given coordinates
 Window xdnd_find_target(Display *dpy, int root_x, int root_y) {
+    extern bool is_window_valid(Display *dpy, Window win);
+
     Window root = DefaultRootWindow(dpy);
     Window parent = root;
     Window child = None;
@@ -149,6 +151,11 @@ Window xdnd_find_target(Display *dpy, int root_x, int root_y) {
             break;
         }
 
+        // Validate child window before using it (prevent BadMatch on destroyed windows)
+        if (!is_window_valid(dpy, child)) {
+            break;
+        }
+
         // Check if this window is XDND-aware
         if (xdnd_is_aware(dpy, child)) {
             // Check for proxy window
@@ -163,6 +170,11 @@ Window xdnd_find_target(Display *dpy, int root_x, int root_y) {
                 if (data && format == 32 && count == 1) {
                     Window proxy = *(Window*)data;
                     XFree(data);
+
+                    // Verify proxy is valid before using it
+                    if (!is_window_valid(dpy, proxy)) {
+                        break;
+                    }
 
                     // Verify proxy points back to the original window
                     if (XGetWindowProperty(dpy, proxy, xdnd_ctx.XdndProxy,
@@ -183,7 +195,7 @@ Window xdnd_find_target(Display *dpy, int root_x, int root_y) {
     }
 
     // Check the last parent if no child was XDND-aware
-    if (parent != root && xdnd_is_aware(dpy, parent)) {
+    if (parent != root && is_window_valid(dpy, parent) && xdnd_is_aware(dpy, parent)) {
         return parent;
     }
 

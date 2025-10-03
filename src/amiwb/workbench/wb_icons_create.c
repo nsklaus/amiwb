@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 
 // Forward declarations for helper functions
-static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy);
+static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy, int icon_width);
 static const char* find_icon_with_user_override(const char *icon_name, char *buffer, size_t buffer_size);
 static void create_icon_with_type(const char *path, Canvas *canvas, int x, int y, int type);
 
@@ -163,7 +163,7 @@ void remove_icon_for_canvas(Canvas *canvas) {
 // Desktop Slot Management (for Iconified Windows)
 // ============================================================================
 
-static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy) {
+static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy, int icon_width) {
     if (!desk || !ox || !oy) return;
     const int sx = 20, step_x = 110;
     
@@ -195,16 +195,16 @@ static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy) {
         } while (collision_found && y + 64 < desk->height);
         
         if (y + 64 < desk->height) {
-            // Center icon within column (same logic as icon_cleanup)
-            int column_center_offset = (step_x - 64) / 2;  // (110 - 64) / 2 = 23
+            // Center icon within column using actual icon width (same logic as icon_cleanup)
+            int column_center_offset = (step_x - icon_width) / 2;
             if (column_center_offset < 0) column_center_offset = 0;
             *ox = x + column_center_offset;
             *oy = y;
             return;
         }
     }
-    // Fallback: center in first column
-    int column_center_offset = (step_x - 64) / 2;
+    // Fallback: center in first column using actual icon width
+    int column_center_offset = (step_x - icon_width) / 2;
     if (column_center_offset < 0) column_center_offset = 0;
     *ox = sx + column_center_offset;
     *oy = first_iconified_y;
@@ -241,19 +241,15 @@ FileIcon* create_iconified_icon(Canvas *c) {
     
     Canvas *desk = itn_canvas_get_desktop();
     if (!desk) return NULL;
-    
-    // Find slot
-    int nx = 20, ny = 40;
-    find_next_desktop_slot(desk, &nx, &ny);
-    
+
     const char *icon_path = NULL;
     char *label = NULL;
     const char *def_foo_path = "/usr/local/share/amiwb/icons/def_icons/def_foo.info";
-    
+
     label = c->title_base ? strdup(c->title_base) : strdup("Untitled");
-    
+
     char icon_buffer[PATH_SIZE];
-    
+
     if (c->client_win == None) {
         if (c->type == DIALOG) {
             const char *dialog_icon_name = "dialog.info";
@@ -261,11 +257,11 @@ FileIcon* create_iconified_icon(Canvas *c) {
                 if (strstr(c->title_base, "Rename")) dialog_icon_name = "rename.info";
                 else if (strstr(c->title_base, "Delete")) dialog_icon_name = "delete.info";
                 else if (strstr(c->title_base, "Execute")) dialog_icon_name = "execute.info";
-                else if (strstr(c->title_base, "Progress") || strstr(c->title_base, "Copying") || 
+                else if (strstr(c->title_base, "Progress") || strstr(c->title_base, "Copying") ||
                          strstr(c->title_base, "Moving")) dialog_icon_name = "progress.info";
                 else if (strstr(c->title_base, "Information")) dialog_icon_name = "iconinfo.info";
             }
-            
+
             icon_path = find_icon_with_user_override(dialog_icon_name, icon_buffer, sizeof(icon_buffer));
             if (!icon_path) icon_path = find_icon_with_user_override("dialog.info", icon_buffer, sizeof(icon_buffer));
             if (!icon_path) icon_path = find_icon_with_user_override("filer.info", icon_buffer, sizeof(icon_buffer));
@@ -281,30 +277,38 @@ FileIcon* create_iconified_icon(Canvas *c) {
             icon_path = def_foo_path;
         }
     }
-    
+
     // Verify path exists
     struct stat st;
     if (stat(icon_path, &st) != 0) {
         log_error("[WARNING] Icon file not found: %s, using def_foo.info", icon_path);
         icon_path = def_foo_path;
     }
-    
-    // Create icon
-    create_icon(icon_path, desk, nx, ny);
+
+    // Create icon at temporary position first (so we can get actual width)
+    create_icon(icon_path, desk, 0, 0);
     FileIcon *ni = wb_icons_array_get_last_added();
-    
+
     if (!ni) {
         log_error("[ERROR] Failed to create iconified icon");
         free(label);
         return NULL;
     }
-    
+
+    // Now find proper slot using actual icon width (same centering as icon_cleanup)
+    int nx = 20, ny = 40;
+    find_next_desktop_slot(desk, &nx, &ny, ni->width);
+
+    // Move icon to properly centered position
+    ni->x = nx;
+    ni->y = ny;
+
     // Set up as iconified icon
     ni->type = TYPE_ICONIFIED;
     ni->iconified_canvas = c;
     if (ni->label) free(ni->label);
     ni->label = label;
-    
+
     return ni;
 }
 

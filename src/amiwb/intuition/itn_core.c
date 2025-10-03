@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <sys/time.h>
 #include <time.h>
+#include <execinfo.h>  // For backtrace support
 
 // Global state
 Display *g_display = NULL;
@@ -824,6 +825,19 @@ int x_error_handler(Display *dpy, XErrorEvent *error) {
               error_text, error->error_code,
               error->request_code, error->minor_code,
               request_name, error->resourceid);
+
+    // Capture and print backtrace (call stack)
+    void *buffer[64];
+    int nptrs = backtrace(buffer, 64);
+    char **strings = backtrace_symbols(buffer, nptrs);
+
+    if (strings) {
+        log_error("Call stack:\n");
+        for (int i = 0; i < nptrs; i++) {
+            log_error("  [%d] %s\n", i, strings[i]);
+        }
+        free(strings);
+    }
 
     // Return 0 to continue
     return 0;
