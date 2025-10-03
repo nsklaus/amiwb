@@ -184,11 +184,9 @@ void itn_composite_cleanup_overlay(void) {
             c->comp_damage = None;
         }
 
-        // Free picture
+        // Free picture AND pixmap (XComposite does NOT auto-free pixmaps!)
         safe_free_picture(dpy, &c->comp_picture);
-
-        // Note: comp_pixmap is freed by XComposite when window is destroyed
-        c->comp_pixmap = None;
+        safe_free_pixmap(dpy, &c->comp_pixmap);
     }
 
     // Free global resources
@@ -290,10 +288,12 @@ void itn_composite_update_canvas_pixmap(Canvas *canvas) {
     Display *dpy = display;
     if (!dpy || !canvas->win) return;
 
-    // Free old picture (but not pixmap - XComposite manages that)
+    // Free old picture AND pixmap to prevent memory leak
+    // XCompositeNameWindowPixmap creates a NEW pixmap each time - must free old one
     safe_free_picture(dpy, &canvas->comp_picture);
+    safe_free_pixmap(dpy, &canvas->comp_pixmap);
 
-    // Get new composite pixmap
+    // Get new composite pixmap (allocates new GPU memory)
     canvas->comp_pixmap = XCompositeNameWindowPixmap(dpy, canvas->win);
     if (canvas->comp_pixmap) {
         int win_depth = canvas->depth ? canvas->depth : depth;
