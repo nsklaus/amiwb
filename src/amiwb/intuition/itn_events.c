@@ -253,9 +253,15 @@ void intuition_handle_client_message(XClientMessageEvent *event) {
 void intuition_handle_expose(XExposeEvent *event) {
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (canvas && !fullscreen_active) {
-        // Use damage accumulation instead of immediate redraw
-        DAMAGE_CANVAS(canvas);
-        SCHEDULE_FRAME();
+        // Only damage non-composited canvases
+        // Client windows (type==WINDOW with client_win) are tracked via XDamage
+        // We only need to handle Expose for our own rendering: desktop, menus, dialogs
+        if (canvas->type == DESKTOP || canvas->type == MENU || canvas->type == DIALOG ||
+            (canvas->type == WINDOW && canvas->client_win == None)) {
+            DAMAGE_CANVAS(canvas);
+            SCHEDULE_FRAME();
+        }
+        // Composited client windows: XDamage will notify us, don't double-damage
     }
 }
 
@@ -1210,11 +1216,8 @@ void intuition_handle_configure_request(XConfigureRequestEvent *event) {
     }
 
     // Process the client's request
+    // handle_configure_managed() already damages and schedules frames as needed
     handle_configure_managed(canvas, event);
-
-    // Damage the canvas after configuration
-    DAMAGE_CANVAS(canvas);
-    SCHEDULE_FRAME();
 }
 
 // Handle ConfigureNotify for OUR frame windows only

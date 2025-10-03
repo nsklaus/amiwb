@@ -273,8 +273,9 @@ void itn_composite_setup_canvas(Canvas *canvas) {
 
     // Create damage tracking for this window
     if (!canvas->comp_damage) {
-        // Use RawRectangles for continuous damage reporting
-        // DeltaRectangles can stop if we don't clear damage fast enough
+        // Use RawRectangles - most reliable for immediate damage processing
+        // GPU-accelerated clients (Kitty, etc.) will generate many events at high FPS
+        // This is expected behavior, not a bug - we need every frame notification
         canvas->comp_damage = XDamageCreate(dpy, canvas->win, XDamageReportRawRectangles);
     }
 
@@ -365,6 +366,7 @@ void itn_composite_add_override(Window win, XWindowAttributes *attrs) {
 
     // Create damage tracking for continuous updates
     if (ow->picture && ow->picture != None) {
+        // Use RawRectangles for reliable damage notification (same as canvas windows)
         ow->damage = XDamageCreate(dpy, win, XDamageReportRawRectangles);
     }
 
@@ -663,6 +665,10 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
     }
 
     if (damaged) {
+        // Record damage event for metrics
+        extern void itn_render_record_damage_event(void);
+        itn_render_record_damage_event();
+
         // Update damage bounds
         damaged->comp_damage_bounds.x = ev->area.x;
         damaged->comp_damage_bounds.y = ev->area.y;
@@ -673,7 +679,7 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
         // Clear the damage (required by XDamage protocol)
         XDamageSubtract(dpy, ev->damage, None, None);
 
-        // Accumulate damage first, then schedule frame
+        // Accumulate damage to set damage_pending flag, then schedule frame
         DAMAGE_CANVAS(damaged);
         SCHEDULE_FRAME();
         return;
@@ -689,13 +695,17 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
                 return;  // Already destroyed, ignore stale event
             }
 
+            // Record damage event for metrics
+            extern void itn_render_record_damage_event(void);
+            itn_render_record_damage_event();
+
             // Mark as needing repaint
             ow->needs_repaint = true;
 
             // Clear the damage (required by XDamage protocol)
             XDamageSubtract(dpy, ev->damage, None, None);
 
-            // Schedule frame render
+            // Accumulate damage to set damage_pending flag, then schedule frame
             DAMAGE_REGION(ow->x, ow->y, ow->width, ow->height);
             SCHEDULE_FRAME();
             return;

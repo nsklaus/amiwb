@@ -85,6 +85,13 @@ void update_menubar_time(void) {
             Menu *active = get_active_menu();
             if (!active || active->parent_index != -1) {
                 redraw_canvas(menubar_canvas);
+
+                // Mark canvas as needing compositor update and schedule frame
+                menubar_canvas->comp_needs_repaint = true;
+                extern void itn_render_accumulate_canvas_damage(Canvas *canvas);
+                extern void itn_render_schedule_frame(void);
+                itn_render_accumulate_canvas_damage(menubar_canvas);
+                itn_render_schedule_frame();
             }
         }
     }

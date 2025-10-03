@@ -483,8 +483,8 @@ void handle_events(void) {
             itn_render_process_frame();
         }
 
-        // Handle periodic tasks when select times out or between events
-        if (ready == 0 || 1) {  // Always check periodic tasks
+        // Handle periodic tasks when select times out
+        if (ready == 0) {  // Check periodic tasks only on timeout
             time_t now = time(NULL);
 
             // Check if we should update time and addons
