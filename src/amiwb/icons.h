@@ -21,6 +21,7 @@ typedef struct {
     Window display_window;      // Window ID of display canvas (desktop or window)
     Time last_click_time;       // Timestamp of last click for double-click detection
     Canvas *iconified_canvas;    // Pointer to the iconified canvas (for TYPE_ICONIFIED)
+    bool render_error_logged;   // Flag to prevent repeated render error logging
 } FileIcon;
 
 // Function prototypes

@@ -329,12 +329,16 @@ void cleanup_render(void) {
 void render_icon(FileIcon *icon, Canvas *canvas) {
     //printf("render_icon called\n");
     if (!icon || icon->display_window == None || !icon->current_picture) {
-        log_error("[ERROR] render_icon: Invalid icon "
-                "(icon=%p, window=%p, picture=%p, filename=%s )",
-            (void*)icon,
-            icon ? (void*)icon->display_window : NULL,
-            icon ? (void*)icon->current_picture : NULL,
-            (icon && icon->label) ? icon->label : "(null)");
+        // Only log the error once per icon to prevent log spam
+        if (icon && !icon->render_error_logged) {
+            log_error("[ERROR] render_icon: Invalid icon "
+                    "(icon=%p, window=%p, picture=%p, filename=%s ) - will not log again",
+                (void*)icon,
+                icon->display_window ? (void*)icon->display_window : NULL,
+                icon->current_picture ? (void*)icon->current_picture : NULL,
+                icon->label ? icon->label : "(null)");
+            icon->render_error_logged = true;
+        }
         return;
     }
 
