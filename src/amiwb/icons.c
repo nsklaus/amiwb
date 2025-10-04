@@ -102,8 +102,8 @@ typedef enum {
     AMIGA_ICON_OS4        // OS4 (future)
 } AmigaIconFormat;
 
-// Helper function to get OS3/MWB icon color palette
-static void get_icon_color_palette(unsigned long colors[8]) {
+// Helper function to get MagicWB 8-color palette
+static void get_mwb_palette(unsigned long colors[8]) {
     // Icons use gray fill instead of transparency  
     colors[0] = 0xFFA0A2A0UL; // Background gray
     colors[1] = 0xFF000000;   // Black
@@ -130,38 +130,46 @@ static void get_os13_color_palette(unsigned long colors[4]) {
 }
 
 // Detect icon format by examining the file structure
-static AmigaIconFormat detect_icon_format(const uint8_t *data, long size) {
+static AmigaIconFormat detect_icon_format(const uint8_t *data, long size, long *form_offset_out) {
+    // Initialize output parameter
+    if (form_offset_out) {
+        *form_offset_out = -1;
+    }
+
     if (size < 78) return AMIGA_ICON_UNKNOWN;
-    
+
     // Check magic number
     if (read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
         return AMIGA_ICON_UNKNOWN;
     }
-    
+
     // Get userData field (offset 0x2C)
     uint32_t user_data = read_be32(data + 0x2C);
-    
+
     // Check for FORM/ICON (GlowIcon)
-    // Need to calculate where it would be based on icon structure
-    // For now, scan for FORM signature
+    // Scan for FORM signature and capture offset
     for (long i = 78; i < size - 8; i++) {
         if (read_be32(data + i) == 0x464F524D) { // "FORM"
             if (i + 12 <= size && read_be32(data + i + 8) == 0x49434F4E) { // "ICON"
+                // Found GlowIcon - save offset for later use
+                if (form_offset_out) {
+                    *form_offset_out = i;
+                }
                 return AMIGA_ICON_GLOWICON;
             }
         }
     }
-    
+
     // TODO: Check tooltypes for NewIcon (IM1=/IM2=)
     // TODO: Check for MWB palette
-    
+
     // Distinguish by userData
     if (user_data == 0) {
         return AMIGA_ICON_OS13;
     } else if (user_data == 1) {
         return AMIGA_ICON_OS3;
     }
-    
+
     return AMIGA_ICON_UNKNOWN;
 }
 
@@ -289,7 +297,7 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
         colors[7] = 0xFF000000;
     } else {
         // OS3/MWB icons use 8 colors
-        get_icon_color_palette(colors);
+        get_mwb_palette(colors);
     }
     int row_bytes;
     long plane_size, total_data_size;
@@ -332,8 +340,8 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
     return 0;
 }
 
-// Parse and render ColorIcon/GlowIcon from IFF FORM ICON chunk
-static int parse_coloricon(Display *dpy, const uint8_t *data, long size, long offset, 
+// Parse and render GlowIcon from IFF FORM ICON chunk
+static int parse_glowicon(Display *dpy, const uint8_t *data, long size, long offset, 
                           Pixmap *normal_out, Pixmap *selected_out,
                           uint16_t *width_out, uint16_t *height_out,
                           uint16_t *sel_width_out, uint16_t *sel_height_out,
@@ -770,8 +778,9 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     }
 
 
-    // Detect icon format
-    AmigaIconFormat format = detect_icon_format(data, size);
+    // Detect icon format and capture FORM offset if present
+    long form_offset = -1;
+    AmigaIconFormat format = detect_icon_format(data, size, &form_offset);
 
     int ic_type = data[0x30];
     int has_drawer_data = (ic_type == 1 || ic_type == 2);
@@ -840,21 +849,9 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
     // Check if this is a valid classic icon or just placeholder data
     if (has_invalid_classic) {
-            // Before falling back to def_foo, check if there's a ColorIcon/GlowIcon
-            // Skip to where ColorIcon data would be and check for FORM signature
-            long glow_check_offset = header_offset + ICON_HEADER_SIZE;
-
-            // Scan for FORM signature
-            int found_glowicon = 0;
-            for (long offset = glow_check_offset; offset + 12 <= size; offset++) {
-                if (read_be32(data + offset) == 0x464F524D) { // "FORM"
-                    log_error("[GLOW] Invalid classic icon but found FORM at 0x%lx in %s", offset, icon_path);
-                    found_glowicon = 1;
-                    break;
-                }
-            }
-
-            if (!found_glowicon) {
+            // Before falling back to def_foo, check if we detected a GlowIcon
+            // (format detection already scanned for FORM signature)
+            if (format != AMIGA_ICON_GLOWICON) {
                 // No GlowIcon, fall back to def_foo
                 free(data);
 
@@ -879,7 +876,8 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
                 }
 
                 // Re-detect format and re-calculate offsets for def_foo
-                format = detect_icon_format(data, size);
+                // (def_foo.info should not have FORM chunks, so form_offset stays -1)
+                format = detect_icon_format(data, size, &form_offset);
                 ic_type = data[0x30];
                 has_drawer_data = (ic_type == 1 || ic_type == 2);
                 header_offset = 78 + (has_drawer_data ? 56 : 0);
@@ -897,7 +895,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
                 height = read_be16(data + header_offset + 6);
                 has_invalid_classic = 0;  // def_foo has valid classic icon
             }
-            // If found_glowicon==1, skip def_foo fallback and continue to ColorIcon parsing
+            // If format==AMIGA_ICON_GLOWICON, skip def_foo fallback and continue to GlowIcon parsing
     }
 
     // Now render the classic icon (either the original or def_foo fallback)
@@ -948,7 +946,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
         icon->sel_width = sel_width;
         icon->sel_height = sel_height;
-    } else if (!has_invalid_classic && icon->normal_picture) {
+    } else if (!has_invalid_classic && icon->normal_picture && normal_pixmap != None) {
         // No selected image - create darkened version like AmigaOS
         Pixmap dark_pixmap = create_darkened_pixmap(ctx->dpy, normal_pixmap, width, height);
         if (dark_pixmap) {
@@ -1059,24 +1057,17 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         classic_end += 6;  // DrawerData2 is 6 bytes
     }
     
-    // Now check for ColorIcon
-    if (classic_end + 12 <= size) {
-        uint32_t form_id = read_iff_id(data + classic_end);
+    // Now check for GlowIcon using the offset we already detected
+    // (no need to scan again - we captured the offset during format detection)
+    if (form_offset >= 0 && form_offset + 12 <= size) {
+        log_error("[GLOW] Using detected FORM ICON at offset 0x%lx in %s, calling parse_glowicon",
+                 form_offset, icon_path);
 
-        log_error("[GLOW] Checking for FORM at offset 0x%lx, found ID: 0x%08x (FORM=0x%08x) in %s",
-                 classic_end, form_id, IFF_FORM_ID, icon_path);
+        Pixmap color_normal = 0, color_selected = 0;
+        uint16_t color_width = 0, color_height = 0;
+        uint16_t color_sel_width = 0, color_sel_height = 0;
 
-        if (form_id == IFF_FORM_ID) {
-            log_error("[GLOW] Found FORM ICON in %s, calling parse_coloricon", icon_path);
-            // Skip form_size and icon_id - not currently used
-            // uint32_t form_size = read_be32(data + classic_end + 4);
-            // uint32_t icon_id = read_iff_id(data + classic_end + 8);
-            
-            Pixmap color_normal = 0, color_selected = 0;
-            uint16_t color_width = 0, color_height = 0;
-            uint16_t color_sel_width = 0, color_sel_height = 0;
-            
-            int parse_result = parse_coloricon(ctx->dpy, data, size, classic_end, 
+        int parse_result = parse_glowicon(ctx->dpy, data, size, form_offset, 
                                &color_normal, &color_selected,
                                &color_width, &color_height,
                                &color_sel_width, &color_sel_height,
@@ -1120,11 +1111,10 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
                 }
                 
                 XFreePixmap(ctx->dpy, color_normal);
-                
+
                 // Set current_picture for GlowIcon
                 icon->current_picture = icon->normal_picture;
             }
-        }
         }
     }
     
