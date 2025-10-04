@@ -87,7 +87,8 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
                 
                 if (stat(base_path, &st) != 0) {
                     // Orphan .info - create at 0,0
-                    create_icon_with_metadata(info_path, canvas, 0, 0,
+                    // Use full_path (the .info file itself), not info_path (which has .info appended again)
+                    create_icon_with_metadata(full_path, canvas, 0, 0,
                                               full_path, entry->d_name, TYPE_FILE);
                 }
                 continue;

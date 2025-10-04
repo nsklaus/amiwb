@@ -754,14 +754,17 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     uint8_t *data;
     long size;
 
+    log_error("[GLOW] Loading icon: %s", icon_path);
 
     if (load_icon_file(icon_path, &data, &size)) {
+        log_error("[GLOW] Failed to load %s", icon_path);
         return;
     }
 
-    
+    log_error("[GLOW] Loaded %s, size=%ld bytes", icon_path, size);
 
     if (size < 78 || read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
+        log_error("[GLOW] Invalid header in %s", icon_path);
         free(data);
         return;
     }
@@ -831,65 +834,89 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         height = read_be16(data + header_offset + 6);
     }
 
+    // IMPORTANT: Check for ColorIcon/GlowIcon BEFORE falling back to def_foo
+    // Many GlowIcons have invalid/placeholder classic icons but valid FORM ICON chunks
+    int has_invalid_classic = (depth == 0xFFFF || depth == 0 || depth > 8 || width == 0 || height == 0 || width > 256 || height > 256);
 
     // Check if this is a valid classic icon or just placeholder data
-    if (depth == 0xFFFF || depth == 0 || depth > 8 || width == 0 || height == 0 || width > 256 || height > 256) {
-            // Free the broken icon data first
-            free(data);
+    if (has_invalid_classic) {
+            // Before falling back to def_foo, check if there's a ColorIcon/GlowIcon
+            // Skip to where ColorIcon data would be and check for FORM signature
+            long glow_check_offset = header_offset + ICON_HEADER_SIZE;
 
-            // Load def_foo.info data instead
-            uint8_t *fallback_data;
-            long fallback_size;
-            if (load_icon_file(def_tool_path, &fallback_data, &fallback_size)) {
-                // def_foo should always exist as part of installation
-                icon->normal_picture = None;
-                icon->selected_picture = None;
-                return;
+            // Scan for FORM signature
+            int found_glowicon = 0;
+            for (long offset = glow_check_offset; offset + 12 <= size; offset++) {
+                if (read_be32(data + offset) == 0x464F524D) { // "FORM"
+                    log_error("[GLOW] Invalid classic icon but found FORM at 0x%lx in %s", offset, icon_path);
+                    found_glowicon = 1;
+                    break;
+                }
             }
 
-            // Use the fallback data instead
-            data = fallback_data;
-            size = fallback_size;
-
-            // Re-parse the header with def_foo data
-            if (size < 78 || read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
+            if (!found_glowicon) {
+                // No GlowIcon, fall back to def_foo
                 free(data);
-                return;
-            }
 
-            // Re-detect format and re-calculate offsets for def_foo
-            format = detect_icon_format(data, size);
-            ic_type = data[0x30];
-            has_drawer_data = (ic_type == 1 || ic_type == 2);
-            header_offset = 78 + (has_drawer_data ? 56 : 0);
+                // Load def_foo.info data instead
+                uint8_t *fallback_data;
+                long fallback_size;
+                if (load_icon_file(def_tool_path, &fallback_data, &fallback_size)) {
+                    // def_foo should always exist as part of installation
+                    icon->normal_picture = None;
+                    icon->selected_picture = None;
+                    return;
+                }
 
-            // Re-read dimensions from def_foo
-            depth = read_be16(data + header_offset + 8);
-            if (depth == 0xFFFF || depth == 0 || depth > 8) {
-                // def_foo should be valid!
-                free(data);
-                icon->normal_picture = None;
-                icon->selected_picture = None;
-                return;
+                // Use the fallback data instead
+                data = fallback_data;
+                size = fallback_size;
+
+                // Re-parse the header with def_foo data
+                if (size < 78 || read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
+                    free(data);
+                    return;
+                }
+
+                // Re-detect format and re-calculate offsets for def_foo
+                format = detect_icon_format(data, size);
+                ic_type = data[0x30];
+                has_drawer_data = (ic_type == 1 || ic_type == 2);
+                header_offset = 78 + (has_drawer_data ? 56 : 0);
+
+                // Re-read dimensions from def_foo
+                depth = read_be16(data + header_offset + 8);
+                if (depth == 0xFFFF || depth == 0 || depth > 8) {
+                    // def_foo should be valid!
+                    free(data);
+                    icon->normal_picture = None;
+                    icon->selected_picture = None;
+                    return;
+                }
+                width = read_be16(data + header_offset + 4);
+                height = read_be16(data + header_offset + 6);
+                has_invalid_classic = 0;  // def_foo has valid classic icon
             }
-            width = read_be16(data + header_offset + 4);
-            height = read_be16(data + header_offset + 6);
+            // If found_glowicon==1, skip def_foo fallback and continue to ColorIcon parsing
     }
 
-    // Now render the icon (either the original or def_foo fallback)
+    // Now render the classic icon (either the original or def_foo fallback)
+    // Skip rendering if we have invalid classic but will use GlowIcon instead
     normal_pixmap = None;
-    // Calculate how much data is available after the header
-    long first_image_data_size = size - (header_offset + ICON_HEADER_SIZE);
-    if (first_image_data_size < 0) first_image_data_size = 0;
+    if (!has_invalid_classic) {
+        // Calculate how much data is available after the header
+        long first_image_data_size = size - (header_offset + ICON_HEADER_SIZE);
+        if (first_image_data_size < 0) first_image_data_size = 0;
 
-    if (render_icon(ctx->dpy, &normal_pixmap, data + header_offset + ICON_HEADER_SIZE, width, height, depth, format, first_image_data_size)) {
-        free(data);
-        return;
+        if (render_icon(ctx->dpy, &normal_pixmap, data + header_offset + ICON_HEADER_SIZE, width, height, depth, format, first_image_data_size)) {
+            free(data);
+            return;
+        }
+        icon->normal_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);
     }
-    icon->normal_picture = XRenderCreatePicture(ctx->dpy, normal_pixmap, ctx->fmt, 0, NULL);
 
     uint32_t has_selected = read_be32(data + 0x1A);
-    if (has_selected && icon->normal_picture) {
+    if (!has_invalid_classic && has_selected && icon->normal_picture) {
         int row_bytes;
         long plane_size, first_data_size;
         calculate_icon_plane_dimensions(width, height, depth, &row_bytes, &plane_size, &first_data_size);
@@ -921,7 +948,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
         icon->sel_width = sel_width;
         icon->sel_height = sel_height;
-    } else if (icon->normal_picture) {
+    } else if (!has_invalid_classic && icon->normal_picture) {
         // No selected image - create darkened version like AmigaOS
         Pixmap dark_pixmap = create_darkened_pixmap(ctx->dpy, normal_pixmap, width, height);
         if (dark_pixmap) {
@@ -1035,9 +1062,12 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     // Now check for ColorIcon
     if (classic_end + 12 <= size) {
         uint32_t form_id = read_iff_id(data + classic_end);
-        
-        
+
+        log_error("[GLOW] Checking for FORM at offset 0x%lx, found ID: 0x%08x (FORM=0x%08x) in %s",
+                 classic_end, form_id, IFF_FORM_ID, icon_path);
+
         if (form_id == IFF_FORM_ID) {
+            log_error("[GLOW] Found FORM ICON in %s, calling parse_coloricon", icon_path);
             // Skip form_size and icon_id - not currently used
             // uint32_t form_size = read_be32(data + classic_end + 4);
             // uint32_t icon_id = read_iff_id(data + classic_end + 8);
