@@ -13,7 +13,9 @@ typedef struct Button {
     bool pressed;
     bool hover;
     bool clicked;  // True when button was clicked (press and release)
-    XftFont *font;  // Font to use for rendering
+    XftFont *font;      // Font to use for rendering (borrowed from app, don't free)
+    Visual *visual;     // Visual for rendering (borrowed from canvas, cached from xft_draw)
+    Colormap colormap;  // Colormap for rendering (borrowed from canvas, cached from xft_draw)
     void (*on_click)(void *user_data);
     void *user_data;
 } Button;

@@ -73,8 +73,10 @@ InputField* inputfield_create(int x, int y, int width, int height, XftFont *font
     field->on_enter = NULL;
     field->on_change = NULL;
     field->user_data = NULL;
-    field->font = font;  // Store the font pointer (borrowed from app)
-    
+    field->font = font;        // Store the font pointer (borrowed from app)
+    field->visual = NULL;      // Will be cached from xft_draw on first draw
+    field->colormap = None;    // Will be cached from xft_draw on first draw
+
     // Initialize mouse selection fields
     field->mouse_selecting = false;
     field->mouse_select_start = -1;
@@ -225,18 +227,20 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
     
     // Draw text content with cursor if we have a font
     if (font && xft_draw) {
+        // Cache visual and colormap from xft_draw on first use
+        if (!field->visual) {
+            field->visual = XftDrawVisual(xft_draw);
+            field->colormap = XftDrawColormap(xft_draw);
+        }
+
         // Set up text colors
         XftColor black_color, white_color;
         XRenderColor black = {0x0000, 0x0000, 0x0000, 0xffff};
         XRenderColor white = {0xffff, 0xffff, 0xffff, 0xffff};
         XRenderColor blue = {0x4858, 0x6F6F, 0xB0B0, 0xFFFF};  // From config.h
-        
-        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                          DefaultColormap(dpy, DefaultScreen(dpy)),
-                          &black, &black_color);
-        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                          DefaultColormap(dpy, DefaultScreen(dpy)),
-                          &white, &white_color);
+
+        XftColorAllocValue(dpy, field->visual, field->colormap, &black, &black_color);
+        XftColorAllocValue(dpy, field->visual, field->colormap, &white, &white_color);
         
         // Calculate text position (vertically centered, left-aligned with padding)
         int text_x = x + 5;  // Consistent padding with inputfield_pos_from_x
@@ -479,10 +483,9 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
             // Note: Cursor at end is already handled in the main rendering above
         }
         
-        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                    DefaultColormap(dpy, DefaultScreen(dpy)), &black_color);
-        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                    DefaultColormap(dpy, DefaultScreen(dpy)), &white_color);
+        // Free colors using same visual/colormap
+        XftColorFree(dpy, field->visual, field->colormap, &black_color);
+        XftColorFree(dpy, field->visual, field->colormap, &white_color);
     }
 }
 
@@ -1306,9 +1309,11 @@ static void draw_completion_dropdown(InputField *field, Display *dpy) {
                  &border_width_return, &depth_return);
     
     // Create XRender Picture for proper rendering
+    // Use default visual/colormap for completion popup (separate window)
     Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
+    Colormap colormap = DefaultColormap(dpy, DefaultScreen(dpy));
     XRenderPictFormat *format = XRenderFindVisualFormat(dpy, visual);
-    Pixmap pixmap = XCreatePixmap(dpy, field->completion_window, width, height, 
+    Pixmap pixmap = XCreatePixmap(dpy, field->completion_window, width, height,
                                   DefaultDepth(dpy, DefaultScreen(dpy)));
     Picture picture = XRenderCreatePicture(dpy, pixmap, format, 0, NULL);
     
@@ -1327,9 +1332,8 @@ static void draw_completion_dropdown(InputField *field, Display *dpy) {
     XRenderFillRectangle(dpy, PictOpSrc, picture, &black, width-1, 0, 1, height); // Right
     XRenderFillRectangle(dpy, PictOpSrc, picture, &black, 0, height-1, width, 1); // Bottom
     
-    // Create XftDraw for text rendering
-    XftDraw *xft_draw = XftDrawCreate(dpy, pixmap, visual, 
-                                      DefaultColormap(dpy, DefaultScreen(dpy)));
+    // Create XftDraw for text rendering with matching visual/colormap
+    XftDraw *xft_draw = XftDrawCreate(dpy, pixmap, visual, colormap);
     
     // Use the font stored in the InputField (passed from the app)
     if (!field->font) {
@@ -1350,10 +1354,10 @@ static void draw_completion_dropdown(InputField *field, Display *dpy) {
         start_item = field->completion_selected - max_items + 1;
     }
     
-    // Prepare XftColors
+    // Prepare XftColors with matching visual/colormap
     XftColor black_color, white_color;
-    XftColorAllocValue(dpy, visual, DefaultColormap(dpy, DefaultScreen(dpy)), &black, &black_color);
-    XftColorAllocValue(dpy, visual, DefaultColormap(dpy, DefaultScreen(dpy)), &white, &white_color);
+    XftColorAllocValue(dpy, visual, colormap, &black, &black_color);
+    XftColorAllocValue(dpy, visual, colormap, &white, &white_color);
     
     for (int i = 0; i < max_items && start_item + i < field->completion_count; i++) {
         int y = 2 + i * item_height;
@@ -1381,8 +1385,8 @@ static void draw_completion_dropdown(InputField *field, Display *dpy) {
     XFreeGC(dpy, gc);
     
     // Clean up (do NOT close the font - it belongs to the app)
-    XftColorFree(dpy, visual, DefaultColormap(dpy, DefaultScreen(dpy)), &black_color);
-    XftColorFree(dpy, visual, DefaultColormap(dpy, DefaultScreen(dpy)), &white_color);
+    XftColorFree(dpy, visual, colormap, &black_color);
+    XftColorFree(dpy, visual, colormap, &white_color);
     XftDrawDestroy(xft_draw);
     XRenderFreePicture(dpy, picture);
     XFreePixmap(dpy, pixmap);

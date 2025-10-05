@@ -78,7 +78,11 @@ ListView* listview_create(int x, int y, int width, int height) {
     lv->on_select = NULL;
     lv->on_double_click = NULL;
     lv->callback_data = NULL;
-    
+
+    // Rendering context (will be cached from xft_draw on first draw)
+    lv->visual = NULL;
+    lv->colormap = None;
+
     // Double-click detection
     lv->last_click_time = 0;
     lv->last_click_index = -1;
@@ -598,10 +602,14 @@ void listview_draw(ListView *lv, Display *dpy, Picture dest, XftDraw *xft_draw, 
             } else {
                 color = black;  // Black for files
             }
-            
-            XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                             DefaultColormap(dpy, DefaultScreen(dpy)),
-                             &color, &text_color);
+
+            // Cache visual and colormap from xft_draw on first use
+            if (!lv->visual) {
+                lv->visual = XftDrawVisual(xft_draw);
+                lv->colormap = XftDrawColormap(xft_draw);
+            }
+
+            XftColorAllocValue(dpy, lv->visual, lv->colormap, &color, &text_color);
             
             int text_x = x + 6;  // Start at x+2 from content area (which is at x+1) + additional 3 for padding
             int text_y = item_y + (LISTVIEW_ITEM_HEIGHT + font->ascent - font->descent) / 2;
@@ -637,8 +645,8 @@ void listview_draw(ListView *lv, Display *dpy, Picture dest, XftDraw *xft_draw, 
                 }
             }
             
-            XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                       DefaultColormap(dpy, DefaultScreen(dpy)), &text_color);
+            // Free color using same visual/colormap
+            XftColorFree(dpy, lv->visual, lv->colormap, &text_color);
         }
     }
     

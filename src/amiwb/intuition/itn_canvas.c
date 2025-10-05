@@ -101,13 +101,18 @@ static Canvas *manage_canvases(bool should_add_canvas, Canvas *canvas_to_remove)
 // Choose appropriate visual and depth for different canvas types
 static void choose_visual_for_canvas_type(CanvasType canvas_type, XVisualInfo *visual_info) {
     if (canvas_type == DESKTOP) {
+        // Desktop uses default visual/depth
         visual_info->visual = DefaultVisual(display, screen);
         visual_info->depth = DefaultDepth(display, screen);
-    } else if (!XMatchVisualInfo(display, screen, GLOBAL_DEPTH, TrueColor, visual_info)) {
-        visual_info->visual = DefaultVisual(display, screen);
-        visual_info->depth = DefaultDepth(display, screen);
+    } else {
+        // Try to match GLOBAL_DEPTH with TrueColor visual
+        if (!XMatchVisualInfo(display, screen, GLOBAL_DEPTH, TrueColor, visual_info)) {
+            // Fallback to default visual if GLOBAL_DEPTH not available
+            visual_info->visual = DefaultVisual(display, screen);
+            visual_info->depth = DefaultDepth(display, screen);
+        }
+        // visual_info is now properly set either by XMatchVisualInfo or to defaults
     }
-    XMatchVisualInfo(display, screen, visual_info->depth, TrueColor, visual_info);
 }
 
 // Get X11 event mask appropriate for each canvas type
@@ -251,11 +256,28 @@ static Bool init_render_pictures(Canvas *c, CanvasType t) {
     RenderContext *ctx = get_render_context(); if (!ctx) return False;
     // XRenderFindVisualFormat: Get the pixel format for our visual
     // This tells XRender how to interpret the pixel data (RGB layout, alpha channel, etc.)
-    XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, c->visual); if (!fmt) return False;
+    XRenderPictFormat *fmt = XRenderFindVisualFormat(ctx->dpy, c->visual);
+    if (!fmt) {
+        log_error("[ERROR] XRenderFindVisualFormat failed for visual=%p", (void*)c->visual);
+        return False;
+    }
+
+    // CRITICAL: Verify format depth matches canvas depth to prevent BadMatch
+    // The pixmap was created with c->depth, so the Picture format must match
+    if (fmt->depth != c->depth) {
+        log_error("[ERROR] Format depth mismatch: fmt->depth=%d, canvas->depth=%d",
+                  fmt->depth, c->depth);
+        return False;
+    }
+
     // XRenderCreatePicture: Create a "Picture" - XRender's drawable surface
     // Unlike raw pixmaps, Pictures support alpha blending and transformations
     // This one is for our off-screen buffer where we compose the window content
-    c->canvas_render = XRenderCreatePicture(ctx->dpy, c->canvas_buffer, fmt, 0, NULL); if (!c->canvas_render) return False;
+    c->canvas_render = XRenderCreatePicture(ctx->dpy, c->canvas_buffer, fmt, 0, NULL);
+    if (!c->canvas_render) {
+        log_error("[ERROR] XRenderCreatePicture failed for canvas_buffer");
+        return False;
+    }
     // Get the visual for the actual window (may differ from buffer visual)
     Visual *wv = (t == DESKTOP) ? ctx->default_visual : c->visual;
     XRenderPictFormat *wfmt = XRenderFindVisualFormat(ctx->dpy, wv); if (!wfmt) return False;

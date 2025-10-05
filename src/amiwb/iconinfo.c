@@ -65,7 +65,7 @@ void show_icon_info_dialog(FileIcon *icon) {
     
     // Create canvas window (as DIALOG type for proper window management)
     dialog->canvas = create_canvas(NULL, 100, 100, ICONINFO_WIDTH, ICONINFO_HEIGHT, DIALOG);
-    
+
     // Set minimum window size to initial size
     if (dialog->canvas) {
         dialog->canvas->min_width = ICONINFO_WIDTH;
@@ -164,10 +164,8 @@ void show_icon_info_dialog(FileIcon *icon) {
     dialog->next = g_iconinfo_dialogs;
     g_iconinfo_dialogs = dialog;
     
-    // Show the dialog
-    XMapRaised(itn_core_get_display(), dialog->canvas->win);
+    // Show the dialog (canvas is already mapped by create_canvas, just set focus)
     itn_focus_set_active(dialog->canvas);
-    
     redraw_canvas(dialog->canvas);
 }
 
@@ -451,15 +449,26 @@ static Picture create_2x_icon(FileIcon *icon) {
     }
     
     int size = ICONINFO_ICON_SIZE * 2;
-    
-    // Create pixmap for 2x icon
-    Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), 
-                                 size, size, 
-                                 DefaultDepth(dpy, DefaultScreen(dpy)));
-    
-    Picture dest = XRenderCreatePicture(dpy, pixmap,
-                                       XRenderFindStandardFormat(dpy, PictStandardARGB32),
-                                       0, NULL);
+
+    // Create pixmap for 2x icon with 32-bit depth for ARGB transparency
+    // CRITICAL: Pixmap depth MUST match Picture format depth to avoid BadMatch
+    Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy),
+                                 size, size,
+                                 32);  // 32-bit depth for ARGB32 format
+
+    XRenderPictFormat *fmt = XRenderFindStandardFormat(dpy, PictStandardARGB32);
+    if (!fmt) {
+        log_error("[ERROR] XRenderFindStandardFormat(ARGB32) failed");
+        XFreePixmap(dpy, pixmap);
+        return None;
+    }
+
+    Picture dest = XRenderCreatePicture(dpy, pixmap, fmt, 0, NULL);
+    if (dest == None) {
+        log_error("[ERROR] XRenderCreatePicture failed for 2x icon");
+        XFreePixmap(dpy, pixmap);
+        return None;
+    }
     
     // Clear with transparent
     XRenderColor clear = {0, 0, 0, 0};
@@ -948,17 +957,15 @@ void render_iconinfo_content(Canvas *canvas) {
     // Draw "Filename:" label and input field
     if (xft) {
         XftColor color;
-        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                          DefaultColormap(dpy, DefaultScreen(dpy)),
+        XftColorAllocValue(dpy, canvas->visual, canvas->colormap,
                           &(XRenderColor){0, 0, 0, 0xffff}, &color);
-        
+
         XftFont *font = get_font();
         if (font) {
             XftDrawStringUtf8(xft, &color, font, text_x, text_y + 15,
                              (XftChar8 *)"Filename:", 9);
         }
-        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                    DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+        XftColorFree(dpy, canvas->visual, canvas->colormap, &color);
     }
     
     // Draw input fields
@@ -976,18 +983,17 @@ void render_iconinfo_content(Canvas *canvas) {
     // Draw size text or button
     if (xft) {
         XftColor color;
-        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                          DefaultColormap(dpy, DefaultScreen(dpy)),
+        XftColorAllocValue(dpy, canvas->visual, canvas->colormap,
                           &(XRenderColor){0, 0, 0, 0xffff}, &color);
-        
+
         XftFont *font = get_font();
         if (font) {
             // Draw "Size: " label
             XftDrawStringUtf8(xft, &color, font, text_x, text_y,
                              (XftChar8 *)"Size: ", 6);
-            
+
             // If it's a directory and not calculated yet, draw a button
-            if (dialog->is_directory && !dialog->calculating_size && dialog->size_calc_pid <= 0 
+            if (dialog->is_directory && !dialog->calculating_size && dialog->size_calc_pid <= 0
                 && strcmp(dialog->size_text, "[Get Size]") == 0) {
                 // Create/update the button struct if needed
                 if (!dialog->get_size_button) {
@@ -1006,7 +1012,7 @@ void render_iconinfo_content(Canvas *canvas) {
                     dialog->get_size_button->y = text_y - 15;
                     dialog->get_size_button->pressed = dialog->get_size_pressed;
                 }
-                
+
                 // Draw the button using toolkit
                 button_render(dialog->get_size_button, dest, dpy, xft);
             } else {
@@ -1015,8 +1021,7 @@ void render_iconinfo_content(Canvas *canvas) {
                                  (XftChar8 *)dialog->size_text, strlen(dialog->size_text));
             }
         }
-        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                    DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+        XftColorFree(dpy, canvas->visual, canvas->colormap, &color);
     }
     
     // Continue with other fields below the icon
@@ -1027,17 +1032,15 @@ void render_iconinfo_content(Canvas *canvas) {
         // Draw label
         if (xft) {
             XftColor color;
-            XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                              DefaultColormap(dpy, DefaultScreen(dpy)),
+            XftColorAllocValue(dpy, canvas->visual, canvas->colormap,
                               &(XRenderColor){0, 0, 0, 0xffff}, &color);
-            
+
             XftFont *font = get_font();
             if (font) {
                 XftDrawStringUtf8(xft, &color, font, x, y + 15,
                                  (XftChar8 *)"Comment:", 8);
             }
-            XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                        DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+            XftColorFree(dpy, canvas->visual, canvas->colormap, &color);
         }
         
         dialog->comment_field->x = x + ICONINFO_LABEL_WIDTH;
@@ -1060,10 +1063,9 @@ void render_iconinfo_content(Canvas *canvas) {
     // Draw permissions, dates, etc.
     if (xft) {
         XftColor color;
-        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                          DefaultColormap(dpy, DefaultScreen(dpy)),
+        XftColorAllocValue(dpy, canvas->visual, canvas->colormap,
                           &(XRenderColor){0, 0, 0, 0xffff}, &color);
-        
+
         XftFont *font = get_font();
         if (font) {
             // Permissions
@@ -1074,28 +1076,28 @@ void render_iconinfo_content(Canvas *canvas) {
             XftDrawStringUtf8(xft, &color, font, x, y + 15,
                              (XftChar8 *)perm_label, strlen(perm_label));
             y += 25;
-            
+
             // Owner
             char owner_label[128];
             snprintf(owner_label, sizeof(owner_label), "Owner    : %s", dialog->owner_text);
             XftDrawStringUtf8(xft, &color, font, x, y + 15,
                              (XftChar8 *)owner_label, strlen(owner_label));
             y += 25;
-            
+
             // Group
             char group_label[128];
             snprintf(group_label, sizeof(group_label), "Group    : %s", dialog->group_text);
             XftDrawStringUtf8(xft, &color, font, x, y + 15,
                              (XftChar8 *)group_label, strlen(group_label));
             y += 25;
-            
+
             // Created date
             char created_label[128];
             snprintf(created_label, sizeof(created_label), "Created  : %s", dialog->created_text);
             XftDrawStringUtf8(xft, &color, font, x, y + 15,
                              (XftChar8 *)created_label, strlen(created_label));
             y += 25;
-            
+
             // Modified date
             char modified_label[128];
             snprintf(modified_label, sizeof(modified_label), "Modified : %s", dialog->modified_text);
@@ -1103,25 +1105,22 @@ void render_iconinfo_content(Canvas *canvas) {
                              (XftChar8 *)modified_label, strlen(modified_label));
             y += 25;
         }
-        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                    DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+        XftColorFree(dpy, canvas->visual, canvas->colormap, &color);
     }
     
     // Filepath (as input field showing directory only)
     if (dialog->path_field) {
         if (xft) {
             XftColor color;
-            XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                              DefaultColormap(dpy, DefaultScreen(dpy)),
+            XftColorAllocValue(dpy, canvas->visual, canvas->colormap,
                               &(XRenderColor){0, 0, 0, 0xffff}, &color);
-            
+
             XftFont *font = get_font();
             if (font) {
                 XftDrawStringUtf8(xft, &color, font, x, y + 15,
                                  (XftChar8 *)"Filepath", 8);
             }
-            XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                        DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+            XftColorFree(dpy, canvas->visual, canvas->colormap, &color);
         }
         
         // Position field at same X as Filename field, Y aligned with label
@@ -1137,17 +1136,15 @@ void render_iconinfo_content(Canvas *canvas) {
     if (dialog->app_field) {
         if (xft) {
             XftColor color;
-            XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                              DefaultColormap(dpy, DefaultScreen(dpy)),
+            XftColorAllocValue(dpy, canvas->visual, canvas->colormap,
                               &(XRenderColor){0, 0, 0, 0xffff}, &color);
-            
+
             XftFont *font = get_font();
             if (font) {
                 XftDrawStringUtf8(xft, &color, font, x, y + 15,
                                  (XftChar8 *)"Run with", 8);
             }
-            XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                        DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+            XftColorFree(dpy, canvas->visual, canvas->colormap, &color);
         }
         
         // Position field at same X as Filename field, Y aligned with label

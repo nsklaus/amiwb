@@ -16,7 +16,9 @@ Button* button_create(int x, int y, int width, int height, const char *label, Xf
     button->y = y;
     button->width = width;
     button->height = height;
-    button->font = font;  // Store the font reference
+    button->font = font;        // Store the font reference
+    button->visual = NULL;      // Will be cached from xft_draw on first render
+    button->colormap = None;    // Will be cached from xft_draw on first render
 
     if (label) {
         button->label = strdup(label);
@@ -112,19 +114,22 @@ void button_render(Button *button, Picture dest, Display *dpy, XftDraw *xft_draw
         }
         
         // Set up text color (black on gray background)
+        // Cache visual and colormap from xft_draw on first use
+        if (!button->visual) {
+            button->visual = XftDrawVisual(xft_draw);
+            button->colormap = XftDrawColormap(xft_draw);
+        }
+
         XftColor text_color;
         XRenderColor black = {0x0000, 0x0000, 0x0000, 0xffff};
-        XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                          DefaultColormap(dpy, DefaultScreen(dpy)),
-                          &black, &text_color);
-        
+        XftColorAllocValue(dpy, button->visual, button->colormap, &black, &text_color);
+
         // Draw the text
         XftDrawStringUtf8(xft_draw, &text_color, button->font,
                          text_x, text_y,
                          (FcChar8*)button->label, strlen(button->label));
-        
-        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                    DefaultColormap(dpy, DefaultScreen(dpy)), &text_color);
+
+        XftColorFree(dpy, button->visual, button->colormap, &text_color);
     }
 }
 

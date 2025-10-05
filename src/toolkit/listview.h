@@ -47,7 +47,11 @@ typedef struct ListView {
     void (*on_select)(int index, const char *text, void *user_data);
     void (*on_double_click)(int index, const char *text, void *user_data);
     void *callback_data;
-    
+
+    // Rendering context (cached from parent canvas)
+    Visual *visual;     // Visual for rendering (borrowed from canvas, cached from xft_draw)
+    Colormap colormap;  // Colormap for rendering (borrowed from canvas, cached from xft_draw)
+
     // Double-click detection
     unsigned long last_click_time;
     int last_click_index;

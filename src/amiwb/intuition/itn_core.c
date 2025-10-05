@@ -453,9 +453,26 @@ static int ignore_bad_window_on_get_attrs(Display *dpy, XErrorEvent *error) {
 
     if (error->error_code == 8) {  // BadMatch error code
         // Log details but DON'T make any X calls (that would cause recursion/deadlock)
-        log_error("[DEBUG] BadMatch: resourceid=0x%lx (dec %lu), request=%d.%d, serial=%lu",
-                  error->resourceid, error->resourceid,
+        const char *atom_name = "UNKNOWN";
+        if (error->resourceid == 0x25) atom_name = "XA_WM_COMMAND";
+        else if (error->resourceid == 0x29) atom_name = "XA_WM_ICON_SIZE";
+
+        log_error("[ERROR] BadMatch: resourceid=0x%lx (%s), request=%d.%d, serial=%lu",
+                  error->resourceid, atom_name,
                   error->request_code, error->minor_code, error->serial);
+
+        // Generate backtrace to identify the source of the error
+        void *buffer[64];
+        int nptrs = backtrace(buffer, 64);
+        char **strings = backtrace_symbols(buffer, nptrs);
+        if (strings) {
+            log_error("[ERROR] Backtrace:");
+            for (int i = 0; i < nptrs; i++) {
+                log_error("[ERROR]   %s", strings[i]);
+            }
+            free(strings);
+        }
+
         // Ignore BadMatch - might be invalid window with wrong attributes
         return 0;
     }

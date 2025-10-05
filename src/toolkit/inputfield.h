@@ -24,8 +24,10 @@ typedef struct InputField {
     void (*on_enter)(const char *text, void *user_data);
     void (*on_change)(const char *text, void *user_data);
     void *user_data;
-    XftFont *font;  // Font to use for this InputField (borrowed from app, don't free)
-    
+    XftFont *font;      // Font to use for this InputField (borrowed from app, don't free)
+    Visual *visual;     // Visual for rendering (borrowed from canvas, cached from xft_draw)
+    Colormap colormap;  // Colormap for rendering (borrowed from canvas, cached from xft_draw)
+
     // Mouse selection support
     bool mouse_selecting;          // True when mouse button is down for selection
     int mouse_select_start;        // Position where mouse selection started
