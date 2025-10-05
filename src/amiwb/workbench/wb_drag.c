@@ -40,6 +40,8 @@ static Canvas *drag_source_canvas = NULL;                // Source canvas
 static bool dragging_floating = false;                   // Using floating window
 static Window drag_win = None;                           // Drag window
 static Picture target_picture = 0;                       // XRender picture
+static Visual *drag_visual = NULL;                       // Drag window visual
+static Colormap drag_colormap = None;                   // Drag window colormap
 static bool drag_active = false;                         // Threshold passed
 static int drag_orig_x = 0, drag_orig_y = 0;            // Original position for restore
 static Window saved_source_window = None;                // Original display_window
@@ -153,8 +155,12 @@ static void create_drag_window(void) {
         return;
     }
 
+    // Save visual and colormap for later use in draw_drag_icon()
+    drag_visual = vinfo.visual;
+    drag_colormap = XCreateColormap(dpy, root, vinfo.visual, AllocNone);
+
     XSetWindowAttributes attrs;
-    attrs.colormap = XCreateColormap(dpy, root, vinfo.visual, AllocNone);
+    attrs.colormap = drag_colormap;
     attrs.border_pixel = 0;
     attrs.background_pixel = 0;
     attrs.override_redirect = True;
@@ -169,11 +175,11 @@ static void create_drag_window(void) {
         return;
     }
 
-    // Make input-transparent using X Shape extension
-    XShapeCombineRectangles(dpy, drag_win, ShapeInput, 0, 0, NULL, 0, ShapeSet, Unsorted);
-
     // Map window BEFORE creating XRender resources (prevents X server resource leaks)
     XMapWindow(dpy, drag_win);
+
+    // Make input-transparent using X Shape extension
+    XShapeCombineMask(dpy, drag_win, ShapeInput, 0, 0, None, ShapeSet);
 
     // Create XRender picture for compositing
     XRenderPictFormat *fmt = XRenderFindVisualFormat(dpy, vinfo.visual);
@@ -211,14 +217,12 @@ static void draw_drag_icon(void) {
 
     // Draw label
     if (dragged_icon->label) {
-        XftDraw *xft = XftDrawCreate(dpy, drag_win,
-                                     DefaultVisual(dpy, DefaultScreen(dpy)),
-                                     DefaultColormap(dpy, DefaultScreen(dpy)));
+        // Use drag window's actual visual and colormap (32-bit), not default (24-bit)
+        XftDraw *xft = XftDrawCreate(dpy, drag_win, drag_visual, drag_colormap);
         if (xft) {
             XftColor color;
             XRenderColor rc = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
-            XftColorAllocValue(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                              DefaultColormap(dpy, DefaultScreen(dpy)), &rc, &color);
+            XftColorAllocValue(dpy, drag_visual, drag_colormap, &rc, &color);
 
             XftFont *font = get_font();
             if (font) {

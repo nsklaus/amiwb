@@ -444,10 +444,22 @@ Canvas *find_window_by_path(const char *path) {
 // This silently ignores expected "window doesn't exist" errors when querying
 // window attributes on windows that may have been destroyed asynchronously
 static int ignore_bad_window_on_get_attrs(Display *dpy, XErrorEvent *error) {
+    extern void log_error(const char *format, ...);
+
     if (error->error_code == 3) {  // BadWindow error code
         // Silently ignore - window was destroyed asynchronously
         return 0;
     }
+
+    if (error->error_code == 8) {  // BadMatch error code
+        // Log details but DON'T make any X calls (that would cause recursion/deadlock)
+        log_error("[DEBUG] BadMatch: resourceid=0x%lx (dec %lu), request=%d.%d, serial=%lu",
+                  error->resourceid, error->resourceid,
+                  error->request_code, error->minor_code, error->serial);
+        // Ignore BadMatch - might be invalid window with wrong attributes
+        return 0;
+    }
+
     // Call the default error handler for other errors
     extern int x_error_handler(Display *dpy, XErrorEvent *error);
     return x_error_handler(dpy, error);
@@ -835,6 +847,24 @@ int x_error_handler(Display *dpy, XErrorEvent *error) {
         log_error("Call stack:\n");
         for (int i = 0; i < nptrs; i++) {
             log_error("  [%d] %s\n", i, strings[i]);
+
+            // Try to resolve address to file:line using addr2line
+            char cmd[512];
+            // Use absolute path to binary instead of /proc/self/exe
+            snprintf(cmd, sizeof(cmd), "addr2line -e /usr/local/bin/amiwb %p", buffer[i]);
+            FILE *fp = popen(cmd, "r");
+            if (fp) {
+                char location[256];
+                if (fgets(location, sizeof(location), fp)) {
+                    // Remove newline
+                    location[strcspn(location, "\n")] = 0;
+                    // Only print if not "??:?" (unknown)
+                    if (strcmp(location, "??:?") != 0 && strcmp(location, "??:0") != 0) {
+                        log_error("      → %s\n", location);
+                    }
+                }
+                pclose(fp);
+            }
         }
         free(strings);
     }

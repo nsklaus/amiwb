@@ -198,7 +198,6 @@ Window xdnd_find_target(Display *dpy, int root_x, int root_y) {
     if (parent != root && is_window_valid(dpy, parent) && xdnd_is_aware(dpy, parent)) {
         return parent;
     }
-
     return None;
 }
 

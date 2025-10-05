@@ -126,11 +126,9 @@ bool itn_composite_init_overlay(void) {
         return false;
     }
 
-    // Make overlay window transparent to input
-    XserverRegion region = XFixesCreateRegion(dpy, NULL, 0);
-    XFixesSetWindowShapeRegion(dpy, overlay_window, ShapeBounding, 0, 0, 0);
-    XFixesSetWindowShapeRegion(dpy, overlay_window, ShapeInput, 0, 0, region);
-    XFixesDestroyRegion(dpy, region);
+    // Make overlay window transparent to input using Shape extension
+    // Pass 0 rectangles to create empty input region (input passes through)
+    XShapeCombineRectangles(dpy, overlay_window, ShapeInput, 0, 0, NULL, 0, ShapeSet, 0);
 
     // Get standard formats
     format_32 = XRenderFindStandardFormat(dpy, PictStandardARGB32);

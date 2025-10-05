@@ -4,10 +4,12 @@
 #include "icons.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
+#include <Imlib2.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 
 // Icon parsing constants. We render into a 32-bit pixmap so XRender
 // can alpha-composite icons consistently across visuals.
@@ -18,6 +20,33 @@
 #define IFF_ICON_ID 0x49434F4E  // 'ICON'
 #define IFF_FACE_ID 0x46414345  // 'FACE'
 #define IFF_IMAG_ID 0x494D4147  // 'IMAG'
+
+// AICON container format (PNG-based modern icon format)
+#define AICON_MAGIC 0x4149434F4E  // 'AICON' (5 bytes)
+#define AICON_VERSION 1
+
+#define SECTION_PNG_NORMAL   1
+#define SECTION_PNG_SELECTED 2
+#define SECTION_METADATA     3
+
+typedef struct {
+    char magic[5];           // "AICON"
+    uint8_t version;         // 1
+    uint16_t num_sections;   // Number of data sections
+} __attribute__((packed)) AiconHeader;
+
+typedef struct {
+    uint32_t type;      // Section type
+    uint32_t offset;    // Byte offset from start of file
+    uint32_t size;      // Size in bytes
+} __attribute__((packed)) AiconSectionEntry;
+
+typedef struct {
+    int16_t x;          // Screen position X (0 = auto)
+    int16_t y;          // Screen position Y (0 = auto)
+    uint8_t flags;      // Icon flags (reserved)
+    uint8_t reserved[3];
+} __attribute__((packed)) AiconMetadata;
 
 typedef struct {
     uint8_t width_minus_1;      // Width - 1
@@ -146,7 +175,39 @@ static AmigaIconFormat detect_icon_format(const uint8_t *data, long size, long *
     // Get userData field (offset 0x2C)
     uint32_t user_data = read_be32(data + 0x2C);
 
-    // Check for FORM/ICON (GlowIcon)
+    // Check for WIM/MIM markers FIRST (GlowIcon - ToolTypes variant)
+    // WIM = Workbench Image, MIM = MagicWB Image
+    // These appear in ToolTypes section and indicate GlowIcon encoded in 7-bit ASCII
+    // We check these FIRST because they're more specific than generic FORM chunks
+    for (long i = 78; i < size - 4; i++) {
+        // Check for WIM1= or MIM1= markers
+        if (i + 5 <= size) {
+            if ((data[i] == 'W' || data[i] == 'M') &&
+                data[i+1] == 'I' && data[i+2] == 'M' && data[i+3] == '1' && data[i+4] == '=') {
+                // Found WIM1= or MIM1= - this is a GlowIcon ToolTypes variant
+                if (form_offset_out) {
+                    *form_offset_out = i; // Save marker position for parser
+                }
+                return AMIGA_ICON_GLOWICON;
+            }
+        }
+    }
+
+    // Check for IM1= marker (NewIcon or GlowIcon fallback)
+    // If we find IM1= but no WIM/MIM, try using it as GlowIcon start point
+    for (long i = 78; i < size - 4; i++) {
+        if (i + 4 <= size) {
+            if (data[i] == 'I' && data[i+1] == 'M' && data[i+2] == '1' && data[i+3] == '=') {
+                // Found IM1= marker - could be GlowIcon or NewIcon
+                if (form_offset_out) {
+                    *form_offset_out = i; // Save marker position
+                }
+                return AMIGA_ICON_GLOWICON; // Try treating as GlowIcon first
+            }
+        }
+    }
+
+    // Check for FORM/ICON LAST (GlowIcon - IFF chunks variant)
     // Scan for FORM signature and capture offset
     for (long i = 78; i < size - 8; i++) {
         if (read_be32(data + i) == 0x464F524D) { // "FORM"
@@ -160,7 +221,6 @@ static AmigaIconFormat detect_icon_format(const uint8_t *data, long size, long *
         }
     }
 
-    // TODO: Check tooltypes for NewIcon (IM1=/IM2=)
     // TODO: Check for MWB palette
 
     // Distinguish by userData
@@ -340,15 +400,28 @@ static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, ui
     return 0;
 }
 
-// Parse and render GlowIcon from IFF FORM ICON chunk
-static int parse_glowicon(Display *dpy, const uint8_t *data, long size, long offset, 
+// Parse and render GlowIcon from IFF FORM ICON chunk or ToolTypes encoding
+static int parse_glowicon(Display *dpy, const uint8_t *data, long size, long offset,
                           Pixmap *normal_out, Pixmap *selected_out,
                           uint16_t *width_out, uint16_t *height_out,
                           uint16_t *sel_width_out, uint16_t *sel_height_out,
                           XRenderPictFormat *fmt, const char *icon_path) {
-    
-    if (offset + 12 > size) return 1;  // Need at least FORM header
-    
+
+    if (offset + 12 > size) return 1;  // Need at least FORM header or marker
+
+    // Check if offset points to ToolTypes markers (WIM/MIM/IM) instead of FORM chunks
+    if (offset + 4 <= size) {
+        // Check for WIM1=, MIM1=, or IM1= markers
+        if ((data[offset] == 'W' || data[offset] == 'M' || data[offset] == 'I') &&
+            data[offset+1] == 'I' && data[offset+2] == 'M' && data[offset+3] == '1' &&
+            offset + 5 <= size && data[offset+4] == '=') {
+            // This is ToolTypes encoding - not yet implemented
+            log_error("[ERROR] icons.c:parse_glowicon() - ToolTypes encoding (WIM/MIM/IM1) not yet implemented in %s", icon_path);
+            return 1;  // Return error for now until we implement the decoder
+        }
+    }
+
+    // Continue with FORM ICON chunk parsing
     if (read_iff_id(data + offset) != IFF_FORM_ID) return 1;
     uint32_t form_size = read_be32(data + offset + 4);
     if (read_iff_id(data + offset + 8) != IFF_ICON_ID) return 1;
@@ -686,6 +759,11 @@ static int parse_glowicon(Display *dpy, const uint8_t *data, long size, long off
 // Create a darkened copy of an image for selected state
 // Only darkens non-transparent pixels
 static Pixmap create_darkened_pixmap(Display *dpy, Pixmap src, int width, int height) {
+    // Guard against invalid pixmap - don't try to render garbage
+    if (src == None || src == 0) {
+        return 0;
+    }
+
     // Get the image data from source pixmap
     XImage *src_img = XGetImage(dpy, src, 0, 0, width, height, AllPlanes, ZPixmap);
     if (!src_img) return 0;
@@ -747,6 +825,188 @@ static Pixmap create_darkened_pixmap(Display *dpy, Pixmap src, int width, int he
     return dark;
 }
 
+// Load AICON container format (PNG-based modern icon format)
+static int load_aicon_container(FileIcon *icon, RenderContext *ctx,
+                                 const uint8_t *data, long size) {
+    // Verify header size
+    if (size < sizeof(AiconHeader)) {
+        log_error("[ERROR] AICON file too small: %s", icon->path);
+        return -1;
+    }
+
+    const AiconHeader *hdr = (const AiconHeader *)data;
+
+    // Verify magic
+    if (memcmp(hdr->magic, "AICON", 5) != 0) {
+        log_error("[ERROR] Invalid AICON magic in %s", icon->path);
+        return -1;
+    }
+
+    // Check version
+    if (hdr->version != AICON_VERSION) {
+        log_error("[ERROR] Unsupported AICON version %d in %s", hdr->version, icon->path);
+        return -1;
+    }
+
+    // Read directory
+    const uint8_t *dir_ptr = data + sizeof(AiconHeader);
+    const AiconSectionEntry *entries = (const AiconSectionEntry *)dir_ptr;
+
+    printf("[AICON] Loading %s: version=%d, sections=%d\n",
+           icon->path, hdr->version, hdr->num_sections);
+
+    const uint8_t *png1_data = NULL, *png2_data = NULL;
+    uint32_t png1_size = 0, png2_size = 0;
+
+    // Find PNG sections
+    for (int i = 0; i < hdr->num_sections; i++) {
+        uint32_t offset = entries[i].offset;
+        uint32_t sec_size = entries[i].size;
+
+        printf("[AICON]   Section[%d]: type=%u offset=%u size=%u\n",
+               i, entries[i].type, offset, sec_size);
+
+        // Validate offset and size
+        if (offset + sec_size > size) {
+            log_error("[ERROR] Invalid AICON section offset in %s", icon->path);
+            return -1;
+        }
+
+        switch (entries[i].type) {
+        case SECTION_PNG_NORMAL:
+            png1_data = data + offset;
+            png1_size = sec_size;
+            printf("[AICON]     PNG_NORMAL at offset %u, first 4 bytes: %02x %02x %02x %02x\n",
+                   offset, png1_data[0], png1_data[1], png1_data[2], png1_data[3]);
+            break;
+
+        case SECTION_PNG_SELECTED:
+            png2_data = data + offset;
+            png2_size = sec_size;
+            printf("[AICON]     PNG_SELECTED at offset %u, first 4 bytes: %02x %02x %02x %02x\n",
+                   offset, png2_data[0], png2_data[1], png2_data[2], png2_data[3]);
+            break;
+
+        case SECTION_METADATA:
+            // Metadata handling could be added here (position, etc.)
+            break;
+        }
+    }
+
+    // Must have at least normal PNG
+    if (!png1_data || png1_size == 0) {
+        log_error("[ERROR] AICON missing normal PNG in %s", icon->path);
+        return -1;
+    }
+
+    // Load PNG using Imlib2 (via temporary file, as Imlib2 doesn't support memory loading)
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "/tmp/amiwb_aicon_%d.png", getpid());
+
+    printf("[AICON] Writing %u bytes to temp file: %s\n", png1_size, tmp_path);
+
+    FILE *tmp_file = fopen(tmp_path, "wb");
+    if (!tmp_file) {
+        log_error("[ERROR] Failed to create temp file for AICON");
+        return -1;
+    }
+    size_t written = fwrite(png1_data, 1, png1_size, tmp_file);
+    fclose(tmp_file);
+
+    printf("[AICON] Wrote %zu bytes, loading with Imlib2...\n", written);
+
+    // Load with Imlib2
+    Imlib_Image img1 = imlib_load_image(tmp_path);
+    unlink(tmp_path);  // Delete temp file
+
+    if (!img1) {
+        log_error("[ERROR] Failed to decode PNG in AICON %s", icon->path);
+        return -1;
+    }
+
+    // Get dimensions
+    imlib_context_set_image(img1);
+    int width = imlib_image_get_width();
+    int height = imlib_image_get_height();
+
+    printf("[AICON] Imlib2 loaded image: %dx%d\n", width, height);
+
+    // Get 32-bit TrueColor visual for alpha compositing (same as classic icons)
+    XVisualInfo vinfo;
+    if (!XMatchVisualInfo(ctx->dpy, DefaultScreen(ctx->dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
+        log_error("[ERROR] No %d-bit TrueColor visual for AICON %s", ICON_RENDER_DEPTH, icon->path);
+        imlib_free_image();
+        return -1;
+    }
+
+    // Create X11 Pixmap with proper depth (32-bit for alpha)
+    Pixmap normal_pixmap = XCreatePixmap(ctx->dpy, DefaultRootWindow(ctx->dpy),
+                                         width, height, ICON_RENDER_DEPTH);
+    if (!normal_pixmap) {
+        log_error("[ERROR] Failed to create pixmap for AICON %s", icon->path);
+        imlib_free_image();
+        return -1;
+    }
+
+    // Configure Imlib2 context
+    imlib_context_set_display(ctx->dpy);
+    imlib_context_set_visual(vinfo.visual);
+    imlib_context_set_colormap(DefaultColormap(ctx->dpy, DefaultScreen(ctx->dpy)));
+    imlib_context_set_drawable(normal_pixmap);
+    imlib_context_set_image(img1);
+
+    // Render to pixmap
+    imlib_render_image_on_drawable(0, 0);
+
+    // Create Picture for compositing
+    icon->normal_picture = create_icon_picture(ctx->dpy, normal_pixmap, ctx->fmt);
+    icon->width = width;
+    icon->height = height;
+
+    imlib_free_image();
+
+    // Load selected state (if provided)
+    Pixmap selected_pixmap = None;
+
+    if (png2_data && png2_size > 0) {
+        // Load second PNG
+        tmp_file = fopen(tmp_path, "wb");
+        if (tmp_file) {
+            fwrite(png2_data, 1, png2_size, tmp_file);
+            fclose(tmp_file);
+
+            Imlib_Image img2 = imlib_load_image(tmp_path);
+            unlink(tmp_path);
+
+            if (img2) {
+                imlib_context_set_image(img2);
+
+                selected_pixmap = XCreatePixmap(ctx->dpy, DefaultRootWindow(ctx->dpy),
+                                               width, height, ICON_RENDER_DEPTH);
+                if (selected_pixmap) {
+                    imlib_context_set_drawable(selected_pixmap);
+                    imlib_render_image_on_drawable(0, 0);
+                }
+
+                imlib_free_image();
+            }
+        }
+    }
+
+    // If no selected PNG provided, create darkened version
+    if (selected_pixmap == None) {
+        selected_pixmap = create_darkened_pixmap(ctx->dpy, normal_pixmap, width, height);
+    }
+
+    icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
+    icon->sel_width = width;
+    icon->sel_height = height;
+    icon->current_picture = icon->normal_picture;
+
+    // Successfully loaded AICON
+    return 0;
+}
+
 // Build XRender Pictures for normal/selected from a .info source. If
 // the given path is not a .info, fall back to drawer/tool defaults.
 void create_icon_images(FileIcon *icon, RenderContext *ctx) {
@@ -757,22 +1017,25 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         icon_path = (icon->type == TYPE_DRAWER || icon->type == TYPE_ICONIFIED) ?
                     def_drawer_path : def_tool_path;
     }
-    
 
     uint8_t *data;
     long size;
 
-    log_error("[GLOW] Loading icon: %s", icon_path);
-
     if (load_icon_file(icon_path, &data, &size)) {
-        log_error("[GLOW] Failed to load %s", icon_path);
+        log_error("[ERROR] icons.c:create_icon_images() - Failed to load icon file: %s", icon_path);
         return;
     }
 
-    log_error("[GLOW] Loaded %s, size=%ld bytes", icon_path, size);
+    // Check for AICON format (PNG container)
+    if (size >= 5 && memcmp(data, "AICON", 5) == 0) {
+        load_aicon_container(icon, ctx, data, size);
+        free(data);
+        return;
+    }
 
+    // Check for Amiga format (classic DiskObject)
     if (size < 78 || read_be16(data) != 0xE310 || read_be16(data + 2) != 1) {
-        log_error("[GLOW] Invalid header in %s", icon_path);
+        log_error("[ERROR] icons.c:create_icon_images() - Invalid icon header in %s", icon_path);
         free(data);
         return;
     }
@@ -798,43 +1061,10 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     // Read the icon header values - but first check depth to see if header is valid
     depth = read_be16(data + header_offset + 8);
 
-    // Check for extended format (MWB icons without classic image)
-    if (depth == 0xFFFF) {
-        // Extended format: real image data is at offset 0x88
-        // This format is used by some MWB icons to save space
-        // Structure at 0x88: 2 bytes unknown, then width/height/depth
-        int extended_offset = 0x88;  // Fixed offset for extended format
-
-
-        // Verify we have enough data
-        if (size >= extended_offset + 10 + ICON_HEADER_SIZE) {
-            // Read from the extended header (different structure)
-            width = read_be16(data + extended_offset + 2);   // at 0x8A
-            height = read_be16(data + extended_offset + 4);  // at 0x8C
-            depth = read_be16(data + extended_offset + 6);   // at 0x8E
-
-
-            // Validate the extended header
-            if (depth > 0 && depth <= 8 && width > 0 && width <= 256 && height > 0 && height <= 256) {
-                // For extended format, the actual image data starts at 0x9A (go back 1 row from 0xa2)
-                // We need to set header_offset such that header_offset + ICON_HEADER_SIZE = 0x9A
-                // ICON_HEADER_SIZE is 20 (0x14), so header_offset = 0x9A - 0x14 = 0x86
-                header_offset = 0x86;  // This will make image data read from 0x9A
-
-                // Continue with these values
-            } else {
-                // Invalid extended header, will fall back to def_foo
-                width = 0;
-                height = 0;
-                depth = 0xFFFF;  // Keep marker for fallback
-            }
-        } else {
-            // Not enough data for extended format
-            width = 0;
-            height = 0;
-        }
-    } else if (depth == 0 || depth > 8) {
-        // Invalid classic header
+    // Valid depth range is 1-8 for classic Amiga icons
+    if (depth == 0 || depth > 8) {
+        // Invalid classic header (depth out of range)
+        // This will trigger either GlowIcon parsing or def_foo fallback
         width = 0;
         height = 0;
     } else {
@@ -946,8 +1176,9 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         icon->selected_picture = create_icon_picture(ctx->dpy, selected_pixmap, ctx->fmt);
         icon->sel_width = sel_width;
         icon->sel_height = sel_height;
-    } else if (!has_invalid_classic && icon->normal_picture && normal_pixmap != None) {
+    } else if (!has_invalid_classic && icon->normal_picture && normal_pixmap != None && form_offset < 0) {
         // No selected image - create darkened version like AmigaOS
+        // But skip if GlowIcon will be parsed later (form_offset >= 0)
         Pixmap dark_pixmap = create_darkened_pixmap(ctx->dpy, normal_pixmap, width, height);
         if (dark_pixmap) {
             icon->selected_picture = create_icon_picture(ctx->dpy, dark_pixmap, ctx->fmt);
@@ -962,6 +1193,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
     if (normal_pixmap != None) {
         XFreePixmap(ctx->dpy, normal_pixmap);
+        normal_pixmap = None;  // Prevent use-after-free
     }
 
     // Only set dimensions if they're valid
@@ -1059,9 +1291,8 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     
     // Now check for GlowIcon using the offset we already detected
     // (no need to scan again - we captured the offset during format detection)
-    if (form_offset >= 0 && form_offset + 12 <= size) {
-        log_error("[GLOW] Using detected FORM ICON at offset 0x%lx in %s, calling parse_glowicon",
-                 form_offset, icon_path);
+    if (form_offset >= 0 && form_offset + 4 <= size) {
+        // GlowIcon detected - parse it silently unless there's an error
 
         Pixmap color_normal = 0, color_selected = 0;
         uint16_t color_width = 0, color_height = 0;
