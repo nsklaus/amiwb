@@ -1181,8 +1181,8 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         // But skip if GlowIcon will be parsed later (form_offset >= 0)
         Pixmap dark_pixmap = create_darkened_pixmap(ctx->dpy, normal_pixmap, width, height);
         if (dark_pixmap) {
+            // create_icon_picture frees the pixmap after creating the Picture
             icon->selected_picture = create_icon_picture(ctx->dpy, dark_pixmap, ctx->fmt);
-            XFreePixmap(ctx->dpy, dark_pixmap);
         } else {
             // Fallback to same image if darkening fails
             icon->selected_picture = icon->normal_picture;
@@ -1331,8 +1331,8 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
                     // No selected image - create darkened version
                     Pixmap dark_pixmap = create_darkened_pixmap(ctx->dpy, color_normal, color_width, color_height);
                     if (dark_pixmap) {
-                        icon->selected_picture = XRenderCreatePicture(ctx->dpy, dark_pixmap, ctx->fmt, 0, NULL);
-                        XFreePixmap(ctx->dpy, dark_pixmap);
+                        // create_icon_picture frees the pixmap after creating the Picture
+                        icon->selected_picture = create_icon_picture(ctx->dpy, dark_pixmap, ctx->fmt);
                     } else {
                         // Fallback to same image if darkening fails
                         icon->selected_picture = icon->normal_picture;

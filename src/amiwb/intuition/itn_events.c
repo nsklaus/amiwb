@@ -980,7 +980,10 @@ static void frame_and_activate(Window client, XWindowAttributes *attrs, bool map
 
 void intuition_handle_map_request(XMapRequestEvent *event) {
     XWindowAttributes attrs;
-    get_window_attrs_with_defaults(event->window, &attrs);
+    if (!get_window_attrs_with_defaults(event->window, &attrs)) {
+        // Not a valid Window - ignore
+        return;
+    }
 
     if (should_skip_framing(event->window, &attrs)) {
         XMapWindow(display, event->window);
@@ -1006,7 +1009,11 @@ void intuition_handle_map_notify(XMapEvent *event) {
 
     // Get window attributes first to check for override-redirect
     XWindowAttributes attrs;
-    get_window_attrs_with_defaults(event->window, &attrs);
+    if (!get_window_attrs_with_defaults(event->window, &attrs)) {
+        // Not a valid Window (could be a Pixmap ID from icon creation)
+        // X11 can generate MapNotify events for non-Window resources in some cases
+        return;
+    }
 
     // Handle override-redirect windows FIRST (before checking if managed)
     // These are popup menus, tooltips, etc. that bypass window manager

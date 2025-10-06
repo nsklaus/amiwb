@@ -29,6 +29,8 @@ void itn_focus_set_active(Canvas *canvas) {
     // Deactivate all other windows
     for (int i = 0; i < canvas_count; i++) {
         Canvas *o = canvas_array[i];
+        if (!o) continue;
+
         if ((o->type == WINDOW || o->type == DIALOG) && o != canvas) {
             if (o->active) {
                 o->active = false;
@@ -43,6 +45,12 @@ void itn_focus_set_active(Canvas *canvas) {
     // Set new active
     g_active_canvas = canvas;
     canvas->active = true;
+
+    // Validate canvas window before attempting focus operations
+    // Protects against asynchronous window destruction or corruption
+    if (!is_window_valid(dpy, canvas->win)) {
+        return;
+    }
 
     // Raise window and accumulate damage
     XRaiseWindow(dpy, canvas->win);

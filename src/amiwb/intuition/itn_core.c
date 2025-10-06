@@ -440,14 +440,36 @@ Canvas *find_window_by_path(const char *path) {
     return NULL;
 }
 
+// Window being validated (to match errors to the correct validation)
+static volatile Window g_validating_window = None;
+// Flag to track whether validation encountered an error
+// Must be volatile because error handler runs in signal-like context
+static volatile int g_validation_error = 0;
+
 // Temporary error handler to suppress BadWindow errors during attribute queries
 // This silently ignores expected "window doesn't exist" errors when querying
 // window attributes on windows that may have been destroyed asynchronously
 static int ignore_bad_window_on_get_attrs(Display *dpy, XErrorEvent *error) {
     extern void log_error(const char *format, ...);
 
-    if (error->error_code == 3) {  // BadWindow error code
+    // CRITICAL: Only mark validation failed if the error is for the window we're validating
+    // X11 errors are asynchronous - we may receive errors from previous operations
+    if (error->error_code == 3 && error->resourceid == g_validating_window) {  // BadWindow error code
         // Silently ignore - window was destroyed asynchronously
+        g_validation_error = 1;  // Mark validation as failed
+        return 0;
+    }
+
+    if (error->error_code == 4) {  // BadPixmap error code
+        // This indicates a Pixmap ID was passed where a Window ID was expected
+        log_error("[ERROR] BadPixmap: resourceid=0x%lx, request=%d.%d",
+                  error->resourceid, error->request_code, error->minor_code);
+
+        // Only mark validation failed if this Pixmap IS the window we're validating
+        // (which means someone passed a Pixmap ID where a Window ID was expected)
+        if (error->resourceid == g_validating_window) {
+            g_validation_error = 1;
+        }
         return 0;
     }
 
@@ -485,19 +507,31 @@ static int ignore_bad_window_on_get_attrs(Display *dpy, XErrorEvent *error) {
 bool is_window_valid(Display *dpy, Window win) {
     if (win == None) return false;
 
+    // Set window being validated and clear error flag
+    g_validating_window = win;
+    g_validation_error = 0;
+
     // Install temporary error handler to ignore BadWindow errors
     // This prevents validation checks from generating error spam when
     // checking destroyed windows (which is the whole point of validation)
     XErrorHandler old_handler = XSetErrorHandler(ignore_bad_window_on_get_attrs);
 
     XWindowAttributes attrs;
-    Bool result = XGetWindowAttributes(dpy, win, &attrs);
+    XGetWindowAttributes(dpy, win, &attrs);
     XSync(dpy, False);  // Force execution to catch any errors now
 
     // Restore original error handler
     XSetErrorHandler(old_handler);
 
-    return result == True;
+    // Clear window being validated
+    g_validating_window = None;
+
+    // Check if an error occurred (the error handler sets g_validation_error)
+    // This is necessary because XGetWindowAttributes may return success even when
+    // an error occurs asynchronously
+    bool valid = (g_validation_error == 0);
+
+    return valid;
 }
 
 // Safe XGetWindowAttributes - handles asynchronous window destruction race
