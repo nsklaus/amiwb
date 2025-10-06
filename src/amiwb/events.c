@@ -503,12 +503,12 @@ void handle_events(void) {
             diskdrives_poll();
         }
 
-        // Check progress dialogs for updates (only on timeout to avoid overhead)
-        if (ready == 0) {
-            workbench_check_progress_dialogs();
-            iconinfo_check_size_calculations();
-            intuition_check_arrow_scroll_repeat();
-        }
+        // CRITICAL FIX: Check progress dialogs on EVERY iteration, not just timeout
+        // These functions use non-blocking I/O and return immediately if no data
+        // Without this, progress dialogs never appear because select() rarely times out
+        workbench_check_progress_dialogs();
+        iconinfo_check_size_calculations();
+        intuition_check_arrow_scroll_repeat();
     }  // End of while (running)
 }
 

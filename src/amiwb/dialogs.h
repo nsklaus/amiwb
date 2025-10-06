@@ -87,6 +87,10 @@ typedef struct ProgressDialog {
     ProgressOperation operation;
     char current_file[PATH_SIZE];
     float percent;
+    int files_done;
+    int files_total;
+    off_t bytes_done;
+    off_t bytes_total;
     int pipe_fd;
     pid_t child_pid;
     time_t start_time;              // When operation started

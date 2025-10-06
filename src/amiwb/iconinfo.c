@@ -869,13 +869,15 @@ void iconinfo_check_size_calculations(void) {
                 // Calculation complete
                 format_file_size(size, dialog->size_text, sizeof(dialog->size_text));
                 dialog->calculating_size = false;
-                dialog->size_calc_pid = -1;
-                dialog->size_pipe_fd = -1;
-                
-                // Reap the child process
+
+                // Reap the child process BEFORE clearing the PID
                 int status;
                 waitpid(dialog->size_calc_pid, &status, WNOHANG);
-                
+
+                // Now clear the tracking variables
+                dialog->size_calc_pid = -1;
+                dialog->size_pipe_fd = -1;
+
                 // Redraw to show the result
                 if (dialog->canvas) {
                     redraw_canvas(dialog->canvas);

@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
+#include <time.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xft/Xft.h>
@@ -25,6 +26,35 @@ extern void redraw_canvas(Canvas *canvas);
 extern XftFont *get_font(void);
 extern void compute_max_scroll(Canvas *canvas);
 extern int get_text_width(const char *text);
+
+// Progress system (from wb_progress.c)
+typedef struct {
+    enum {
+        MSG_START,
+        MSG_PROGRESS,
+        MSG_COMPLETE,
+        MSG_ERROR
+    } type;
+    time_t start_time;
+    int files_done;
+    int files_total;
+    char current_file[NAME_SIZE];
+    size_t bytes_done;
+    size_t bytes_total;
+    // Icon creation metadata (used on MSG_COMPLETE)
+    char dest_path[PATH_SIZE];
+    char dest_dir[PATH_SIZE];
+    bool create_icon;
+    bool has_sidecar;
+    char sidecar_src[PATH_SIZE];
+    char sidecar_dst[PATH_SIZE];
+    int icon_x, icon_y;
+    Window target_window;
+} ProgressMessage;
+
+extern int perform_file_operation_with_progress_ex(FileOperation op, const char *src_path,
+                                                    const char *dst_path, const char *custom_title,
+                                                    ProgressMessage *icon_metadata);
 
 // ============================================================================
 // Drag State Variables
@@ -638,15 +668,42 @@ static void perform_cross_canvas_drop(Canvas *target) {
         }
 
         if (moved == 2) {
-            if (drag_source_canvas) {
-                compute_content_bounds(drag_source_canvas);
-                compute_max_scroll(drag_source_canvas);
-                redraw_canvas(drag_source_canvas);
+            // Cross-filesystem move: use progress system for copy+delete
+            // Prepare icon metadata for async operation
+            ProgressMessage icon_meta = {0};
+            icon_meta.create_icon = true;
+            icon_meta.has_sidecar = false;
+            icon_meta.icon_x = place_x;
+            icon_meta.icon_y = place_y;
+            icon_meta.target_window = target->win;
+            snprintf(icon_meta.dest_path, sizeof(icon_meta.dest_path), "%s", dst_path);
+            snprintf(icon_meta.dest_dir, sizeof(icon_meta.dest_dir), "%s", dst_dir);
+
+            // Check for sidecar .info file
+            char src_info[FULL_SIZE];
+            snprintf(src_info, sizeof(src_info), "%s.info", src_path_abs);
+            if (check_if_file_exists(src_info)) {
+                icon_meta.has_sidecar = true;
+                strncpy(icon_meta.sidecar_src, src_info, sizeof(icon_meta.sidecar_src) - 1);
+                icon_meta.sidecar_src[sizeof(icon_meta.sidecar_src) - 1] = '\0';
+
+                // Build destination .info path with bounds checking
+                // Use double FULL_SIZE to silence GCC truncation warning
+                char dst_info[FULL_SIZE * 2];
+                const char *base = strrchr(dst_path, '/');
+                const char *name_only = base ? base + 1 : dst_path;
+                snprintf(dst_info, sizeof(dst_info), "%s/%s.info", dst_dir, name_only);
+                strncpy(icon_meta.sidecar_dst, dst_info, sizeof(icon_meta.sidecar_dst) - 1);
+                icon_meta.sidecar_dst[sizeof(icon_meta.sidecar_dst) - 1] = '\0';
             }
-            if (target) {
-                compute_content_bounds(target);
-                compute_max_scroll(target);
-                redraw_canvas(target);
+
+            // Perform cross-filesystem move with progress
+            perform_file_operation_with_progress_ex(FILE_OP_MOVE, src_path_abs,
+                                                    dst_path, NULL, &icon_meta);
+
+            // Refresh source canvas
+            if (drag_source_canvas) {
+                refresh_canvas(drag_source_canvas);
             }
             return;
         }

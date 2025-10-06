@@ -940,9 +940,9 @@ ProgressDialog* show_progress_dialog(ProgressOperation op, const char *title) {
     dialog->child_pid = 0;
     dialog->abort_requested = false;
     dialog->on_abort = NULL;
-    
-    // Create canvas window (400x150)
-    dialog->canvas = create_canvas(NULL, 200, 150, 400, 150, DIALOG);
+
+    // Create canvas window (400x164)
+    dialog->canvas = create_canvas(NULL, 200, 150, 400, 164, DIALOG);
     if (!dialog->canvas) {
         log_error("[ERROR] show_progress_dialog: failed to create canvas\n");
         free(dialog);
@@ -1133,9 +1133,9 @@ Canvas* create_progress_window(ProgressOperation op, const char *title) {
     int screen_width = DisplayWidth(dpy, screen);
     int screen_height = DisplayHeight(dpy, screen);
     int x = (screen_width - 400) / 2;
-    int y = (screen_height - 150) / 2;
-    
-    Canvas *canvas = create_canvas(NULL, x, y, 400, 150, DIALOG_PROGRESS);
+    int y = (screen_height - 164) / 2;
+
+    Canvas *canvas = create_canvas(NULL, x, y, 400, 164, DIALOG_PROGRESS);
     if (!canvas) {
         log_error("[ERROR] create_progress_window: failed to create canvas\n");
         return NULL;
@@ -1203,27 +1203,27 @@ void render_progress_dialog_content(Canvas *canvas) {
         return;
     }
     
-    
+
     XRenderColor text_color = BLACK;
     XftColor xft_text;
     XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &text_color, &xft_text);
-    
-    
-    // Line 2: Current file (with operation prefix)
+
+    // Line 1: Current file (at top, with operation prefix)
+    int text_y = content_y + 20;
     const char *op_prefix = dialog->operation == PROGRESS_MOVE ? "Moving: " :
                            dialog->operation == PROGRESS_COPY ? "Copying: " :
                            dialog->operation == PROGRESS_DELETE ? "Deleting: " :
                            dialog->operation == PROGRESS_EXTRACT ? "File: " :
                            "";
-    
+
     char display_text[PATH_SIZE + 20];
     snprintf(display_text, sizeof(display_text), "%s%s", op_prefix, dialog->current_file);
-    
+
     // Truncate with "..." if too long
     XGlyphInfo text_ext;
     XftTextExtentsUtf8(dpy, font, (FcChar8*)display_text, strlen(display_text), &text_ext);
     int max_width = content_w - 40;  // Leave margin
-    
+
     if (text_ext.xOff > max_width) {
         // Truncate and add ...
         int len = strlen(display_text);
@@ -1237,16 +1237,49 @@ void render_progress_dialog_content(Canvas *canvas) {
             if (text_ext.xOff <= max_width) break;
         }
     }
-    
-    int text_y = content_y + 20;  // Move text up - no padding line before
+
     XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, content_x + 20, text_y,
                      (FcChar8*)display_text, strlen(display_text));
-    
-    // Progress bar position right after text - no padding line
+
+    // Line 2: Bytes and file count (below filename)
+    int info_y = text_y + font->height + 2;
+    char info_text[256];
+
+    // Check if totals are known yet (child process may still be counting)
+    if (dialog->bytes_total == -1 || dialog->files_total == -1) {
+        // Still counting files and bytes in child process
+        snprintf(info_text, sizeof(info_text), "Calculating size...");
+    } else {
+        // Format bytes in human-readable form
+        if (dialog->bytes_total < 1024 * 1024) {
+            // Show in KB for small files
+            double bytes_kb = dialog->bytes_done / 1024.0;
+            double total_kb = dialog->bytes_total / 1024.0;
+            snprintf(info_text, sizeof(info_text), "%.1f KB / %.1f KB  (%d/%d files)",
+                    bytes_kb, total_kb, dialog->files_done, dialog->files_total);
+        } else if (dialog->bytes_total < 1024 * 1024 * 1024) {
+            // Show in MB
+            double bytes_mb = dialog->bytes_done / (1024.0 * 1024.0);
+            double total_mb = dialog->bytes_total / (1024.0 * 1024.0);
+            snprintf(info_text, sizeof(info_text), "%.1f MB / %.1f MB  (%d/%d files)",
+                    bytes_mb, total_mb, dialog->files_done, dialog->files_total);
+        } else {
+            // Show in GB for large files
+            double bytes_gb = dialog->bytes_done / (1024.0 * 1024.0 * 1024.0);
+            double total_gb = dialog->bytes_total / (1024.0 * 1024.0 * 1024.0);
+            snprintf(info_text, sizeof(info_text), "%.2f GB / %.2f GB  (%d/%d files)",
+                    bytes_gb, total_gb, dialog->files_done, dialog->files_total);
+        }
+    }
+
+    XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, content_x + 20, info_y,
+                     (FcChar8*)info_text, strlen(info_text));
+
+    // Progress bar position - 10px closer to info text
     int bar_x = content_x + 20;
-    int bar_y = content_y + 35;
-    int bar_width = content_w - 40;
-    int bar_height = font->height * 2;
+    int bar_y = info_y + font->height - 8;
+    int bar_width = content_w - 40;  // Resizes with window
+    int bar_height = (font->height * 2) - 8;
     
     // Draw progress bar background (gray)
     XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY,
@@ -1283,7 +1316,7 @@ void render_progress_dialog_content(Canvas *canvas) {
     // Determine text color based on progress bar position
     // Turn white when blue bar is within 5px of text start (sooner transition)
     bool use_white = (percent_x - bar_x - 5) < filled_width;
-    
+
     // Draw percentage with appropriate color
     if (use_white) {
         XftColor xft_white;
@@ -1296,8 +1329,8 @@ void render_progress_dialog_content(Canvas *canvas) {
         XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, percent_x, percent_y,
                          (FcChar8*)percent_text, strlen(percent_text));
     }
-    
-    // Abort button - right after progress bar
+
+    // Abort button - centered horizontally, 10px below bar
     int button_x = content_x + (content_w - BUTTON_WIDTH) / 2;
     int button_y = bar_y + bar_height + 10;
     

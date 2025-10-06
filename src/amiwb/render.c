@@ -872,7 +872,8 @@ void redraw_canvas(Canvas *canvas) {
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, BORDER_WIDTH_LEFT -1, 20, 1, canvas->height); 
 
         // right border
-        int right_border_width = (canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT);
+        // Dialogs and client windows use 8px border, workbench windows use 20px
+        int right_border_width = (canvas->type == DIALOG || canvas->client_win != None) ? BORDER_WIDTH_RIGHT_CLIENT : BORDER_WIDTH_RIGHT;
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, canvas->width - right_border_width, BORDER_HEIGHT_TOP, right_border_width, canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM);  
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &WHITE, canvas->width - right_border_width, 20, 1, canvas->height); 
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &BLACK, canvas->width -1, 0, 1, canvas->height); 

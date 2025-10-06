@@ -140,6 +140,55 @@ void count_files_in_directory(const char *path, int *count) {
     wb_queue_free(&queue);
 }
 
+// Count files AND total bytes in directory tree (iterative)
+void count_files_and_bytes(const char *path, int *file_count, off_t *total_bytes) {
+    if (!path || !file_count || !total_bytes) return;
+
+    DirQueue queue;
+    wb_queue_init(&queue);
+
+    if (wb_queue_push(&queue, path) != 0) {
+        wb_queue_free(&queue);
+        return;
+    }
+
+    char *current_path;
+    while ((current_path = wb_queue_pop(&queue)) != NULL) {
+        DIR *dir = opendir(current_path);
+        if (!dir) {
+            free(current_path);
+            continue;
+        }
+
+        struct dirent *entry;
+        char full_path[PATH_SIZE];
+
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+
+            snprintf(full_path, sizeof(full_path), "%s/%s", current_path, entry->d_name);
+
+            struct stat st;
+            if (stat(full_path, &st) == 0) {
+                if (S_ISDIR(st.st_mode)) {
+                    if (wb_queue_push(&queue, full_path) != 0) {
+                        log_error("[WARNING] count_files_and_bytes: Failed to queue %s", full_path);
+                    }
+                } else if (S_ISREG(st.st_mode)) {
+                    (*file_count)++;
+                    *total_bytes += st.st_size;
+                }
+            }
+        }
+        closedir(dir);
+        free(current_path);
+    }
+
+    wb_queue_free(&queue);
+}
+
 // Remove file or directory recursively
 int wb_fileops_remove_recursive(const char *path) {
     if (!path || !*path) return -1;
@@ -398,6 +447,10 @@ pid_t calculate_directory_size(const char *path, int *pipe_fd) {
                     if (S_ISREG(st.st_mode)) {
                         // Regular file - add its size
                         total_size += st.st_size;
+                        #ifdef DEBUG_SIZE_CALC
+                        log_error("[SIZE_CALC] %s: %ld bytes (total now: %ld)",
+                                entry->d_name, (long)st.st_size, (long)total_size);
+                        #endif
                     } else if (S_ISDIR(st.st_mode)) {
                         // Directory - push to stack for processing
                         struct dir_entry *new_entry = malloc(sizeof(struct dir_entry));
@@ -415,7 +468,12 @@ pid_t calculate_directory_size(const char *path, int *pipe_fd) {
             closedir(dir);
             free(current);
         }
-        
+
+        #ifdef DEBUG_SIZE_CALC
+        log_error("[SIZE_CALC] Final total size: %ld bytes (%.2f MB)",
+                (long)total_size, (double)total_size / (1024.0 * 1024.0));
+        #endif
+
         // Write result to pipe
         if (write(pipefd[1], &total_size, sizeof(total_size)) != sizeof(total_size)) {
             log_error("[ERROR] Failed to write size to pipe");
