@@ -4,6 +4,7 @@
 #include "render.h"
 #include "config.h"
 #include "intuition/itn_internal.h"
+#include "../toolkit/progressbar/progressbar.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
@@ -464,7 +465,7 @@ static void render_text_content(Dialog *dialog, Picture dest,
             dialog->input_field->height = INPUT_HEIGHT;
             
             // Draw the InputField using toolkit function
-            inputfield_draw(dialog->input_field, canvas->canvas_render, dpy, canvas->xft_draw, dialog->font);
+            inputfield_render(dialog->input_field, canvas->canvas_render, dpy, canvas->xft_draw);
         }
     } else {
         // For rename dialog, show the original prompt
@@ -498,7 +499,7 @@ static void render_text_content(Dialog *dialog, Picture dest,
             dialog->input_field->height = INPUT_HEIGHT;
             
             // Draw the InputField using toolkit function
-            inputfield_draw(dialog->input_field, canvas->canvas_render, dpy, canvas->xft_draw, dialog->font);
+            inputfield_render(dialog->input_field, canvas->canvas_render, dpy, canvas->xft_draw);
         }
     }
     
@@ -701,7 +702,7 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
             
             // Only process left click (Button1)
             if (event->button == Button1) {
-                if (inputfield_handle_completion_click(d->input_field, event->x, event->y)) {
+                if (inputfield_handle_completion_click(d->input_field, event->x, event->y, itn_core_get_display())) {
                     // Selection was made, hide the dropdown
                     inputfield_hide_completions(d->input_field, itn_core_get_display());
                     redraw_canvas(d->canvas);
@@ -766,8 +767,8 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
             // Handle click in InputField
             if (inputfield_handle_click(dialog->input_field, event->x, event->y)) {
                 // Now calculate and set cursor position
-                int pos = inputfield_pos_from_x(dialog->input_field, event->x, 
-                                               itn_core_get_display(), dialog->font);
+                int pos = inputfield_pos_from_x(dialog->input_field, event->x,
+                                               itn_core_get_display());
                 dialog->input_field->cursor_pos = pos;
                 dialog->input_field->mouse_selecting = true;
                 dialog->input_field->mouse_select_start = pos;
@@ -1015,6 +1016,9 @@ void close_progress_dialog(ProgressDialog *dialog) {
     // Clean up
     if (dialog->canvas) {
         itn_canvas_destroy(dialog->canvas);
+    }
+    if (dialog->progress_bar) {
+        progressbar_destroy(dialog->progress_bar);
     }
     free(dialog);
 }
@@ -1280,54 +1284,19 @@ void render_progress_dialog_content(Canvas *canvas) {
     int bar_y = info_y + font->height - 8;
     int bar_width = content_w - 40;  // Resizes with window
     int bar_height = (font->height * 2) - 8;
-    
-    // Draw progress bar background (gray)
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY,
-                        bar_x + 1, bar_y + 1, bar_width - 2, bar_height - 2);
-    
-    // Draw progress bar fill (blue)
-    int filled_width = (int)((bar_width - 2) * (dialog->percent / 100.0f));
-    if (filled_width > 0) {
-        XRenderFillRectangle(dpy, PictOpSrc, dest, &BLUE,
-                            bar_x + 1, bar_y + 1, filled_width, bar_height - 2);
-    }
-    
-    // Draw 3D borders (black top/left, white bottom/right)
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
-                        bar_x, bar_y, bar_width, 1);  // Top
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &BLACK,
-                        bar_x, bar_y, 1, bar_height);  // Left
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
-                        bar_x, bar_y + bar_height - 1, bar_width, 1);  // Bottom
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &WHITE,
-                        bar_x + bar_width - 1, bar_y, 1, bar_height);  // Right
-    
-    // Draw percentage text centered on the progress bar
-    char percent_text[16];
-    snprintf(percent_text, sizeof(percent_text), "%.0f%%", dialog->percent);
-    
-    XGlyphInfo percent_ext;
-    XftTextExtentsUtf8(dpy, font, (FcChar8*)percent_text, strlen(percent_text), &percent_ext);
-    
-    // Center the text horizontally and vertically in the progress bar
-    int percent_x = bar_x + (bar_width - percent_ext.xOff) / 2;
-    int percent_y = bar_y + (bar_height + font->ascent) / 2 - 2;  // Adjust Y by -2 for better centering
-    
-    // Determine text color based on progress bar position
-    // Turn white when blue bar is within 5px of text start (sooner transition)
-    bool use_white = (percent_x - bar_x - 5) < filled_width;
 
-    // Draw percentage with appropriate color
-    if (use_white) {
-        XftColor xft_white;
-        XRenderColor white_color = WHITE;
-        XftColorAllocValue(dpy, canvas->visual, canvas->colormap, &white_color, &xft_white);
-        XftDrawStringUtf8(canvas->xft_draw, &xft_white, font, percent_x, percent_y,
-                         (FcChar8*)percent_text, strlen(percent_text));
-        XftColorFree(dpy, canvas->visual, canvas->colormap, &xft_white);
-    } else {
-        XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, percent_x, percent_y,
-                         (FcChar8*)percent_text, strlen(percent_text));
+    // Create progress bar widget lazily if it doesn't exist
+    if (!dialog->progress_bar) {
+        dialog->progress_bar = progressbar_create(bar_x, bar_y, bar_width, bar_height, font);
+        if (dialog->progress_bar) {
+            progressbar_set_show_percentage(dialog->progress_bar, true);
+        }
+    }
+
+    // Update and render progress bar using toolkit widget
+    if (dialog->progress_bar) {
+        progressbar_set_percent(dialog->progress_bar, dialog->percent);
+        progressbar_render(dialog->progress_bar, dest, dpy, canvas->xft_draw);
     }
 
     // Abort button - centered horizontally, 10px below bar

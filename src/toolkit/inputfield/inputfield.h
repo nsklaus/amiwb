@@ -5,7 +5,7 @@
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
 #include <stdbool.h>
-#include "../amiwb/config.h"  // For NAME_SIZE
+#include "../toolkit_config.h"  // For NAME_SIZE
 
 #define INPUTFIELD_MAX_LENGTH NAME_SIZE
 
@@ -53,7 +53,7 @@ void inputfield_set_callbacks(InputField *field,
                              void (*on_change)(const char*, void*),
                              void *user_data);
 void inputfield_set_focus(InputField *field, bool has_focus);
-void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft_draw, XftFont *font);
+void inputfield_render(InputField *field, Picture dest, Display *dpy, XftDraw *xft_draw);
 bool inputfield_handle_click(InputField *field, int click_x, int click_y);
 bool inputfield_handle_mouse_motion(InputField *field, int x, int y, Display *dpy);
 bool inputfield_handle_mouse_release(InputField *field, int x, int y);
@@ -62,7 +62,7 @@ void inputfield_insert_char(InputField *field, char c);
 void inputfield_delete_char(InputField *field);
 void inputfield_backspace(InputField *field);
 void inputfield_move_cursor(InputField *field, int delta);
-int inputfield_pos_from_x(InputField *field, int x, Display *dpy, XftFont *font);
+int inputfield_pos_from_x(InputField *field, int x, Display *dpy);
 void inputfield_scroll_to_end(InputField *field);
 void inputfield_update_size(InputField *field, int new_width);
 void inputfield_set_disabled(InputField *field, bool disabled);
@@ -74,7 +74,7 @@ void inputfield_set_completion_base_dir(InputField *field, const char *dir);
 void inputfield_show_completions(InputField *field, Display *dpy, Window parent_window);
 void inputfield_show_completions_at(InputField *field, Display *dpy, Window parent_window, int x, int y);
 void inputfield_hide_completions(InputField *field, Display *dpy);
-bool inputfield_handle_completion_click(InputField *field, int x, int y);
+bool inputfield_handle_completion_click(InputField *field, int x, int y, Display *dpy);
 bool inputfield_handle_dropdown_scroll(InputField *field, int direction, Display *dpy);
 void inputfield_apply_completion(InputField *field, int index);
 bool inputfield_is_completion_window(InputField *field, Window window);

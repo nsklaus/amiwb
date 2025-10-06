@@ -468,8 +468,8 @@ void dialog_draw(Dialog *dialog) {
     // Draw widgets
     for (int i = 0; i < dialog->field_count; i++) {
         if (dialog->fields[i]) {
-            inputfield_draw(dialog->fields[i], dialog->picture, dialog->display,
-                          dialog->xft_draw, dialog->font);
+            inputfield_render(dialog->fields[i], dialog->picture, dialog->display,
+                            dialog->xft_draw);
         }
     }
     

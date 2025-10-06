@@ -5,8 +5,8 @@
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/Xrender.h>
 #include <stdbool.h>
-#include "../toolkit/button.h"
-#include "../toolkit/inputfield.h"
+#include "../toolkit/button/button.h"
+#include "../toolkit/inputfield/inputfield.h"
 
 // Dialog types
 typedef enum {

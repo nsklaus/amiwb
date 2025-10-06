@@ -7,9 +7,9 @@
 #include "config.h"
 #include "intuition/itn_public.h"
 #include "icons.h"
-#include "../toolkit/inputfield.h"
-#include "../toolkit/button.h"
-#include "../toolkit/listview.h"
+#include "../toolkit/inputfield/inputfield.h"
+#include "../toolkit/button/button.h"
+#include "../toolkit/listview/listview.h"
 #include <stdbool.h>
 #include <sys/types.h>
 

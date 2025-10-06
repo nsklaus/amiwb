@@ -5,7 +5,7 @@
 #include "config.h"
 #include "workbench/wb_public.h"
 #include "intuition/itn_internal.h"
-#include "../toolkit/button.h"
+#include "../toolkit/button/button.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
@@ -975,8 +975,7 @@ void render_iconinfo_content(Canvas *canvas) {
         dialog->name_field->x = text_x;
         dialog->name_field->y = text_y + 20;
         dialog->name_field->width = field_width - (text_x - x);
-        XftFont *font = get_font();
-        inputfield_draw(dialog->name_field, dest, dpy, xft, font);
+        inputfield_render(dialog->name_field, dest, dpy, xft);
     }
     
     // Move down for size info
@@ -1048,8 +1047,7 @@ void render_iconinfo_content(Canvas *canvas) {
         dialog->comment_field->x = x + ICONINFO_LABEL_WIDTH;
         dialog->comment_field->y = y;
         dialog->comment_field->width = field_width - ICONINFO_LABEL_WIDTH;
-        XftFont *font = get_font();
-        inputfield_draw(dialog->comment_field, dest, dpy, xft, font);
+        inputfield_render(dialog->comment_field, dest, dpy, xft);
         y += 30;
         
         // Draw comment listview
@@ -1057,6 +1055,7 @@ void render_iconinfo_content(Canvas *canvas) {
             dialog->comment_list->x = x + ICONINFO_LABEL_WIDTH;
             dialog->comment_list->y = y;
             dialog->comment_list->width = field_width - ICONINFO_LABEL_WIDTH;  // Same width as comment field
+            XftFont *font = get_font();
             listview_draw(dialog->comment_list, dpy, dest, xft, font);
             y += 85;  // Move past the listview (80px height + 5px spacing)
         }
@@ -1129,8 +1128,7 @@ void render_iconinfo_content(Canvas *canvas) {
         dialog->path_field->x = x + ICONINFO_LABEL_WIDTH;
         dialog->path_field->y = y;
         dialog->path_field->width = field_width - ICONINFO_LABEL_WIDTH;
-        XftFont *font = get_font();
-        inputfield_draw(dialog->path_field, dest, dpy, xft, font);
+        inputfield_render(dialog->path_field, dest, dpy, xft);
         y += 25;
     }
     
@@ -1153,8 +1151,7 @@ void render_iconinfo_content(Canvas *canvas) {
         dialog->app_field->x = x + ICONINFO_LABEL_WIDTH;
         dialog->app_field->y = y;
         dialog->app_field->width = field_width - ICONINFO_LABEL_WIDTH;
-        XftFont *font = get_font();
-        inputfield_draw(dialog->app_field, dest, dpy, xft, font);
+        inputfield_render(dialog->app_field, dest, dpy, xft);
         y += 25;
     }
     

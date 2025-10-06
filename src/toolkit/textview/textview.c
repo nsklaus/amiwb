@@ -1,5 +1,5 @@
 #include "textview.h"
-#include "toolkit.h"
+#include "../toolkit.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

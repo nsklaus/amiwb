@@ -24,8 +24,8 @@
 
 // Toolkit includes
 #include "../toolkit/toolkit.h"
-#include "../toolkit/button.h"
-#include "../toolkit/inputfield.h"
+#include "../toolkit/button/button.h"
+#include "../toolkit/inputfield/inputfield.h"
 
 typedef struct {
     // GTK/WebKit components
@@ -333,7 +333,7 @@ static void redraw_toolbar(void) {
     button_render(app->go_btn, pic, dpy, xft_draw);
 
     // Draw input field
-    inputfield_draw(app->url_field, pic, dpy, xft_draw, app->font);
+    inputfield_render(app->url_field, pic, dpy, xft_draw);
 
     XRenderFreePicture(dpy, pic);
 

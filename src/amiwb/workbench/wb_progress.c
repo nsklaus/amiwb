@@ -508,7 +508,6 @@ static int copy_directory_recursive_with_progress(const char *src_dir, const cha
 
     // Send initial message immediately so parent can show dialog after 1 second
     if (progress && progress->pipe_fd > 0) {
-        log_error("[DEBUG] Child: copy_directory starting, sending initial UPDATE");
         ProgressUpdate initial = {
             .files_done = 0,
             .files_total = -1,  // Unknown - still counting
@@ -810,11 +809,6 @@ void workbench_check_progress_dialogs(void) {
                     continue;
                 }
 
-                log_error("[DEBUG] Parent: Received UPDATE - files:%d/%d bytes:%lld/%lld (elapsed:%lds)",
-                         update.files_done, update.files_total,
-                         (long long)update.bytes_done, (long long)update.bytes_total,
-                         (long)(now - dialog->start_time));
-
                 // Mark as started when we get first message
                 if (dialog->percent < 0) {
                     dialog->percent = 0.0f;
@@ -834,7 +828,6 @@ void workbench_check_progress_dialogs(void) {
 
                 // Create window if threshold passed
                 if (!dialog->canvas && now - dialog->start_time >= PROGRESS_DIALOG_THRESHOLD) {
-                    log_error("[DEBUG] Parent: Creating dialog (threshold reached)");
                     const char *title = dialog->operation == PROGRESS_COPY ? "Copying Files..." :
                                       dialog->operation == PROGRESS_MOVE ? "Moving Files..." :
                                       dialog->operation == PROGRESS_DELETE ? "Deleting Files..." :

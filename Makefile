@@ -22,7 +22,12 @@ AMIWB_SRCS = $(wildcard $(AMIWB_DIR)/*.c) \
              $(wildcard $(AMIWB_DIR)/workbench/*.c) \
              $(wildcard $(AMIWB_DIR)/menus/*.c) \
              $(wildcard $(AMIWB_DIR)/menus/addons/*.c)
-TOOLKIT_SRCS = $(wildcard $(TOOLKIT_DIR)/*.c)
+TOOLKIT_SRCS = $(wildcard $(TOOLKIT_DIR)/*.c) \
+               $(wildcard $(TOOLKIT_DIR)/button/*.c) \
+               $(wildcard $(TOOLKIT_DIR)/inputfield/*.c) \
+               $(wildcard $(TOOLKIT_DIR)/listview/*.c) \
+               $(wildcard $(TOOLKIT_DIR)/progressbar/*.c) \
+               $(wildcard $(TOOLKIT_DIR)/textview/*.c)
 
 # Object files
 AMIWB_OBJS = $(AMIWB_SRCS:.c=.o)
@@ -62,6 +67,21 @@ $(AMIWB_DIR)/menus/addons/%.o: $(AMIWB_DIR)/menus/addons/%.c
 $(TOOLKIT_DIR)/%.o: $(TOOLKIT_DIR)/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -fPIC -c $< -o $@
 
+$(TOOLKIT_DIR)/button/%.o: $(TOOLKIT_DIR)/button/%.c
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -fPIC -c $< -o $@
+
+$(TOOLKIT_DIR)/inputfield/%.o: $(TOOLKIT_DIR)/inputfield/%.c
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -fPIC -c $< -o $@
+
+$(TOOLKIT_DIR)/listview/%.o: $(TOOLKIT_DIR)/listview/%.c
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -fPIC -c $< -o $@
+
+$(TOOLKIT_DIR)/progressbar/%.o: $(TOOLKIT_DIR)/progressbar/%.c
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -fPIC -c $< -o $@
+
+$(TOOLKIT_DIR)/textview/%.o: $(TOOLKIT_DIR)/textview/%.c
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -fPIC -c $< -o $@
+
 # Clean
 clean:
 	rm -f $(AMIWB_OBJS) $(TOOLKIT_OBJS) $(AMIWB_EXEC) $(TOOLKIT_LIB)
@@ -75,6 +95,11 @@ install: $(TOOLKIT_LIB) $(AMIWB_EXEC)
 	ldconfig
 	mkdir -p /usr/local/include/amiwb/toolkit
 	cp $(TOOLKIT_DIR)/*.h /usr/local/include/amiwb/toolkit/
+	cp $(TOOLKIT_DIR)/button/*.h /usr/local/include/amiwb/toolkit/
+	cp $(TOOLKIT_DIR)/inputfield/*.h /usr/local/include/amiwb/toolkit/
+	cp $(TOOLKIT_DIR)/listview/*.h /usr/local/include/amiwb/toolkit/
+	cp $(TOOLKIT_DIR)/progressbar/*.h /usr/local/include/amiwb/toolkit/
+	cp $(TOOLKIT_DIR)/textview/*.h /usr/local/include/amiwb/toolkit/
 	# Install amiwb binary
 	mkdir -p /usr/local/bin
 	cp $(AMIWB_EXEC) /usr/local/bin/amiwb.new

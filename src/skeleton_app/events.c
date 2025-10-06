@@ -9,8 +9,8 @@
  * - Event timing/profiling
  */
 
-#include "../toolkit/button.h"      /* Include toolkit first */
-#include "../toolkit/inputfield.h"   /* This pulls in main config.h */
+#include "../toolkit/button/button.h"      /* Include toolkit first */
+#include "../toolkit/inputfield/inputfield.h"   /* This pulls in main config.h */
 #include "events.h"
 #include "menus.h"
 #include "logging.h"

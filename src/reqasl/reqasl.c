@@ -1,9 +1,9 @@
 #include "reqasl.h"
 #include "config.h"
 #include "font_manager.h"
-#include "../toolkit/button.h"
-#include "../toolkit/inputfield.h"
-#include "../toolkit/listview.h"
+#include "../toolkit/button/button.h"
+#include "../toolkit/inputfield/inputfield.h"
+#include "../toolkit/listview/listview.h"
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/extensions/Xrender.h>
@@ -1326,7 +1326,7 @@ static void draw_window(ReqASL *req) {
         if (strcmp(req->file_field->text, req->file_text) != 0) {
             inputfield_set_text(req->file_field, req->file_text);
         }
-        inputfield_draw(req->file_field, dest, req->display, temp_xft_draw, req->font);
+        inputfield_render(req->file_field, dest, req->display, temp_xft_draw);
     }
     
     // Drawer field (middle input)
@@ -1340,7 +1340,7 @@ static void draw_window(ReqASL *req) {
         if (strcmp(req->drawer_field->text, req->drawer_text) != 0) {
             inputfield_set_text(req->drawer_field, req->drawer_text);
         }
-        inputfield_draw(req->drawer_field, dest, req->display, temp_xft_draw, req->font);
+        inputfield_render(req->drawer_field, dest, req->display, temp_xft_draw);
     }
     
     // Pattern field (top-most input)
@@ -1354,7 +1354,7 @@ static void draw_window(ReqASL *req) {
         if (strcmp(req->pattern_field->text, req->pattern_text) != 0) {
             inputfield_set_text(req->pattern_field, req->pattern_text);
         }
-        inputfield_draw(req->pattern_field, dest, req->display, temp_xft_draw, req->font);
+        inputfield_render(req->pattern_field, dest, req->display, temp_xft_draw);
     }
     
     // Draw buttons with dynamic spacing (moved down by 2 pixels)
@@ -1910,8 +1910,8 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     return true;
                 }
                 // Click is on drawer field's dropdown
-                if (inputfield_handle_completion_click(req->drawer_field, 
-                                                      event->xbutton.x, event->xbutton.y)) {
+                if (inputfield_handle_completion_click(req->drawer_field,
+                                                      event->xbutton.x, event->xbutton.y, req->display)) {
                     // Selection was made, close dropdown
                     inputfield_hide_completions(req->drawer_field, req->display);
                     // Field text already updated by inputfield_handle_completion_click
@@ -1929,8 +1929,8 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                     return true;
                 }
                 // Click is on file field's dropdown
-                if (inputfield_handle_completion_click(req->file_field, 
-                                                      event->xbutton.x, event->xbutton.y)) {
+                if (inputfield_handle_completion_click(req->file_field,
+                                                      event->xbutton.x, event->xbutton.y, req->display)) {
                     // Selection was made, close dropdown
                     inputfield_hide_completions(req->file_field, req->display);
                     // Field text already updated by inputfield_handle_completion_click

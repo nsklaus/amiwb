@@ -1,6 +1,6 @@
 #include "button.h"
-#include "toolkit.h"
-#include "../amiwb/config.h"
+#include "../toolkit.h"
+#include "../toolkit_config.h"
 #include <stdlib.h>
 #include <string.h>
 #include <X11/Xft/Xft.h>

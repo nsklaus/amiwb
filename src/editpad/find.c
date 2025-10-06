@@ -1,6 +1,6 @@
 #include "find.h"
 #include "editpad.h"
-#include "../toolkit/textview.h"
+#include "../toolkit/textview/textview.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>

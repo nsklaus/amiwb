@@ -4,7 +4,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
 #include <stdbool.h>
-#include "../toolkit/textview.h"
+#include "../toolkit/textview/textview.h"
 #include "config.h"
 #include "syntax_highlight.h"
 

@@ -1,6 +1,6 @@
 #include "inputfield.h"
-#include "toolkit.h"
-#include "../amiwb/config.h"
+#include "../toolkit.h"
+#include "../toolkit_config.h"
 #include <stdlib.h>
 #include <string.h>
 #include <X11/keysym.h>
@@ -163,11 +163,18 @@ void inputfield_set_focus(InputField *field, bool has_focus) {
     }
 }
 
-void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft_draw, XftFont *font) {
+void inputfield_render(InputField *field, Picture dest, Display *dpy, XftDraw *xft_draw) {
     if (!field || !dpy || dest == None) {
         return;
     }
-    
+
+    XftFont *font = field->font;  // Use font from field
+    if (!font) {
+        fprintf(stderr, "[ERROR] InputField (%s): No font configured\n",
+                field->name[0] ? field->name : "unnamed");
+        return;
+    }
+
     int x = field->x;
     int y = field->y;
     int w = field->width;
@@ -490,21 +497,26 @@ void inputfield_draw(InputField *field, Picture dest, Display *dpy, XftDraw *xft
 }
 
 // Helper to get character position from X coordinate
-int inputfield_pos_from_x(InputField *field, int x, Display *dpy, XftFont *font) {
-    if (!field || !dpy || !font) {
+int inputfield_pos_from_x(InputField *field, int x, Display *dpy) {
+    if (!field || !dpy) {
         return 0;
     }
-    
+
+    XftFont *font = field->font;  // Use font from field
+    if (!font) {
+        return 0;
+    }
+
     // Get relative X within text area
     int text_x = field->x + 5;  // 5 pixel padding
     int rel_x = x - text_x;
     if (rel_x < 0) return field->visible_start;
-    
+
     // Find position by measuring text widths
     int len = strlen(field->text);
     int best_pos = field->visible_start;
     int prev_width = 0;
-    
+
     for (int i = field->visible_start; i <= len; i++) {
         XGlyphInfo info;
         if (i > field->visible_start) {
@@ -570,8 +582,8 @@ bool inputfield_handle_mouse_motion(InputField *field, int x, int y, Display *dp
     // Check if still within field bounds vertically
     if (y >= field->y && y < field->y + field->height) {
         // Get position from X coordinate
-        int new_pos = inputfield_pos_from_x(field, x, dpy, field->font);
-        
+        int new_pos = inputfield_pos_from_x(field, x, dpy);
+
         // Update cursor position
         field->cursor_pos = new_pos;
         
@@ -1487,7 +1499,7 @@ void inputfield_hide_completions(InputField *field, Display *dpy) {
 }
 
 // Handle click on completion dropdown
-bool inputfield_handle_completion_click(InputField *field, int x, int y) {
+bool inputfield_handle_completion_click(InputField *field, int x, int y, Display *dpy) {
     if (!field || !field->completion_window || field->completion_count == 0) {
         return false;
     }
@@ -1503,10 +1515,7 @@ bool inputfield_handle_completion_click(InputField *field, int x, int y) {
     // Calculate the visible window and scroll offset
     // This must match the logic in draw_completion_dropdown
     XWindowAttributes attrs;
-    Display *dpy = XOpenDisplay(NULL);
-    if (!dpy) return false;
     XGetWindowAttributes(dpy, field->completion_window, &attrs);
-    XCloseDisplay(dpy);
     
     int height = attrs.height;
     int max_items = (height - 4) / item_height;

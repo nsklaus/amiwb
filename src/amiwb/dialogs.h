@@ -6,8 +6,9 @@
 
 #include "config.h"
 #include "intuition/itn_public.h"
-#include "../toolkit/inputfield.h"
-#include "../toolkit/button.h"
+#include "../toolkit/inputfield/inputfield.h"
+#include "../toolkit/button/button.h"
+#include "../toolkit/progressbar/progressbar.h"
 #include <stdbool.h>
 #include <limits.h>
 
@@ -84,6 +85,7 @@ void render_dialog_content(Canvas *canvas);
 // Progress dialog structure
 typedef struct ProgressDialog {
     Canvas *canvas;
+    ProgressBar *progress_bar;      // Toolkit progress bar widget
     ProgressOperation operation;
     char current_file[PATH_SIZE];
     float percent;

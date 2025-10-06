@@ -9,8 +9,8 @@
  * - Error recovery
  */
 
-#include "../toolkit/button.h"      /* Include toolkit first */
-#include "../toolkit/inputfield.h"   /* This pulls in main config.h */
+#include "../toolkit/button/button.h"      /* Include toolkit first */
+#include "../toolkit/inputfield/inputfield.h"   /* This pulls in main config.h */
 #include "skeleton.h"
 #include "config.h"                  /* Our config with guards */
 #include "logging.h"
@@ -115,9 +115,8 @@ void skeleton_draw(SkeletonApp *app) {
     }
 
     if (app->example_input) {
-        XftFont *font = font_get();
-        inputfield_draw(app->example_input, app->picture, app->display,
-                       app->xft_draw, font);
+        inputfield_render(app->example_input, app->picture, app->display,
+                         app->xft_draw);
     }
 
     /* Copy pixmap to window */

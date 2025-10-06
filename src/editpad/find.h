@@ -3,8 +3,8 @@
 
 #include <X11/Xlib.h>
 #include <stdbool.h>
-#include "../toolkit/inputfield.h"
-#include "../toolkit/button.h"
+#include "../toolkit/inputfield/inputfield.h"
+#include "../toolkit/button/button.h"
 #include "config.h"
 #include "dialog.h"
 
