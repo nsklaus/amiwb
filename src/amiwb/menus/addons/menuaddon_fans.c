@@ -101,7 +101,7 @@ void menuaddon_fans_init(void) {
     MenuAddon *fans_addon = calloc(1, sizeof(MenuAddon));
     if (!fans_addon) {
         log_error("[ERROR] Failed to allocate fans addon - continuing without fan monitor");
-        return;
+        return;  // Gracefully fail - menubar works without fan monitor
     }
 
     // Initial update to populate cached_text

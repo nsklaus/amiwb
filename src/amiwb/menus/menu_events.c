@@ -44,8 +44,8 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
                 safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap to complete
             }
-            destroy_canvas(active_menu->canvas);
-            // Note: destroy_canvas() already sets active_menu->canvas = NULL
+            itn_canvas_destroy(active_menu->canvas);
+            // Note: itn_canvas_destroy() already sets active_menu->canvas = NULL
             active_menu = NULL;
         }
         if (nested_menu && nested_menu->canvas) {
@@ -54,8 +54,8 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
                 safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap to complete
             }
-            destroy_canvas(nested_menu->canvas);
-            // Note: destroy_canvas() already sets nested_menu->canvas = NULL
+            itn_canvas_destroy(nested_menu->canvas);
+            // Note: itn_canvas_destroy() already sets nested_menu->canvas = NULL
             nested_menu = NULL;
         }
         if (menubar->selected_item != -1 &&
@@ -88,7 +88,7 @@ void close_nested_if_any(void) {
             safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
-        destroy_canvas(nested_menu->canvas);
+        itn_canvas_destroy(nested_menu->canvas);
         nested_menu->canvas = NULL;  // Prevent double-free
         nested_menu = NULL;
     }
@@ -105,7 +105,7 @@ void close_all_menus(void) {
             safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
             XSync(ctx->dpy, False);
         }
-        destroy_canvas(nested_menu->canvas);
+        itn_canvas_destroy(nested_menu->canvas);
         nested_menu->canvas = NULL;
     }
 
@@ -115,7 +115,7 @@ void close_all_menus(void) {
             safe_unmap_window(ctx->dpy, active_menu->canvas->win);
             XSync(ctx->dpy, False);
         }
-        destroy_canvas(active_menu->canvas);
+        itn_canvas_destroy(active_menu->canvas);
         active_menu->canvas = NULL;  // Prevent double-free
 
         // If it's a window list (parent_index == -1), free the temporary menu
@@ -162,7 +162,7 @@ void close_window_list_if_open(void) {
                 safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                 XSync(ctx->dpy, False);
             }
-            destroy_canvas(active_menu->canvas);
+            itn_canvas_destroy(active_menu->canvas);
             active_menu->canvas = NULL;  // Prevent double-free
         }
         // Free the menu structure and its items
@@ -221,7 +221,7 @@ void menu_handle_button_release(XButtonEvent *event) {
             safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
-        destroy_canvas(nested_menu->canvas);
+        itn_canvas_destroy(nested_menu->canvas);
         nested_menu->canvas = NULL;  // Prevent double-free
         nested_menu = NULL;
     }
@@ -232,7 +232,7 @@ void menu_handle_button_release(XButtonEvent *event) {
             safe_unmap_window(ctx->dpy, active_menu->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
-        destroy_canvas(active_menu->canvas);
+        itn_canvas_destroy(active_menu->canvas);
         active_menu->canvas = NULL;  // Prevent double-free
         active_menu = NULL;
     }
@@ -269,7 +269,7 @@ void menu_handle_menubar_press(XButtonEvent *event) {
                 safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                 XSync(ctx->dpy, False);
             }
-            destroy_canvas(active_menu->canvas);
+            itn_canvas_destroy(active_menu->canvas);
             active_menu->canvas = NULL;  // Prevent double-free
 
             // Free the temporary window menu
@@ -308,7 +308,7 @@ void menu_handle_menubar_press(XButtonEvent *event) {
                         safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                         XSync(ctx->dpy, False);
                     }
-                    destroy_canvas(active_menu->canvas);
+                    itn_canvas_destroy(active_menu->canvas);
                     active_menu->canvas = NULL;  // Prevent double-free
 
                     // Free the temporary window menu
@@ -342,7 +342,7 @@ void menu_handle_menubar_press(XButtonEvent *event) {
                         safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                         XSync(ctx->dpy, False);
                     }
-                    destroy_canvas(active_menu->canvas);
+                    itn_canvas_destroy(active_menu->canvas);
                     active_menu->canvas = NULL;  // Prevent double-free
 
                     // Free the temporary window menu
@@ -393,7 +393,7 @@ void maybe_open_nested_for_selection(void) {
                 safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap
             }
-            destroy_canvas(nested_menu->canvas);
+            itn_canvas_destroy(nested_menu->canvas);
             nested_menu->canvas = NULL;  // Prevent double-free
             nested_menu = NULL;
         }
@@ -409,7 +409,7 @@ void maybe_open_nested_for_selection(void) {
                 safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
                 XSync(ctx->dpy, False);
             }
-            destroy_canvas(nested_menu->canvas);
+            itn_canvas_destroy(nested_menu->canvas);
             nested_menu->canvas = NULL;
         }
 

@@ -21,45 +21,22 @@ static int icon_array_size = 0;             // Allocated size of icon array
 // Array Management (Internal)
 // ============================================================================
 
-// Manage icons: add new icon or remove existing icon
-// When adding (add=true): returns pointer to newly allocated icon
-// When removing (add=false): removes icon_to_remove from array
-static FileIcon *manage_icons(bool add, FileIcon *icon_to_remove) {
-    if (add) {
-        // Grow array if needed
-        if (icon_count >= icon_array_size) {
-            icon_array_size = icon_array_size ? icon_array_size * 2 : INITIAL_ICON_CAPACITY;
-            FileIcon **new_icons = realloc(icon_array, icon_array_size * sizeof(FileIcon *));
-            if (!new_icons) {
-                log_error("[ERROR] realloc failed for icon_array (new size=%d)", icon_array_size);
-                exit(1);  // Kill on malloc failure per guidelines
-            }
-            icon_array = new_icons;
-        }
+// Remove icon from array
+// NOTE: This function only handles removal. Icon allocation is done via create_file_icon()
+// and addition to array is done via wb_icons_array_manage()
+static void manage_icons_remove(FileIcon *icon_to_remove) {
+    if (!icon_to_remove) return;
+    if (!icon_array) return;  // Guard against init failure
 
-        // Allocate new icon structure
-        FileIcon *new_icon = calloc(1, sizeof(FileIcon));
-        if (!new_icon) {
-            log_error("[ERROR] calloc failed for FileIcon structure");
-            exit(1);  // Kill on malloc failure per guidelines
-        }
-
-        // Add to array
-        icon_array[icon_count++] = new_icon;
-        return new_icon;
-
-    } else if (icon_to_remove) {
-        // Remove icon from array (shifts remaining icons down)
-        for (int i = 0; i < icon_count; i++) {
-            if (icon_array[i] == icon_to_remove) {
-                memmove(&icon_array[i], &icon_array[i + 1],
-                       (icon_count - i - 1) * sizeof(FileIcon *));
-                icon_count--;
-                break;
-            }
+    // Remove icon from array (shifts remaining icons down)
+    for (int i = 0; i < icon_count; i++) {
+        if (icon_array[i] == icon_to_remove) {
+            memmove(&icon_array[i], &icon_array[i + 1],
+                   (icon_count - i - 1) * sizeof(FileIcon *));
+            icon_count--;
+            break;
         }
     }
-    return NULL;
 }
 
 // ============================================================================
@@ -87,29 +64,35 @@ void wb_icons_array_manage(FileIcon *icon, bool add) {
 
         // Grow array if needed
         if (icon_count >= icon_array_size) {
-            icon_array_size = icon_array_size ? icon_array_size * 2 : INITIAL_ICON_CAPACITY;
-            FileIcon **new_icons = realloc(icon_array, icon_array_size * sizeof(FileIcon *));
+            int new_size = icon_array_size ? icon_array_size * 2 : INITIAL_ICON_CAPACITY;
+            FileIcon **new_icons = realloc(icon_array, new_size * sizeof(FileIcon *));
             if (!new_icons) {
-                log_error("[ERROR] realloc failed for icon_array (new size=%d)", icon_array_size);
-                exit(1);  // Kill on malloc failure per guidelines
+                log_error("[ERROR] realloc failed for icon_array (new size=%d) - icon will not appear", new_size);
+                // Graceful degradation: can't grow array, so can't add this icon
+                // The icon was already created, so destroy it to prevent leak
+                destroy_file_icon(icon);
+                return;
             }
             icon_array = new_icons;
+            icon_array_size = new_size;
         }
 
         // Add to array
         icon_array[icon_count++] = icon;
     } else {
-        manage_icons(false, icon);
+        manage_icons_remove(icon);
     }
 }
 
 // Get most recently added icon
 FileIcon *wb_icons_array_get_last_added(void) {
+    if (!icon_array) return NULL;  // Guard against init failure
     return (icon_count > 0) ? icon_array[icon_count - 1] : NULL;
 }
 
 // Get currently selected icon (any canvas)
 FileIcon *wb_icons_array_get_selected(void) {
+    if (!icon_array) return NULL;  // Guard against init failure
     for (int i = 0; i < icon_count; i++) {
         if (icon_array[i] && icon_array[i]->selected) {
             return icon_array[i];
@@ -121,6 +104,7 @@ FileIcon *wb_icons_array_get_selected(void) {
 // Get selected icon from specific canvas
 FileIcon *wb_icons_array_get_selected_from_canvas(Canvas *canvas) {
     if (!canvas) return NULL;
+    if (!icon_array) return NULL;  // Guard against init failure
 
     for (int i = 0; i < icon_count; i++) {
         if (icon_array[i] && icon_array[i]->selected &&
@@ -148,6 +132,12 @@ FileIcon **wb_icons_for_canvas(Canvas *canvas, int *out_count) {
         return NULL;
     }
 
+    // Guard against init failure
+    if (!icon_array) {
+        *out_count = 0;
+        return NULL;
+    }
+
     // Count icons on this canvas
     int count = 0;
     for (int i = 0; i < icon_count; ++i) {
@@ -162,8 +152,9 @@ FileIcon **wb_icons_for_canvas(Canvas *canvas, int *out_count) {
     // Allocate array
     FileIcon **list = (FileIcon**)malloc(sizeof(FileIcon*) * count);
     if (!list) {
-        log_error("[ERROR] malloc failed for icon list (count=%d)", count);
-        exit(1);  // Kill on malloc failure per guidelines
+        log_error("[ERROR] malloc failed for icon list (count=%d) - icon list unavailable", count);
+        *out_count = 0;  // No icons available
+        return NULL;  // Graceful degradation
     }
 
     // Collect icons
@@ -186,8 +177,12 @@ FileIcon **wb_icons_for_canvas(Canvas *canvas, int *out_count) {
 void wb_icons_array_init(void) {
     icon_array = malloc(INITIAL_ICON_CAPACITY * sizeof(FileIcon *));
     if (!icon_array) {
-        log_error("[ERROR] malloc failed for icon_array (capacity=%d)", INITIAL_ICON_CAPACITY);
-        exit(1);  // Kill on malloc failure per guidelines
+        log_error("[ERROR] malloc failed for icon_array (capacity=%d) - AmiWB will run without icons", INITIAL_ICON_CAPACITY);
+        // Graceful degradation: AmiWB runs without icons rather than crashing desktop
+        icon_array = NULL;
+        icon_array_size = 0;
+        icon_count = 0;
+        return;
     }
     icon_array_size = INITIAL_ICON_CAPACITY;
     icon_count = 0;

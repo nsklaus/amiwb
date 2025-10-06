@@ -12,6 +12,21 @@
 extern void cache_app_menus(const char *app_type, char **menu_items, Menu **submenus, int menu_count);
 
 // ============================================================================
+// Safe Memory Allocation Helpers
+// ============================================================================
+
+// Safe strdup wrapper - returns NULL on failure for graceful degradation
+static char* safe_strdup(const char *str) {
+    if (!str) return NULL;  // Allow NULL input for optional strings
+    char *copy = strdup(str);
+    if (!copy) {
+        log_error("[ERROR] strdup failed - app menu text may be missing");
+        return NULL;  // Graceful degradation
+    }
+    return copy;
+}
+
+// ============================================================================
 // App Menu Parsing
 // ============================================================================
 
@@ -32,7 +47,7 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
     int submenu_count = 0;
 
     // Split by | and count
-    char *temp_copy = strdup(menu_data);
+    char *temp_copy = safe_strdup(menu_data);
     char *temp_saveptr;
     char *temp_str = strtok_r(temp_copy, "|", &temp_saveptr);
 
@@ -49,7 +64,16 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
 
     // Allocate top-level arrays
     char **menu_items = calloc(menu_count, sizeof(char*));
+    if (!menu_items) {
+        log_error("[ERROR] calloc failed for menu_items - keeping system menus");
+        return;  // Graceful degradation: app menus won't load, system menus remain
+    }
     Menu **submenus = calloc(menu_count, sizeof(Menu*));
+    if (!submenus) {
+        log_error("[ERROR] calloc failed for submenus - keeping system menus");
+        free(menu_items);
+        return;  // Graceful degradation
+    }
 
     // Store submenu definitions temporarily
     typedef struct {
@@ -58,10 +82,16 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
         Menu *submenu;
     } SubmenuDef;
     SubmenuDef *submenu_defs = calloc(submenu_count, sizeof(SubmenuDef));
+    if (!submenu_defs) {
+        log_error("[ERROR] calloc failed for submenu_defs - keeping system menus");
+        free(menu_items);
+        free(submenus);
+        return;  // Graceful degradation
+    }
     int submenu_def_count = 0;
 
     // Parse the menu data - use strtok_r to avoid issues
-    char *data_copy = strdup(menu_data);
+    char *data_copy = safe_strdup(menu_data);
     char *saveptr;
     char *menu_str = strtok_r(data_copy, "|", &saveptr);
     int menu_index = 0;
@@ -87,15 +117,18 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
                     if (*p == ',') item_count++;
                 }
 
-                Menu *submenu = calloc(1, sizeof(Menu));
-                submenu->item_count = item_count;
-                submenu->items = calloc(item_count, sizeof(char*));
-                submenu->shortcuts = calloc(item_count, sizeof(char*));
-                submenu->enabled = calloc(item_count, sizeof(bool));
-                submenu->checkmarks = calloc(item_count, sizeof(bool));
+                // Create submenu (returns NULL on failure)
+                Menu *submenu = create_menu(NULL, item_count);
+                if (!submenu) {
+                    log_error("[ERROR] Failed to create nested submenu - skipping");
+                    menu_str = strtok_r(NULL, "|", &saveptr);
+                    continue;  // Skip this submenu, continue parsing
+                }
+                init_menu_enabled(submenu);
+                init_menu_checkmarks(submenu);
 
                 // Parse submenu items
-                char *items_copy = strdup(items_str);
+                char *items_copy = safe_strdup(items_str);
                 char *saveptr2;
                 char *item = strtok_r(items_copy, ",", &saveptr2);
                 int item_index = 0;
@@ -103,7 +136,7 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
                 while (item && item_index < item_count) {
                     // Skip leading spaces
                     while (*item == ' ') item++;
-                    submenu->items[item_index] = strdup(item);
+                    submenu->items[item_index] = safe_strdup(item);
                     submenu->shortcuts[item_index] = NULL;
                     submenu->enabled[item_index] = true;
                     item = strtok_r(NULL, ",", &saveptr2);
@@ -116,8 +149,8 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
                 submenu->canvas = NULL;
 
                 // Store submenu definition
-                submenu_defs[submenu_def_count].parent_menu = strdup(parent_menu);
-                submenu_defs[submenu_def_count].parent_item = strdup(parent_item);
+                submenu_defs[submenu_def_count].parent_menu = safe_strdup(parent_menu);
+                submenu_defs[submenu_def_count].parent_item = safe_strdup(parent_item);
                 submenu_defs[submenu_def_count].submenu = submenu;
                 submenu_def_count++;
             }
@@ -134,7 +167,7 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
             char *items_str = colon + 1;
 
             // Store menu name
-            menu_items[menu_index] = strdup(menu_name);
+            menu_items[menu_index] = safe_strdup(menu_name);
 
             // Count items in this menu
             int item_count = 1;
@@ -142,18 +175,19 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
                 if (*p == ',') item_count++;
             }
 
-            // Create submenu
-            Menu *submenu = calloc(1, sizeof(Menu));
-            submenu->item_count = item_count;
-            submenu->items = calloc(item_count, sizeof(char*));
-            submenu->shortcuts = calloc(item_count, sizeof(char*));
-            submenu->enabled = calloc(item_count, sizeof(bool));
-            submenu->checkmarks = calloc(item_count, sizeof(bool));
-            submenu->submenus = calloc(item_count, sizeof(Menu*));  // Allocate space for nested submenus
+            // Create submenu (returns NULL on failure)
+            Menu *submenu = create_menu(NULL, item_count);
+            if (!submenu) {
+                log_error("[ERROR] Failed to create app menu - skipping");
+                menu_str = strtok_r(NULL, "|", &saveptr);
+                continue;  // Skip this menu, continue parsing
+            }
+            init_menu_enabled(submenu);
+            init_menu_checkmarks(submenu);
 
             // Parse items - use strtok_r for thread safety and to avoid nested strtok issues
             char *saveptr2;
-            char *items_copy = strdup(items_str);  // Make a copy for strtok_r
+            char *items_copy = safe_strdup(items_str);  // Make a copy for strtok_r
             char *item = strtok_r(items_copy, ",", &saveptr2);
             int item_index = 0;
             while (item && item_index < item_count) {
@@ -199,8 +233,8 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
                         shortcut++;
                     }
 
-                    submenu->items[item_index] = strdup(item);
-                    submenu->shortcuts[item_index] = strdup(shortcut);
+                    submenu->items[item_index] = safe_strdup(item);
+                    submenu->shortcuts[item_index] = safe_strdup(shortcut);
                 } else {
                     // No "#" delimiter - no shortcut
                     // Strip trailing spaces
@@ -209,7 +243,7 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
                         *end = '\0';
                         end--;
                     }
-                    submenu->items[item_index] = strdup(item);
+                    submenu->items[item_index] = safe_strdup(item);
                     submenu->shortcuts[item_index] = NULL;
                 }
 
@@ -305,7 +339,7 @@ void update_app_menu_states(Window app_window) {
         // Parse the states data
         // Format: "menu_index,item_index,state;menu_index,item_index,state;..."
         // Example: "1,4,0;1,5,1" means Edit menu(1), Undo(4) disabled(0), Redo(5) enabled(1)
-        char *data_copy = strdup((char*)states_data);
+        char *data_copy = safe_strdup((char*)states_data);
         char *saveptr;
         char *state_str = strtok_r(data_copy, ";", &saveptr);
 

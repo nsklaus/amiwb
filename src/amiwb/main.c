@@ -99,9 +99,11 @@ void restart_amiwb(void) {
     
     // Replace ourselves with a new instance
     execvp(g_argv[0], g_argv);
-    
-    // If exec fails, exit with error
-    log_error("[ERROR] Failed to restart AmiWB: execvp failed");
+
+    // If exec fails, we must exit - X display and all resources are already destroyed
+    log_error("[ERROR] Failed to restart AmiWB: execvp failed - user must manually restart");
+    // EXCEPTIONAL CASE: exit(1) is acceptable here because restart already destroyed everything
+    // There is no way to recover - the X display is closed and all windows are destroyed
     exit(1);
 }
 

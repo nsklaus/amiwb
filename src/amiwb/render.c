@@ -262,9 +262,9 @@ void init_render(void) {
 
     // Initialize the unified font system
     if (!font_manager_init(ctx->dpy)) {
-        log_error("[ERROR] Font manager initialization failed - cannot continue");
-        // Font is critical - we can't render without it
-        exit(1);
+        log_error("[ERROR] Font manager initialization failed - AmiWB will run without text rendering");
+        // Graceful degradation: continue without fonts (text won't render but graphics will work)
+        return;
     }
 
     // Now that we have a render context and font, load wallpapers and refresh desktop

@@ -13,6 +13,21 @@
 #include <time.h>
 
 // ============================================================================
+// Safe Memory Allocation Helpers
+// ============================================================================
+
+// Safe strdup wrapper - returns NULL on failure for graceful degradation
+static char* safe_strdup(const char *str) {
+    if (!str) return NULL;  // Allow NULL input for optional strings
+    char *copy = strdup(str);
+    if (!copy) {
+        log_error("[ERROR] strdup failed - menu text may be missing");
+        return NULL;  // Graceful degradation
+    }
+    return copy;
+}
+
+// ============================================================================
 // Global State
 // ============================================================================
 
@@ -46,6 +61,10 @@ Window current_app_window = None;   // Window that owns current app menus
 void init_menu_shortcuts(Menu *menu) {
     if (!menu) return;
     menu->shortcuts = calloc(menu->item_count, sizeof(char*));
+    if (!menu->shortcuts) {
+        log_error("[ERROR] calloc failed for menu shortcuts - menu will work without shortcuts");
+        return;  // Graceful degradation: menu works without shortcuts
+    }
     // calloc initializes all to NULL, so no need to set individually
 }
 
@@ -53,7 +72,10 @@ void init_menu_shortcuts(Menu *menu) {
 void init_menu_enabled(Menu *menu) {
     if (!menu) return;
     menu->enabled = malloc(menu->item_count * sizeof(bool));
-    if (!menu->enabled) return;
+    if (!menu->enabled) {
+        log_error("[ERROR] malloc failed for menu enabled array - all items will appear enabled");
+        return;  // Graceful degradation: menu works without enabled/disabled state
+    }
     // Default all items to enabled
     for (int i = 0; i < menu->item_count; i++) {
         menu->enabled[i] = true;
@@ -64,6 +86,10 @@ void init_menu_enabled(Menu *menu) {
 void init_menu_checkmarks(Menu *menu) {
     if (!menu) return;
     menu->checkmarks = calloc(menu->item_count, sizeof(bool));
+    if (!menu->checkmarks) {
+        log_error("[ERROR] calloc failed for menu checkmarks - menu will work without checkmarks");
+        return;  // Graceful degradation: menu works without toggle state
+    }
     // calloc already zeros the array, so all items start unchecked
 }
 
@@ -75,7 +101,7 @@ void parse_menu_item_shortcuts(Menu *menu) {
     for (int i = 0; i < menu->item_count; i++) {
         if (!menu->items[i]) continue;
 
-        char *item = strdup(menu->items[i]);  // Work with a copy
+        char *item = safe_strdup(menu->items[i]);  // Work with a copy
         char *delimiter = strchr(item, '#');
 
         if (delimiter) {
@@ -92,14 +118,14 @@ void parse_menu_item_shortcuts(Menu *menu) {
 
             // Update the item to just the name (without shortcut)
             free(menu->items[i]);
-            menu->items[i] = strdup(item);
+            menu->items[i] = safe_strdup(item);
 
             // Store the shortcut
             if (menu->shortcuts && menu->shortcuts[i]) {
                 free(menu->shortcuts[i]);  // Free any existing shortcut
             }
             if (menu->shortcuts) {
-                menu->shortcuts[i] = strdup(shortcut);
+                menu->shortcuts[i] = safe_strdup(shortcut);
             }
         }
 
@@ -177,18 +203,50 @@ int get_submenu_width(Menu *menu) {
 }
 
 // ============================================================================
-// Menu Cleanup
+// Menu Lifecycle Management
 // ============================================================================
 
+// OWNERSHIP: Returns allocated Menu - caller must call destroy_menu()
+// Returns NULL on failure (graceful degradation - menu won't appear)
+Menu* create_menu(const char* title, int item_count) {
+    (void)title;  // Title parameter reserved for future use
+
+    Menu* menu = calloc(1, sizeof(Menu));
+    if (!menu) {
+        log_error("[ERROR] Failed to allocate Menu structure - menu unavailable");
+        return NULL;  // Graceful degradation
+    }
+
+    menu->item_count = item_count;
+
+    if (item_count > 0) {
+        menu->items = calloc(item_count, sizeof(char*));
+        menu->shortcuts = calloc(item_count, sizeof(char*));
+        menu->submenus = calloc(item_count, sizeof(Menu*));
+
+        if (!menu->items || !menu->shortcuts || !menu->submenus) {
+            log_error("[ERROR] Failed to allocate menu arrays - menu unavailable");
+            // Free any successful allocations before returning
+            free(menu->items);
+            free(menu->shortcuts);
+            free(menu->submenus);
+            free(menu);
+            return NULL;  // Graceful degradation
+        }
+    }
+
+    return menu;
+}
+
 // Free menu and all its resources recursively
-void free_menu(Menu *menu) {
+void destroy_menu(Menu *menu) {
     if (!menu) return;
 
     // Free submenus recursively
     if (menu->submenus) {
         for (int i = 0; i < menu->item_count; i++) {
             if (menu->submenus[i]) {
-                free_menu(menu->submenus[i]);
+                destroy_menu(menu->submenus[i]);
             }
         }
         free(menu->submenus);
@@ -252,45 +310,54 @@ void init_menus(void) {
 
     text_color.color = (XRenderColor){0x0000, 0x0000, 0x0000, 0xFFFF}; // Black
 
-    menubar = calloc(1, sizeof(Menu));  // calloc zeros all fields
-    if (!menubar) return;
+    // create_menu returns NULL on failure
+    menubar = create_menu("Menubar", 4);
+    if (!menubar) {
+        log_error("[ERROR] Failed to create menubar - AmiWB will run without menus");
+        return;  // Graceful degradation: keyboard shortcuts still work
+    }
     menubar->canvas = create_canvas(NULL, 0, 0, XDisplayWidth(ctx->dpy, DefaultScreen(ctx->dpy)), MENU_ITEM_HEIGHT, MENU);
     if (!menubar->canvas) {
-        free(menubar);
+        destroy_menu(menubar);
         menubar = NULL;
         return;
     }
     menubar->canvas->bg_color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
 
-    menubar->item_count = 4;
-    menubar->items = malloc(menubar->item_count * sizeof(char*));
-    menubar->items[0] = strdup("Workbench");
-    menubar->items[1] = strdup("Windows");
-    menubar->items[2] = strdup("Icons");
-    menubar->items[3] = strdup("Tools");
+    menubar->items[0] = safe_strdup("Workbench");
+    menubar->items[1] = safe_strdup("Windows");
+    menubar->items[2] = safe_strdup("Icons");
+    menubar->items[3] = safe_strdup("Tools");
     menubar->shortcuts = NULL;  // Top-level menubar doesn't need shortcuts
     menubar->enabled = NULL;  // Top-level menubar doesn't need enabled states
     menubar->window_refs = NULL;  // Regular menus don't have window references
     menubar->selected_item = -1;
     menubar->parent_menu = NULL;
     menubar->submenus = malloc(menubar->item_count * sizeof(Menu*));
+    if (!menubar->submenus) {
+        log_error("[ERROR] malloc failed for menubar submenus - menus unavailable");
+        itn_canvas_destroy(menubar->canvas);
+        destroy_menu(menubar);
+        menubar = NULL;
+        return;  // Graceful degradation
+    }
     memset(menubar->submenus, 0, menubar->item_count * sizeof(Menu*));
 
     // Workbench submenu (index 0)
     // Basic actions for the environment and global app state.
-    Menu *wb_submenu = calloc(1, sizeof(Menu));  // zeros all fields
-    wb_submenu->item_count = 7;
-    wb_submenu->items = malloc(wb_submenu->item_count * sizeof(char*));
-    wb_submenu->items[0] = strdup("Execute #E");
-    wb_submenu->items[1] = strdup("Requester #L");
-    wb_submenu->items[2] = strdup("Settings");
-    wb_submenu->items[3] = strdup("About");
-    wb_submenu->items[4] = strdup("Suspend #^S");
-    wb_submenu->items[5] = strdup("Restart AmiWB #^R");
-    wb_submenu->items[6] = strdup("Quit AmiWB #^Q");
-
-    // Initialize shortcuts array (will be populated by parsing)
-    wb_submenu->shortcuts = calloc(wb_submenu->item_count, sizeof(char*));
+    Menu *wb_submenu = create_menu("Workbench", 7);
+    if (!wb_submenu) {
+        log_error("[ERROR] Failed to create Workbench submenu - menu unavailable");
+        menubar->submenus[0] = NULL;
+        goto create_windows_menu;  // Skip to next menu
+    }
+    wb_submenu->items[0] = safe_strdup("Execute #E");
+    wb_submenu->items[1] = safe_strdup("Requester #L");
+    wb_submenu->items[2] = safe_strdup("Settings");
+    wb_submenu->items[3] = safe_strdup("About");
+    wb_submenu->items[4] = safe_strdup("Suspend #^S");
+    wb_submenu->items[5] = safe_strdup("Restart AmiWB #^R");
+    wb_submenu->items[6] = safe_strdup("Quit AmiWB #^Q");
 
     init_menu_enabled(wb_submenu);  // Initialize all items as enabled
     // Parse the "#" shortcuts from menu items
@@ -305,39 +372,42 @@ void init_menus(void) {
     wb_submenu->canvas = NULL;
     menubar->submenus[0] = wb_submenu;
 
+create_windows_menu:
     // Windows submenu (index 1)
     // Window management and content view controls.
-    Menu *win_submenu = calloc(1, sizeof(Menu));  // zeros all fields
-    win_submenu->item_count = 7;  // Added Refresh
-    win_submenu->items = malloc(win_submenu->item_count * sizeof(char*));
-    win_submenu->items[0] = strdup("New Drawer #N");
-    win_submenu->items[1] = strdup("Open Parent #P");
-    win_submenu->items[2] = strdup("Close #Q");
-    win_submenu->items[3] = strdup("Select Contents #A");
-    win_submenu->items[4] = strdup("Clean Up #;");
-    win_submenu->items[5] = strdup("Refresh #H");
-    win_submenu->items[6] = strdup("View Modes");
+    Menu *win_submenu = create_menu("Windows", 7);
+    if (!win_submenu) {
+        log_error("[ERROR] Failed to create Windows submenu - menu unavailable");
+        menubar->submenus[1] = NULL;
+        goto create_icons_menu;  // Skip to next menu
+    }
+    win_submenu->items[0] = safe_strdup("New Drawer #N");
+    win_submenu->items[1] = safe_strdup("Open Parent #P");
+    win_submenu->items[2] = safe_strdup("Close #Q");
+    win_submenu->items[3] = safe_strdup("Select Contents #A");
+    win_submenu->items[4] = safe_strdup("Clean Up #;");
+    win_submenu->items[5] = safe_strdup("Refresh #H");
+    win_submenu->items[6] = safe_strdup("View Modes");
 
-    // Initialize shortcuts array (will be populated by parsing)
-    win_submenu->shortcuts = calloc(win_submenu->item_count, sizeof(char*));
     init_menu_enabled(win_submenu);  // Initialize all items as enabled
     // Parse the "#" shortcuts from menu items
     parse_menu_item_shortcuts(win_submenu);
     win_submenu->selected_item = -1;
     win_submenu->parent_menu = menubar;
     win_submenu->parent_index = 1;
-    win_submenu->submenus = calloc(win_submenu->item_count, sizeof(Menu*));
     win_submenu->canvas = NULL;
 
     // Create nested submenu for "View Modes" (index 6)
     // Switch listing mode and toggle hidden files.
-    Menu *view_by_sub = calloc(1, sizeof(Menu));  // zeros all fields
-    view_by_sub->item_count = 4;  // Icons, Names, Hidden, Spatial
-    view_by_sub->items = malloc(view_by_sub->item_count * sizeof(char*));
-    view_by_sub->items[0] = strdup("Icons");
-    view_by_sub->items[1] = strdup("Names");
-    view_by_sub->items[2] = strdup("Hidden");
-    view_by_sub->items[3] = strdup("Spatial");
+    Menu *view_by_sub = create_menu("View Modes", 4);
+    if (!view_by_sub) {
+        log_error("[ERROR] Failed to create View Modes submenu - feature unavailable");
+        win_submenu->submenus[6] = NULL;
+    } else {
+        view_by_sub->items[0] = safe_strdup("Icons");
+    view_by_sub->items[1] = safe_strdup("Names");
+    view_by_sub->items[2] = safe_strdup("Hidden");
+    view_by_sub->items[3] = safe_strdup("Spatial");
     init_menu_shortcuts(view_by_sub);  // Initialize all shortcuts to NULL
     init_menu_enabled(view_by_sub);  // Initialize all items as enabled
     init_menu_checkmarks(view_by_sub);  // Initialize checkmarks array
@@ -353,23 +423,25 @@ void init_menus(void) {
     view_by_sub->submenus = NULL;
     view_by_sub->canvas = NULL;
     win_submenu->submenus[6] = view_by_sub;
+    }
     menubar->submenus[1] = win_submenu;
 
+create_icons_menu:
     // Icons submenu (index 2)
     // Per-icon actions; entries are placeholders to be wired later.
-    Menu *icons_submenu = calloc(1, sizeof(Menu));  // zeros all fields
-    icons_submenu->item_count = 7;
-    icons_submenu->items = malloc(icons_submenu->item_count * sizeof(char*));
-    icons_submenu->items[0] = strdup("Open #O");
-    icons_submenu->items[1] = strdup("Copy #C");
-    icons_submenu->items[2] = strdup("Rename #R");
-    icons_submenu->items[3] = strdup("Extract #X");      // Extract archives
-    icons_submenu->items[4] = strdup("Eject #Y");        // Eject removable drives
-    icons_submenu->items[5] = strdup("Information #I");
-    icons_submenu->items[6] = strdup("delete #D");
-
-    // Initialize shortcuts array (will be populated by parsing)
-    icons_submenu->shortcuts = calloc(icons_submenu->item_count, sizeof(char*));
+    Menu *icons_submenu = create_menu("Icons", 7);
+    if (!icons_submenu) {
+        log_error("[ERROR] Failed to create Icons submenu - menu unavailable");
+        menubar->submenus[2] = NULL;
+        goto create_tools_menu;  // Skip to next menu
+    }
+    icons_submenu->items[0] = safe_strdup("Open #O");
+    icons_submenu->items[1] = safe_strdup("Copy #C");
+    icons_submenu->items[2] = safe_strdup("Rename #R");
+    icons_submenu->items[3] = safe_strdup("Extract #X");      // Extract archives
+    icons_submenu->items[4] = safe_strdup("Eject #Y");        // Eject removable drives
+    icons_submenu->items[5] = safe_strdup("Information #I");
+    icons_submenu->items[6] = safe_strdup("delete #D");
 
     init_menu_enabled(icons_submenu);  // Initialize all items as enabled
     // Parse the "#" shortcuts from menu items
@@ -381,15 +453,19 @@ void init_menus(void) {
     icons_submenu->canvas = NULL;
     menubar->submenus[2] = icons_submenu;
 
+create_tools_menu:
     // Tools submenu (index 3)
     // Quick launchers for external apps; editable in config later.
-    Menu *tools_submenu = calloc(1, sizeof(Menu));  // zeros all fields
-    tools_submenu->item_count = 4;
-    tools_submenu->items = malloc(tools_submenu->item_count * sizeof(char*));
-    tools_submenu->items[0] = strdup("Text Editor");
-    tools_submenu->items[1] = strdup("XCalc");
-    tools_submenu->items[2] = strdup("Shell");
-    tools_submenu->items[3] = strdup("Debug Console");
+    Menu *tools_submenu = create_menu("Tools", 4);
+    if (!tools_submenu) {
+        log_error("[ERROR] Failed to create Tools submenu - menu unavailable");
+        menubar->submenus[3] = NULL;
+        goto finish_menu_init;  // Skip to final initialization
+    }
+    tools_submenu->items[0] = safe_strdup("Text Editor");
+    tools_submenu->items[1] = safe_strdup("XCalc");
+    tools_submenu->items[2] = safe_strdup("Shell");
+    tools_submenu->items[3] = safe_strdup("Debug Console");
     init_menu_shortcuts(tools_submenu);  // Initialize all shortcuts to NULL
     init_menu_enabled(tools_submenu);  // Initialize all items as enabled
     tools_submenu->selected_item = -1;
@@ -399,23 +475,32 @@ void init_menus(void) {
     tools_submenu->canvas = NULL;
     menubar->submenus[3] = tools_submenu;
 
+finish_menu_init:
     // Load custom menus from config file (adds to menubar after system menus)
     load_custom_menus();
 
     // Setup mode-specific arrays
     // Menubar can display a single logo item or full menu items.
     logo_items = malloc(logo_item_count * sizeof(char*));
-    logo_items[0] = strdup("AmiWB");
+    if (!logo_items) {
+        log_error("[ERROR] malloc failed for logo_items - starting in full menu mode");
+        // Graceful degradation: skip logo mode, start with full menus
+        show_menus = true;
+    } else {
+        logo_items[0] = safe_strdup("AmiWB");
+    }
 
     full_menu_item_count = menubar->item_count;  // Now includes custom menus
     full_menu_items = menubar->items;
     full_submenus = menubar->submenus;
 
-    // Initial default mode: logo
+    // Initial default mode: logo (unless allocation failed)
     // Start minimal; switch to full menu on user toggle.
-    menubar->items = logo_items;
-    menubar->item_count = logo_item_count;
-    menubar->submenus = NULL;
+    if (!show_menus && logo_items) {
+        menubar->items = logo_items;
+        menubar->item_count = logo_item_count;
+        menubar->submenus = NULL;
+    }
 
     // Initialize menu addons
     menuaddon_clock_init();             // Register clock addon
@@ -476,8 +561,22 @@ void load_custom_menus(void) {
     int old_count = menubar->item_count;
     int new_count = old_count + custom_menu_count;
 
-    menubar->items = realloc(menubar->items, new_count * sizeof(char*));
-    menubar->submenus = realloc(menubar->submenus, new_count * sizeof(Menu*));
+    char **new_items = realloc(menubar->items, new_count * sizeof(char*));
+    if (!new_items) {
+        log_error("[ERROR] realloc failed for menubar items - keeping system menus only");
+        fclose(fp);
+        return;  // Graceful degradation: system menus still work
+    }
+    menubar->items = new_items;
+
+    Menu **new_submenus = realloc(menubar->submenus, new_count * sizeof(Menu*));
+    if (!new_submenus) {
+        log_error("[ERROR] realloc failed for menubar submenus - keeping system menus only");
+        fclose(fp);
+        return;  // Graceful degradation
+    }
+    menubar->submenus = new_submenus;
+
     menubar->item_count = new_count;
 
     // Parse and create custom menus
@@ -520,15 +619,18 @@ void load_custom_menus(void) {
             char *end = strchr(line + 1, ']');
             if (end) {
                 *end = '\0';
-                menubar->items[menu_index] = strdup(line + 1);
+                menubar->items[menu_index] = safe_strdup(line + 1);
 
-                // Create submenu
-                current_menu = calloc(1, sizeof(Menu));
-                current_menu->canvas = NULL;
-                current_menu->selected_item = -1;
+                // Create submenu using consistent allocation (0 items, will be set during parsing)
+                current_menu = create_menu(NULL, 0);
+                if (!current_menu) {
+                    log_error("[ERROR] Failed to create custom menu - skipping");
+                    menubar->submenus[menu_index] = NULL;
+                    menu_index++;
+                    continue;  // Skip this custom menu
+                }
                 current_menu->parent_menu = menubar;
                 current_menu->parent_index = menu_index;
-                current_menu->submenus = NULL;
                 current_menu->is_custom = true;
 
                 menubar->submenus[menu_index] = current_menu;
@@ -557,12 +659,25 @@ void load_custom_menus(void) {
             // Grow arrays if needed
             if (temp_count >= temp_capacity) {
                 temp_capacity = temp_capacity ? temp_capacity * 2 : 4;
-                temp_items = realloc(temp_items, temp_capacity * sizeof(char*));
-                temp_commands = realloc(temp_commands, temp_capacity * sizeof(char*));
+                char **new_temp_items = realloc(temp_items, temp_capacity * sizeof(char*));
+                if (!new_temp_items) {
+                    log_error("[ERROR] realloc failed for temp_items - custom menu incomplete");
+                    fclose(fp);
+                    return;  // Graceful degradation: system menus still work
+                }
+                temp_items = new_temp_items;
+
+                char **new_temp_commands = realloc(temp_commands, temp_capacity * sizeof(char*));
+                if (!new_temp_commands) {
+                    log_error("[ERROR] realloc failed for temp_commands - custom menu incomplete");
+                    fclose(fp);
+                    return;  // Graceful degradation
+                }
+                temp_commands = new_temp_commands;
             }
 
-            temp_items[temp_count] = strdup(label_start);
-            temp_commands[temp_count] = strdup(cmd_start);
+            temp_items[temp_count] = safe_strdup(label_start);
+            temp_commands[temp_count] = safe_strdup(cmd_start);
             temp_count++;
         }
     }
@@ -574,8 +689,13 @@ void load_custom_menus(void) {
         current_menu->item_count = temp_count;
         current_menu->shortcuts = NULL;
         current_menu->enabled = calloc(temp_count, sizeof(bool));
-        for (int i = 0; i < temp_count; i++) {
-            current_menu->enabled[i] = true;
+        if (!current_menu->enabled) {
+            log_error("[ERROR] calloc failed for custom menu enabled array - items will appear enabled");
+            // Graceful degradation: menu works without enabled/disabled state
+        } else {
+            for (int i = 0; i < temp_count; i++) {
+                current_menu->enabled[i] = true;
+            }
         }
     }
 
@@ -600,7 +720,7 @@ void cleanup_menus(void) {
     if (active_menu) {
         if (active_menu->canvas) {
             clear_press_target_if_matches(active_menu->canvas->win);
-            destroy_canvas(active_menu->canvas);
+            itn_canvas_destroy(active_menu->canvas);
             active_menu->canvas = NULL;  // Prevent double-free
         }
         active_menu = NULL;
@@ -611,14 +731,14 @@ void cleanup_menus(void) {
         // Destroy menubar canvas
         if (menubar->canvas) {
             clear_press_target_if_matches(menubar->canvas->win);
-            destroy_canvas(menubar->canvas);
+            itn_canvas_destroy(menubar->canvas);
         }
 
         // Free all submenus recursively using helper
         if (menubar->submenus) {
             for (int i = 0; i < menubar->item_count; i++) {
                 if (menubar->submenus[i]) {
-                    free_menu(menubar->submenus[i]);
+                    destroy_menu(menubar->submenus[i]);
                 }
             }
             free(menubar->submenus);

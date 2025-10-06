@@ -52,8 +52,8 @@ void cache_app_menus(const char *app_type, char **menu_items, Menu **submenus, i
     // Create new cache entry
     AppMenuCache *cache = calloc(1, sizeof(AppMenuCache));
     if (!cache) {
-        log_error("[ERROR] Failed to allocate memory for app menu cache");
-        exit(1);  // Fatal - can't continue without memory
+        log_error("[ERROR] Failed to allocate memory for app menu cache - menus will work without caching");
+        return;  // Graceful degradation: app menus work, just not cached for reuse
     }
     snprintf(cache->app_type, sizeof(cache->app_type), "%s", app_type);
     cache->menu_items = menu_items;

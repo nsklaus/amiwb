@@ -36,8 +36,9 @@ extern Window current_app_window;   // Window that owns current app menus
 // Internal Helper Functions
 // ============================================================================
 
-// Menu management
-void free_menu(Menu *menu);                         // Free menu and all its resources recursively
+// Menu lifecycle management
+Menu* create_menu(const char* title, int item_count); // Create and allocate menu
+void destroy_menu(Menu *menu);                      // Free menu and all its resources recursively
 void init_menu_shortcuts(Menu *menu);               // Initialize shortcuts array
 void init_menu_enabled(Menu *menu);                 // Initialize enabled states
 void init_menu_checkmarks(Menu *menu);              // Initialize checkmarks array

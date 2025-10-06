@@ -28,7 +28,7 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
             clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
             safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
         }
-        destroy_canvas(nested_menu->canvas);
+        itn_canvas_destroy(nested_menu->canvas);
         nested_menu->canvas = NULL;  // Prevent double-free
         nested_menu = NULL;
     }
@@ -40,7 +40,7 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
         if (ctx && active_menu->canvas->win != None) {
             safe_unmap_window(ctx->dpy, active_menu->canvas->win);
         }
-        destroy_canvas(active_menu->canvas);
+        itn_canvas_destroy(active_menu->canvas);
         active_menu->canvas = NULL;
     }
 

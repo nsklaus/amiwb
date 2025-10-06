@@ -165,14 +165,14 @@ static void add_new_drive(const char *device, const char *mount_point, const cha
         if (icon->path) free(icon->path);
         icon->path = strdup(icon_path);
         if (!icon->path) {
-            log_error("[ERROR] strdup failed for drive icon path: %s", icon_path);
-            exit(1);
+            log_error("[ERROR] strdup failed for drive icon path: %s - keeping old path", icon_path);
+            // Graceful degradation: keep old path rather than crashing
         }
         if (icon->label) free(icon->label);
         icon->label = strdup(drive->label);
         if (!icon->label) {
-            log_error("[ERROR] strdup failed for drive label: %s", drive->label);
-            exit(1);
+            log_error("[ERROR] strdup failed for drive label: %s - keeping old label", drive->label);
+            // Graceful degradation: keep old label rather than crashing
         }
         icon->type = TYPE_DEVICE;
         drive->icon = icon;

@@ -122,7 +122,7 @@ void menuaddon_cpu_init(void) {
     MenuAddon *cpu_addon = calloc(1, sizeof(MenuAddon));
     if (!cpu_addon) {
         log_error("[ERROR] Failed to allocate CPU addon - continuing without CPU monitor");
-        return;
+        return;  // Gracefully fail - menubar works without CPU monitor
     }
 
     // Initial update stores baseline values (first call returns 0%)

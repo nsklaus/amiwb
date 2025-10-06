@@ -103,10 +103,10 @@ static void calculate_icon_plane_dimensions(uint16_t width, uint16_t height, uin
     *total_data_size = (*plane_size) * depth;
 }
 
-// Helper function to create pixmap and render context picture
+// OWNERSHIP: Takes ownership of pixmap and frees it (caller must NOT free)
 static Picture create_icon_picture(Display *dpy, Pixmap pixmap, XRenderPictFormat *fmt) {
     Picture picture = XRenderCreatePicture(dpy, pixmap, fmt, 0, NULL);
-    XFreePixmap(dpy, pixmap);
+    XFreePixmap(dpy, pixmap);  // Pixmap freed here - Picture owns the data now
     return picture;
 }
 
@@ -758,6 +758,7 @@ static int parse_glowicon(Display *dpy, const uint8_t *data, long size, long off
 
 // Create a darkened copy of an image for selected state
 // Only darkens non-transparent pixels
+// OWNERSHIP: Returns new Pixmap - caller must free or pass to create_icon_picture()
 static Pixmap create_darkened_pixmap(Display *dpy, Pixmap src, int width, int height) {
     // Guard against invalid pixmap - don't try to render garbage
     if (src == None || src == 0) {
@@ -1181,7 +1182,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
         // But skip if GlowIcon will be parsed later (form_offset >= 0)
         Pixmap dark_pixmap = create_darkened_pixmap(ctx->dpy, normal_pixmap, width, height);
         if (dark_pixmap) {
-            // create_icon_picture frees the pixmap after creating the Picture
+            // Ownership transfer: create_icon_picture() takes and frees dark_pixmap
             icon->selected_picture = create_icon_picture(ctx->dpy, dark_pixmap, ctx->fmt);
         } else {
             // Fallback to same image if darkening fails
@@ -1331,7 +1332,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
                     // No selected image - create darkened version
                     Pixmap dark_pixmap = create_darkened_pixmap(ctx->dpy, color_normal, color_width, color_height);
                     if (dark_pixmap) {
-                        // create_icon_picture frees the pixmap after creating the Picture
+                        // Ownership transfer: create_icon_picture() takes and frees dark_pixmap
                         icon->selected_picture = create_icon_picture(ctx->dpy, dark_pixmap, ctx->fmt);
                     } else {
                         // Fallback to same image if darkening fails
@@ -1601,8 +1602,63 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     free(data);
 }
 
+// ============================================================================
+// Icon Lifecycle Management
+// ============================================================================
 
-void free_icon(FileIcon *icon) {
+// OWNERSHIP: Returns allocated FileIcon - caller must call destroy_file_icon()
+// Creates a complete icon with allocated structure and loaded images
+// Returns NULL on failure (graceful degradation - icon won't appear)
+FileIcon* create_file_icon(const char* path, int x, int y, IconType type,
+                           Window display_window, RenderContext* ctx) {
+    if (!path || !ctx) return NULL;
+
+    // Allocate icon structure
+    FileIcon* icon = calloc(1, sizeof(FileIcon));
+    if (!icon) {
+        log_error("[ERROR] calloc failed for FileIcon structure - icon will not appear");
+        return NULL;  // Graceful failure
+    }
+
+    // Duplicate path string
+    icon->path = strdup(path);
+    if (!icon->path) {
+        log_error("[ERROR] strdup failed for icon path - icon will not appear");
+        free(icon);
+        return NULL;  // Graceful failure
+    }
+
+    // Extract label from path (basename without .info extension)
+    const char* base = strrchr(path, '/');
+    const char* label_src = base ? base + 1 : path;
+    icon->label = strdup(label_src);
+    if (!icon->label) {
+        log_error("[ERROR] strdup failed for icon label - icon will not appear");
+        free(icon->path);
+        free(icon);
+        return NULL;  // Graceful failure
+    }
+
+    // Initialize fields
+    icon->type = type;
+    icon->x = x;
+    icon->y = y;
+    icon->display_window = display_window;
+    icon->selected = false;
+    icon->last_click_time = 0;
+    icon->iconified_canvas = NULL;
+    icon->render_error_logged = false;
+
+    // Load icon images from .info file
+    create_icon_images(icon, ctx);
+    icon->current_picture = icon->normal_picture;
+
+    return icon;
+}
+
+// OWNERSHIP: Frees Pictures only - does NOT free icon struct or paths
+// This is a PRIVATE helper - external code should use destroy_file_icon()
+static void free_icon_pictures(FileIcon* icon) {
     if (!icon) return;
     Display *dpy = itn_core_get_display();
     if (!dpy) return;
@@ -1611,4 +1667,26 @@ void free_icon(FileIcon *icon) {
     icon->normal_picture = None;
     icon->selected_picture = None;
     icon->current_picture = None;
+}
+
+// OWNERSHIP: Complete cleanup - frees Pictures, paths, label, and icon struct
+void destroy_file_icon(FileIcon* icon) {
+    if (!icon) return;
+
+    // Free rendering resources
+    free_icon_pictures(icon);
+
+    // Free string resources
+    if (icon->path) {
+        free(icon->path);
+        icon->path = NULL;
+    }
+    if (icon->label) {
+        free(icon->label);
+        icon->label = NULL;
+    }
+
+    // Zero out and free struct
+    memset(icon, 0, sizeof(FileIcon));
+    free(icon);
 }

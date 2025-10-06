@@ -809,7 +809,7 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
     
     // Destroy canvas
     if (dialog->canvas) {
-        destroy_canvas(dialog->canvas);
+        itn_canvas_destroy(dialog->canvas);
     }
     
     free(dialog);

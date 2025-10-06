@@ -25,7 +25,13 @@ typedef struct {
 } FileIcon;
 
 // Function prototypes
-void create_icon_images( FileIcon *icon, RenderContext *ctx); // Load normal and selected pictures for icon
-void free_icon(  FileIcon *icon); // Free icon pictures
+
+// Icon lifecycle management - icons.c owns complete lifecycle
+FileIcon* create_file_icon(const char* path, int x, int y, IconType type,
+                           Window display_window, RenderContext* ctx);
+void destroy_file_icon(FileIcon* icon);  // Complete cleanup
+
+// Internal helper (public for backward compatibility during migration)
+void create_icon_images(FileIcon* icon, RenderContext* ctx);
 
 #endif

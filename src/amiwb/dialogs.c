@@ -33,12 +33,75 @@ void init_dialogs(void) {
     g_dialogs = NULL;
 }
 
+// ============================================================================
+// Dialog Lifecycle Management
+// ============================================================================
+
+// OWNERSHIP: Returns allocated Dialog - caller must call destroy_dialog()
+// Creates basic dialog structure with canvas - caller adds specific widgets
+// Returns NULL on failure (graceful degradation - dialog won't appear)
+static Dialog* create_dialog(DialogType type, const char* title, int width, int height) {
+    if (!title) {
+        log_error("[ERROR] create_dialog called with NULL title");
+        return NULL;  // Graceful failure
+    }
+
+    // Allocate dialog structure
+    Dialog* dialog = calloc(1, sizeof(Dialog));
+    if (!dialog) {
+        log_error("[ERROR] Failed to allocate Dialog structure - dialog will not appear");
+        return NULL;  // Graceful failure
+    }
+
+    // Initialize basic state
+    dialog->dialog_type = type;
+    dialog->input_field = NULL;
+    dialog->ok_button = NULL;
+    dialog->cancel_button = NULL;
+    dialog->on_ok = NULL;
+    dialog->on_cancel = NULL;
+    dialog->user_data = NULL;
+    dialog->next = NULL;
+
+    // Get font from render system
+    dialog->font = get_font();
+    if (!dialog->font) {
+        log_error("[ERROR] Failed to get font for dialog - dialog will not appear");
+        free(dialog);
+        return NULL;  // Graceful failure
+    }
+
+    // Create canvas window
+    dialog->canvas = create_canvas(NULL, 200, 150, width, height, DIALOG);
+    if (!dialog->canvas) {
+        log_error("[ERROR] Failed to create canvas for dialog - dialog will not appear");
+        free(dialog);
+        return NULL;  // Graceful failure
+    }
+
+    // Set title
+    dialog->canvas->title_base = strdup(title);
+    if (!dialog->canvas->title_base) {
+        log_error("[ERROR] strdup failed for dialog title: %s - dialog will not appear", title);
+        itn_canvas_destroy(dialog->canvas);
+        free(dialog);
+        return NULL;  // Graceful failure
+    }
+
+    // Standard dialog properties
+    dialog->canvas->title_change = NULL;
+    dialog->canvas->bg_color = GRAY;
+    dialog->canvas->disable_scrollbars = true;
+
+    return dialog;
+}
+
 // Clean up all dialogs
 void cleanup_dialogs(void) {
     while (g_dialogs) {
         Dialog *next = g_dialogs->next;
         if (g_dialogs->canvas) {
-            destroy_canvas(g_dialogs->canvas);
+            itn_canvas_destroy(g_dialogs->canvas);
         }
         free(g_dialogs);
         g_dialogs = next;
@@ -46,65 +109,41 @@ void cleanup_dialogs(void) {
 }
 
 // Create and show rename dialog
-void show_rename_dialog(const char *old_name, 
+void show_rename_dialog(const char *old_name,
                        void (*on_ok)(const char *new_name),
                        void (*on_cancel)(void),
                        void *user_data) {
     if (!old_name || !on_ok || !on_cancel) return;
-    
-    Dialog *dialog = malloc(sizeof(Dialog));
-    if (!dialog) return;
-    
-    // Initialize dialog state
-    dialog->dialog_type = DIALOG_RENAME;
+
+    // Create title with filename
+    char title[NAME_SIZE];
+    snprintf(title, sizeof(title), "Rename '%s'", old_name);
+
+    // Create dialog using consistent lifecycle function (returns NULL on failure)
+    Dialog *dialog = create_dialog(DIALOG_RENAME, title, 450, 160);
+    if (!dialog) {
+        log_error("[ERROR] Failed to create rename dialog - feature unavailable");
+        return;  // Graceful degradation
+    }
+
+    // Set callbacks and user data
     strncpy(dialog->original_name, old_name, NAME_SIZE - 1);
     dialog->original_name[NAME_SIZE - 1] = '\0';
     dialog->on_ok = on_ok;
     dialog->on_cancel = on_cancel;
     dialog->user_data = user_data;
-    
-    // Get font from render system
-    dialog->font = get_font();
-    if (!dialog->font) {
-        free(dialog);
-        return;
-    }
-    
+
     // Create InputField widget for text entry
-    // Position will be set properly in render_dialog_content
     dialog->input_field = inputfield_create(0, 0, 100, INPUT_HEIGHT, dialog->font);
     if (!dialog->input_field) {
-        free(dialog);
+        destroy_dialog(dialog);
         return;
     }
-    
-    // Set initial text in the input field
+
+    // Set initial text and cursor
     inputfield_set_text(dialog->input_field, old_name);
-    
-    // Position cursor at end of text
     dialog->input_field->cursor_pos = strlen(old_name);
-    
-    // Set focus to input field
     dialog->input_field->has_focus = true;
-    
-    // Create canvas window (450x160 initial size)  
-    dialog->canvas = create_canvas(NULL, 200, 150, 450, 160, DIALOG);
-    if (!dialog->canvas) {
-        free(dialog);
-        return;
-    }
-    
-    // Set dialog properties - create title with filename
-    char title[NAME_SIZE];
-    snprintf(title, sizeof(title), "Rename '%s'", old_name);
-    dialog->canvas->title_base = strdup(title);
-    if (!dialog->canvas->title_base) {
-        log_error("[ERROR] strdup failed for rename dialog title: %s", title);
-        exit(1);
-    }
-    dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
-    dialog->canvas->bg_color = GRAY;  // Standard dialog gray
-    dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
 
     // Create toolkit buttons
     dialog->ok_button = button_create(20, 85, BUTTON_WIDTH, BUTTON_HEIGHT, "OK", dialog->font);
@@ -113,12 +152,11 @@ void show_rename_dialog(const char *old_name,
     // Add to dialog list
     dialog->next = g_dialogs;
     g_dialogs = dialog;
-    
+
     // Show the dialog and set it as active window
     XMapRaised(itn_core_get_display(), dialog->canvas->win);
-    itn_focus_set_active(dialog->canvas);  // Make dialog active so it can receive focus
-    
-    
+    itn_focus_set_active(dialog->canvas);
+
     redraw_canvas(dialog->canvas);
 }
 
@@ -126,56 +164,30 @@ void show_rename_dialog(const char *old_name,
 void show_execute_dialog(void (*on_ok)(const char *command),
                         void (*on_cancel)(void)) {
     if (!on_ok || !on_cancel) return;
-    
-    Dialog *dialog = malloc(sizeof(Dialog));
-    if (!dialog) return;
-    
-    // Initialize dialog state
-    dialog->dialog_type = DIALOG_EXECUTE_COMMAND;
+
+    // Create dialog using consistent lifecycle function (returns NULL on failure)
+    Dialog *dialog = create_dialog(DIALOG_EXECUTE_COMMAND, "Execute", 450, 160);
+    if (!dialog) {
+        log_error("[ERROR] Failed to create execute dialog - feature unavailable");
+        return;  // Graceful degradation
+    }
+
+    // Set callbacks
     dialog->original_name[0] = '\0';  // Not used for execute dialog
     dialog->on_ok = on_ok;
     dialog->on_cancel = on_cancel;
-    dialog->user_data = NULL;
-    
-    // Get font from render system
-    dialog->font = get_font();
-    if (!dialog->font) {
-        free(dialog);
-        return;
-    }
-    
+
     // Create InputField widget for command entry
     dialog->input_field = inputfield_create(0, 0, 100, INPUT_HEIGHT, dialog->font);
     if (!dialog->input_field) {
-        free(dialog);
+        destroy_dialog(dialog);
         return;
     }
-    
+
     // Enable path completion for execute dialog
     inputfield_enable_path_completion(dialog->input_field, true);
-    
-    // Start with empty text
     inputfield_set_text(dialog->input_field, "");
-    
-    // Set focus to input field
     dialog->input_field->has_focus = true;
-    
-    // Create canvas window (450x160 initial size)
-    dialog->canvas = create_canvas(NULL, 200, 150, 450, 160, DIALOG);
-    if (!dialog->canvas) {
-        free(dialog);
-        return;
-    }
-    
-    // Set dialog properties
-    dialog->canvas->title_base = strdup("Execute");
-    if (!dialog->canvas->title_base) {
-        log_error("[ERROR] strdup failed for execute dialog title");
-        exit(1);
-    }
-    dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
-    dialog->canvas->bg_color = GRAY;  // Standard dialog gray
-    dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
 
     // Create toolkit buttons
     dialog->ok_button = button_create(20, 85, BUTTON_WIDTH, BUTTON_HEIGHT, "OK", dialog->font);
@@ -184,7 +196,7 @@ void show_execute_dialog(void (*on_ok)(const char *command),
     // Add to dialog list
     dialog->next = g_dialogs;
     g_dialogs = dialog;
-    
+
     // Show the dialog and set it as active window
     XMapRaised(itn_core_get_display(), dialog->canvas->win);
     itn_focus_set_active(dialog->canvas);
@@ -192,9 +204,10 @@ void show_execute_dialog(void (*on_ok)(const char *command),
 }
 
 // Close and cleanup specific dialog
-void close_dialog(Dialog *dialog) {
+// OWNERSHIP: Complete cleanup - frees widgets, canvas, and dialog struct
+void destroy_dialog(Dialog *dialog) {
     if (!dialog) return;
-    
+
     // Remove from dialog list
     if (g_dialogs == dialog) {
         g_dialogs = dialog->next;
@@ -206,7 +219,7 @@ void close_dialog(Dialog *dialog) {
             }
         }
     }
-    
+
     // Clean up InputField widget and its dropdown
     if (dialog->input_field) {
         // Make sure to close any open dropdown first
@@ -232,40 +245,33 @@ void close_dialog(Dialog *dialog) {
 
     // Clean up canvas and memory
     if (dialog->canvas) {
-        destroy_canvas(dialog->canvas);
+        itn_canvas_destroy(dialog->canvas);
     }
+
+    // Zero out and free struct
+    memset(dialog, 0, sizeof(Dialog));
     free(dialog);
 }
 
 // Close dialog by canvas (called from intuition.c when window X button is clicked)
+// OWNERSHIP: Canvas is being destroyed externally by intuition.c, so we NULL it
+// before calling destroy_dialog() which will then skip canvas cleanup
 void close_dialog_by_canvas(Canvas *canvas) {
     if (!canvas) return;
-    
+
     Dialog *dialog = get_dialog_for_canvas(canvas);
     if (dialog) {
-        // Remove from dialog list
-        if (g_dialogs == dialog) {
-            g_dialogs = dialog->next;
-        } else {
-            for (Dialog *d = g_dialogs; d; d = d->next) {
-                if (d->next == dialog) {
-                    d->next = dialog->next;
-                    break;
-                }
-            }
-        }
-        
-        // InputField handles its own completion cleanup
-        
-        // Don't destroy canvas here - intuition.c will do it
-        dialog->canvas = NULL;
-        
         // Call cancel callback if it exists
         if (dialog->on_cancel) {
             dialog->on_cancel();
         }
-        
-        free(dialog);
+
+        // Canvas is being destroyed by intuition.c, not by us
+        // Set to NULL so destroy_dialog() won't try to destroy it
+        dialog->canvas = NULL;
+
+        // Now properly cleanup dialog (widgets, struct, etc)
+        destroy_dialog(dialog);
     }
 }
 
@@ -656,7 +662,7 @@ bool dialogs_handle_key_press(XKeyEvent *event) {
             return false;
         }
         if (dialog->on_cancel) dialog->on_cancel();
-        close_dialog(dialog);
+        destroy_dialog(dialog);
         return true;
     }
     
@@ -669,7 +675,7 @@ bool dialogs_handle_key_press(XKeyEvent *event) {
         if (dialog->input_field && dialog->on_ok) {
             dialog->on_ok(dialog->input_field->text);
         }
-        close_dialog(dialog);
+        destroy_dialog(dialog);
         return true;
     }
     
@@ -807,7 +813,7 @@ bool dialogs_handle_button_release(XButtonEvent *event) {
                         dialog->on_ok(dialog->text_buffer);
                     }
                 }
-                close_dialog(dialog);
+                destroy_dialog(dialog);
                 return true;
             }
             redraw_canvas(canvas);
@@ -822,7 +828,7 @@ bool dialogs_handle_button_release(XButtonEvent *event) {
                 if (dialog->on_cancel) {
                     dialog->on_cancel();
                 }
-                close_dialog(dialog);
+                destroy_dialog(dialog);
                 return true;
             }
             redraw_canvas(canvas);
@@ -880,51 +886,35 @@ void show_delete_confirmation(const char *message,
                              void (*on_confirm)(void),
                              void (*on_cancel)(void)) {
     if (!message || !on_confirm) return;
-    
+
     // Store callbacks globally (simple approach for now)
     g_delete_confirm_callback = on_confirm;
     g_delete_cancel_callback = on_cancel ? on_cancel : delete_confirm_cancel;
-    
-    Dialog *dialog = malloc(sizeof(Dialog));
-    if (!dialog) return;
-    
-    // Initialize dialog state for delete confirmation
-    dialog->dialog_type = DIALOG_DELETE_CONFIRM;
+
+    // Create dialog using consistent lifecycle function (returns NULL on failure)
+    Dialog *dialog = create_dialog(DIALOG_DELETE_CONFIRM, "Delete Confirmation", 450, 220);
+    if (!dialog) {
+        log_error("[ERROR] Failed to create delete confirmation dialog - operation cancelled");
+        return;  // Graceful degradation - safer to cancel delete than proceed without confirmation
+    }
+
+    // Set message text and callbacks
     if (strlen(message) >= NAME_SIZE) {
         log_error("[WARNING] Delete confirmation message truncated: %s", message);
     }
     strncpy(dialog->text_buffer, message, NAME_SIZE - 1);
     dialog->text_buffer[NAME_SIZE - 1] = '\0';
-    dialog->input_field = NULL;  // No input field for delete dialog
     dialog->on_ok = delete_confirm_ok;
     dialog->on_cancel = delete_confirm_cancel;
-    dialog->user_data = NULL;
-    dialog->font = NULL;  // Will be set when canvas is created
-    
-    // Create canvas window (400x219 for delete, taller to fit warning text + checker + decorations)
-    dialog->canvas = create_canvas(NULL, 200, 150, 450, 220, DIALOG);
-    if (!dialog->canvas) {
-        free(dialog);
-        return;
-    }
 
-    // Set dialog properties
-    dialog->canvas->title_base = strdup("Delete Confirmation");
-    dialog->canvas->title_change = NULL;  // No dynamic title for dialogs
-    dialog->canvas->bg_color = GRAY;  // Standard dialog gray
-    dialog->canvas->disable_scrollbars = true;  // Disable scrollbars for dialogs
-
-    // Load font for buttons - use the standard UI font for consistency
-    dialog->font = get_font();
-
-    // Create toolkit buttons
+    // Create toolkit buttons (different positions for delete dialog)
     dialog->ok_button = button_create(10, 150, BUTTON_WIDTH, BUTTON_HEIGHT, "OK", dialog->font);
     dialog->cancel_button = button_create(340, 150, BUTTON_WIDTH, BUTTON_HEIGHT, "Cancel", dialog->font);
 
     // Add to dialog list
     dialog->next = g_dialogs;
     g_dialogs = dialog;
-    
+
     // Show the dialog and set it as active window
     XMapRaised(itn_core_get_display(), dialog->canvas->win);
     itn_focus_set_active(dialog->canvas);
@@ -1024,7 +1014,7 @@ void close_progress_dialog(ProgressDialog *dialog) {
     
     // Clean up
     if (dialog->canvas) {
-        destroy_canvas(dialog->canvas);
+        itn_canvas_destroy(dialog->canvas);
     }
     free(dialog);
 }

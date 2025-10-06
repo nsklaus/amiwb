@@ -6,6 +6,7 @@
 #include "../intuition/itn_public.h"
 #include "../font_manager.h"
 #include "../events.h"
+#include "../config.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -26,25 +27,31 @@ void show_window_list_menu(int x, int y) {
             safe_unmap_window(ctx->dpy, active_menu->canvas->win);
             XSync(ctx->dpy, False);
         }
-        destroy_canvas(active_menu->canvas);
+        itn_canvas_destroy(active_menu->canvas);
         active_menu->canvas = NULL;  // Prevent double-free
         active_menu = NULL;
     }
-
-    // Create a temporary menu for the window list
-    Menu *window_menu = calloc(1, sizeof(Menu));  // zeros all fields including window_refs
-    if (!window_menu) return;
 
     // Get current window list
     Canvas **window_list;
     int window_count = get_window_list(&window_list);
 
-    // Build menu items
-    window_menu->item_count = window_count + 1;  // +1 for "Desktop" option
-    window_menu->items = malloc(window_menu->item_count * sizeof(char*));
-    window_menu->shortcuts = malloc(window_menu->item_count * sizeof(char*));
-    window_menu->enabled = malloc(window_menu->item_count * sizeof(bool));
-    window_menu->window_refs = malloc(window_menu->item_count * sizeof(Canvas*));
+    // Create menu (returns NULL on failure)
+    int item_count = window_count + 1;  // +1 for "Desktop" option
+    Menu *window_menu = create_menu(NULL, item_count);
+    if (!window_menu) {
+        log_error("[ERROR] Failed to create window list menu - feature unavailable");
+        return;  // Graceful degradation: window list won't appear
+    }
+    init_menu_enabled(window_menu);
+
+    // Allocate window_refs array (specific to window list menu)
+    window_menu->window_refs = malloc(item_count * sizeof(Canvas*));
+    if (!window_menu->window_refs) {
+        log_error("[ERROR] Failed to allocate window_refs - window list unavailable");
+        destroy_menu(window_menu);
+        return;  // Graceful degradation: window list won't appear
+    }
 
     // Add Desktop option first
     window_menu->items[0] = strdup("Desktop");
@@ -55,6 +62,12 @@ void show_window_list_menu(int x, int y) {
     // Add each window with instance numbering for duplicates
     // Count occurrences of each title to add (1), (2), (3) suffixes
     int *title_counts = calloc(window_count, sizeof(int));  // Track which instance number we're on
+    if (!title_counts) {
+        log_error("[ERROR] Failed to allocate title_counts - window list unavailable");
+        free(window_menu->window_refs);
+        destroy_menu(window_menu);
+        return;  // Graceful degradation
+    }
 
     for (int i = 0; i < window_count; i++) {
         Canvas *c = window_list[i];

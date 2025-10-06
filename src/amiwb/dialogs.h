@@ -64,9 +64,9 @@ void show_delete_confirmation(const char *message,
 void show_execute_dialog(void (*on_ok)(const char *command),
                         void (*on_cancel)(void));
 
-// Close specific dialog
-void close_dialog(Dialog *dialog);
-void close_dialog_by_canvas(Canvas *canvas);
+// Dialog lifecycle - consistent create/destroy pattern
+void destroy_dialog(Dialog *dialog);  // Complete cleanup
+void close_dialog_by_canvas(Canvas *canvas);  // Special case: called when canvas is destroyed
 
 // Event handlers (called from events.c)
 bool dialogs_handle_key_press(XKeyEvent *event);

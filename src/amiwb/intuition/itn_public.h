@@ -171,7 +171,6 @@ void itn_canvas_destroy(Canvas *canvas);
 Canvas *create_canvas(const char *path, int x, int y, int width, int height, CanvasType type);
 Canvas *create_canvas_with_client(const char *path, int x, int y, int width, int height, CanvasType type, Window client_win);
 Canvas *find_window_by_path(const char *path);
-void destroy_canvas(Canvas *canvas);
 void remove_canvas_from_array(Canvas *target_canvas);
 
 // --- Focus management ---

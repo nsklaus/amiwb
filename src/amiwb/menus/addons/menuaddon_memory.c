@@ -108,7 +108,7 @@ void menuaddon_memory_init(void) {
     MenuAddon *memory_addon = calloc(1, sizeof(MenuAddon));
     if (!memory_addon) {
         log_error("[ERROR] Failed to allocate memory addon - continuing without memory monitor");
-        return;
+        return;  // Gracefully fail - menubar works without memory monitor
     }
 
     // Initial update to populate cached_text

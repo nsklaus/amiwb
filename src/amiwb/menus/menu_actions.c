@@ -341,7 +341,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
                     safe_unmap_window(ctx->dpy, active_menu->canvas->win);
                     XSync(ctx->dpy, False);
                 }
-                destroy_canvas(active_menu->canvas);
+                itn_canvas_destroy(active_menu->canvas);
                 active_menu->canvas = NULL;  // Prevent double-free
 
                 // Free the temporary window menu
@@ -643,7 +643,7 @@ void trigger_close_action(void) {
     // Only close if there's an active window (not desktop)
     if (active_window && active_window->type == WINDOW) {
         // Use destroy_canvas which handles both client and non-client windows properly
-        destroy_canvas(active_window);
+        itn_canvas_destroy(active_window);
     }
 }
 
@@ -802,8 +802,8 @@ void trigger_copy_action(void) {
             size_t dir_len = last_slash - selected->path;
             dir_path = malloc(dir_len + 2);
             if (!dir_path) {
-                log_error("[ERROR] Failed to allocate memory for directory path");
-                return;
+                log_error("[ERROR] Failed to allocate memory for directory path - copy cancelled");
+                return;  // Graceful degradation: abort copy operation
             }
             strncpy(dir_path, selected->path, dir_len);
             dir_path[dir_len] = '\0';
@@ -812,6 +812,10 @@ void trigger_copy_action(void) {
             // Extract directory and base name
         } else {
             dir_path = strdup(".");
+            if (!dir_path) {
+                log_error("[ERROR] strdup failed for directory path - copy cancelled");
+                return;  // Graceful degradation: abort copy operation
+            }
             strncpy(base_name, selected->path, NAME_SIZE - 1);
             base_name[NAME_SIZE - 1] = '\0';
             // Use current directory

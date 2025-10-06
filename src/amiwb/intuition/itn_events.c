@@ -60,7 +60,7 @@ extern bool is_fullscreen_active(Window win);
 extern void render_recreate_canvas_surfaces(Canvas *canvas);
 extern void remove_canvas_from_array(Canvas *canvas);
 extern void workbench_open_directory(const char *path);
-extern void destroy_canvas(Canvas *canvas);
+extern void itn_canvas_destroy(Canvas *canvas);
 extern void create_iconified_icon(Canvas *canvas);
 // Scrollbar constants
 #define SCROLL_STEP 20
@@ -738,7 +738,7 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
     if (canvas) {
         // Our frame window was destroyed - clean up everything
         canvas->close_request_sent = false;
-        destroy_canvas(canvas);
+        itn_canvas_destroy(canvas);
         return;
     }
 
@@ -793,7 +793,7 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
         } else {
             // Normal window - client destroyed itself, proceed with normal cleanup
             canvas->close_request_sent = false;
-            destroy_canvas(canvas);
+            itn_canvas_destroy(canvas);
         }
     }
 }

@@ -67,8 +67,8 @@ static Canvas *add_new_canvas_to_array(void) {
         int new_size = canvas_array_size ? canvas_array_size * 2 : INITIAL_CANVAS_CAPACITY;
         Canvas **expanded_array = realloc(canvas_array, new_size * sizeof(Canvas *));
         if (!expanded_array) {
-            log_error("[ERROR] realloc failed for canvas_array (new size=%d)", new_size);
-            exit(1);
+            log_error("[ERROR] realloc failed for canvas_array (new size=%d) - canvas creation failed", new_size);
+            return NULL;  // Graceful degradation: can't create new canvas
         }
         canvas_array = expanded_array;
         canvas_array_size = new_size;
@@ -143,8 +143,8 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
     if (path) {
         c->path = strdup(path);
         if (!c->path) {
-            log_error("[ERROR] strdup failed for canvas path: %s", path);
-            exit(1);
+            log_error("[ERROR] strdup failed for canvas path: %s - canvas will have no path", path);
+            c->path = NULL;  // Graceful degradation: canvas works without path
         }
     } else {
         c->path = NULL;
@@ -155,8 +155,8 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
         const char *basename = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
         c->title_base = strdup(basename);
         if (!c->title_base) {
-            log_error("[ERROR] strdup failed for canvas title_base: %s", basename);
-            exit(1);
+            log_error("[ERROR] strdup failed for canvas title_base: %s - will use 'Untitled'", basename);
+            c->title_base = NULL;  // Graceful degradation: other code uses "Untitled" as fallback
         }
     } else {
         c->title_base = NULL;
@@ -167,8 +167,8 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
         free(c->title_base);  // Free the empty string before replacing
         c->title_base = strdup("System");
         if (!c->title_base) {
-            log_error("[ERROR] strdup failed for default title 'System'");
-            exit(1);
+            log_error("[ERROR] strdup failed for default title 'System' - will use 'Untitled'");
+            c->title_base = NULL;  // Graceful degradation: other code uses "Untitled" as fallback
         }
     }
     c->title_change = NULL;  // Workbench windows don't use dynamic titles
@@ -469,6 +469,7 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
 // Canvas Destruction
 // ============================================================================
 
+// OWNERSHIP: Frees all Canvas X11 resources (Window, XftDraw, compositing), and canvas struct
 void itn_canvas_destroy(Canvas *canvas) {
     if (!canvas || canvas->type == DESKTOP) return;
     clear_canvas_icons(canvas);
@@ -611,18 +612,14 @@ void itn_canvas_destroy(Canvas *canvas) {
     }
 }
 
-// Public wrapper for internal destroy
-void destroy_canvas(Canvas *canvas) {
-    itn_canvas_destroy(canvas);
-}
-
 // ============================================================================
 // Canvas Finding Functions
 // ============================================================================
 
 Canvas *itn_canvas_get_desktop(void) {
     // Desktop is always the first canvas (canvas_array[0])
-    return canvas_count > 0 ? canvas_array[0] : NULL;
+    if (canvas_array && canvas_count > 0) return canvas_array[0];
+    return NULL;
 }
 
 Canvas *itn_canvas_find_by_window(Window win) {
@@ -630,8 +627,10 @@ Canvas *itn_canvas_find_by_window(Window win) {
         if (c->win == win) return c;
     }
     // Fall back to array search during migration
-    for (int i = 0; i < canvas_count; i++) {
-        if (canvas_array[i]->win == win) return canvas_array[i];
+    if (canvas_array) {  // Guard against init failure
+        for (int i = 0; i < canvas_count; i++) {
+            if (canvas_array[i]->win == win) return canvas_array[i];
+        }
     }
     return NULL;
 }
@@ -641,8 +640,10 @@ Canvas *itn_canvas_find_by_client(Window client) {
         if (c->client_win == client) return c;
     }
     // Fall back to array search during migration
-    for (int i = 0; i < canvas_count; i++) {
-        if (canvas_array[i]->client_win == client) return canvas_array[i];
+    if (canvas_array) {  // Guard against init failure
+        for (int i = 0; i < canvas_count; i++) {
+            if (canvas_array[i]->client_win == client) return canvas_array[i];
+        }
     }
     return NULL;
 }
@@ -790,7 +791,7 @@ void request_client_close(Canvas *canvas) {
 
     // For workbench windows (no client), destroy directly
     if (!canvas->client_win) {
-        destroy_canvas(canvas);
+        itn_canvas_destroy(canvas);
         return;
     }
 

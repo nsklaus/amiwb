@@ -38,16 +38,16 @@ FileIcon *create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x
             if (icon->path) free(icon->path);
             icon->path = strdup(full_path);
             if (!icon->path) {
-                log_error("[ERROR] strdup failed for icon path");
-                exit(1);
+                log_error("[ERROR] strdup failed for icon path - keeping original path");
+                // Graceful degradation: keep old path rather than crashing
             }
         }
         if (name) {
             if (icon->label) free(icon->label);
             icon->label = strdup(name);
             if (!icon->label) {
-                log_error("[ERROR] strdup failed for icon label");
-                exit(1);
+                log_error("[ERROR] strdup failed for icon label - keeping original label");
+                // Graceful degradation: keep old label rather than crashing
             }
         }
         icon->type = type;
@@ -57,42 +57,14 @@ FileIcon *create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x
 
 // Create icon with explicit type
 void create_icon_with_type(const char *path, Canvas *canvas, int x, int y, int type) {
-    // Allocate icon via array manager (this adds it to the global array)
-    // We need a direct way to create and get the icon
-    // For now, use a workaround - the array module needs to expose creation
-
-    // Allocate icon structure
-    FileIcon *icon = calloc(1, sizeof(FileIcon));
+    // Allocate icon structure using icons.c module
+    FileIcon* icon = create_file_icon(path, x, y, type, canvas->win, get_render_context());
     if (!icon) {
-        log_error("[ERROR] calloc failed for FileIcon structure");
-        exit(1);  // Kill on malloc failure per guidelines
+        log_error("[ERROR] Failed to create icon for path '%s'", path);
+        return;
     }
 
-    icon->path = strdup(path);
-    if (!icon->path) {
-        log_error("[ERROR] strdup failed for icon path '%s'", path);
-        exit(1);  // Kill on malloc failure per guidelines
-    }
-
-    const char *base = strrchr(path, '/');
-    icon->label = strdup(base ? base + 1 : path);
-    if (!icon->label) {
-        log_error("[ERROR] strdup failed for icon label");
-        exit(1);  // Kill on malloc failure per guidelines
-    }
-    
-    icon->type = type;
-    icon->x = x;
-    icon->y = y;
-    icon->display_window = canvas->win;
-    icon->selected = false;
-    icon->last_click_time = 0;
-    icon->iconified_canvas = NULL;
-    
-    create_icon_images(icon, get_render_context());
-    icon->current_picture = icon->normal_picture;
-
-    // Add to global array
+    // Add to global array (workbench module manages the array)
     wb_icons_array_manage(icon, true);
 }
 
@@ -110,6 +82,7 @@ void create_icon(const char *path, Canvas *canvas, int x, int y) {
 // Icon Destruction
 // ============================================================================
 
+// OWNERSHIP: Complete cleanup - frees Pictures, paths, label, and icon struct
 void destroy_icon(FileIcon *icon) {
     if (!icon) return;
 
@@ -122,25 +95,11 @@ void destroy_icon(FileIcon *icon) {
         wb_drag_clear_dragged_icon();
     }
 
-    // Free icon resources (XRender pictures)
-    free_icon(icon);
-
-    // Free strings
-    if (icon->path) {
-        free(icon->path);
-        icon->path = NULL;
-    }
-    if (icon->label) {
-        free(icon->label);
-        icon->label = NULL;
-    }
-
     // Remove from icon management array
     wb_icons_array_manage(icon, false);
 
-    // Zero out and free
-    memset(icon, 0, sizeof(FileIcon));
-    free(icon);
+    // Free icon and all its resources (handled by icons.c now)
+    destroy_file_icon(icon);
 }
 
 // Remove icon for a specific iconified canvas
