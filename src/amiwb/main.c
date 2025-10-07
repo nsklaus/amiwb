@@ -223,10 +223,6 @@ int main(int argc, char *argv[]) {
     // Initialize events
     init_events();
 
-    // Initialize g_display for intuition modules (temporary during migration)
-    extern Display *g_display;
-    g_display = itn_core_get_display();
-
     // Start compositor - MANDATORY, no fallback!
     extern bool itn_core_init_compositor(void);
     if (!itn_core_init_compositor()) {

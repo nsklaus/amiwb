@@ -9,9 +9,6 @@
 #include "../render.h"  // For apply_resize_and_redraw (temporary)
 
 // External references (temporary during migration)
-extern Display *display;
-extern int screen;
-extern Window root;
 extern int width, height;
 extern Canvas **canvas_array;
 extern int canvas_count;
@@ -158,13 +155,14 @@ void itn_geometry_apply_resize(Canvas *c, int nw, int nh) {
         }
 
         // MUST also set position to ensure client stays within borders!
+        Display *dpy = itn_core_get_display();
         XWindowChanges ch = {
             .x = BORDER_WIDTH_LEFT,
             .y = BORDER_HEIGHT_TOP,
             .width = client_width,
             .height = client_height
         };
-        XConfigureWindow(display, c->client_win, CWX | CWY | CWWidth | CWHeight, &ch);
+        XConfigureWindow(dpy, c->client_win, CWX | CWY | CWWidth | CWHeight, &ch);
     } else if (c->type == WINDOW) {
         compute_max_scroll(c);
     }

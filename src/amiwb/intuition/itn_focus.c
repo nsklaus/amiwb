@@ -20,6 +20,9 @@ extern void restore_iconified(FileIcon *icon);  // From workbench.c
 // find_canvas is now itn_canvas_find_by_window
 // get_desktop_canvas is now itn_canvas_get_desktop
 
+// Module-private state
+static Canvas *g_active_canvas = NULL;  // Currently active/focused window
+
 void itn_focus_set_active(Canvas *canvas) {
     if (!canvas || (canvas->type != WINDOW && canvas->type != DIALOG)) return;
 

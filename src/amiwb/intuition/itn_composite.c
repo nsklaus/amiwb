@@ -25,14 +25,10 @@ static XRenderPictFormat *format_32 = NULL;
 static XRenderPictFormat *format_24 = NULL;
 
 // External references
-extern Display *display;
-extern Window root;
-extern int screen;
 extern int width, height, depth;
 extern Canvas **canvas_array;
 extern int canvas_count;
 extern bool is_window_valid(Display *dpy, Window win);
-extern bool g_compositor_active;
 
 // Lightweight structure for override-redirect windows (popup menus, tooltips)
 typedef struct OverrideWin {
@@ -110,14 +106,14 @@ Window itn_composite_get_overlay_window(void) {
 
 // Initialize compositor overlay window
 bool itn_composite_init_overlay(void) {
-    Display *dpy = display;
+    Display *dpy = itn_core_get_display();
     // Don't check g_compositor_active - we're called DURING init!
     if (!dpy) {
         log_error("[COMPOSITE] No display available");
         return false;
     }
 
-    Window root_win = RootWindow(dpy, screen);
+    Window root_win = RootWindow(dpy, itn_core_get_screen());
 
     // Get the composite overlay window
     overlay_window = XCompositeGetOverlayWindow(dpy, root_win);
@@ -135,7 +131,7 @@ bool itn_composite_init_overlay(void) {
     format_24 = XRenderFindStandardFormat(dpy, PictStandardRGB24);
 
     // Create overlay picture
-    Visual *vis = DefaultVisual(dpy, screen);
+    Visual *vis = DefaultVisual(dpy, itn_core_get_screen());
     XRenderPictFormat *format = XRenderFindVisualFormat(dpy, vis);
     if (!format) {
         log_error("[COMPOSITE] Failed to find visual format for overlay (visual=%p)", vis);
@@ -168,7 +164,7 @@ bool itn_composite_init_overlay(void) {
 
 // Cleanup compositor overlay
 void itn_composite_cleanup_overlay(void) {
-    Display *dpy = display;
+    Display *dpy = itn_core_get_display();
     if (!dpy) return;
 
     // Clean up compositing data from all canvases
@@ -196,14 +192,14 @@ void itn_composite_cleanup_overlay(void) {
 
     // Release overlay window
     if (overlay_window) {
-        XCompositeReleaseOverlayWindow(dpy, RootWindow(dpy, screen));
+        XCompositeReleaseOverlayWindow(dpy, RootWindow(dpy, itn_core_get_screen()));
         overlay_window = None;
     }
 }
 
 // Create/recreate back buffer for double buffering
 bool itn_composite_create_back_buffer(void) {
-    Display *dpy = display;
+    Display *dpy = itn_core_get_display();
     // Don't check g_compositor_active here - we might be called during init!
     if (!dpy) return false;
 
@@ -215,8 +211,8 @@ bool itn_composite_create_back_buffer(void) {
     int actual_width = width;
     int actual_height = height;
     int actual_depth = depth;
-    int actual_screen = screen;
-    Window actual_root = root;
+    int actual_screen = itn_core_get_screen();
+    Window actual_root = itn_core_get_root();
 
     if (actual_width == 0 || actual_height == 0) {
         actual_screen = DefaultScreen(dpy);
@@ -250,9 +246,9 @@ bool itn_composite_create_back_buffer(void) {
 
 // Setup compositing for a canvas (called when canvas is created/mapped)
 void itn_composite_setup_canvas(Canvas *canvas) {
-    if (!canvas || !g_compositor_active) return;
+    if (!canvas || !itn_composite_is_active()) return;
 
-    Display *dpy = display;
+    Display *dpy = itn_core_get_display();
     if (!dpy) return;
 
 
@@ -281,9 +277,9 @@ void itn_composite_setup_canvas(Canvas *canvas) {
 
 // Update canvas pixmap (called after resize or when pixmap becomes invalid)
 void itn_composite_update_canvas_pixmap(Canvas *canvas) {
-    if (!canvas || !g_compositor_active) return;
+    if (!canvas || !itn_composite_is_active()) return;
 
-    Display *dpy = display;
+    Display *dpy = itn_core_get_display();
     if (!dpy || !canvas->win) return;
 
     // Free old picture AND pixmap to prevent memory leak
@@ -306,9 +302,9 @@ void itn_composite_update_canvas_pixmap(Canvas *canvas) {
 
 // Add an override-redirect window to tracking
 void itn_composite_add_override(Window win, XWindowAttributes *attrs) {
-    if (!g_compositor_active) return;
+    if (!itn_composite_is_active()) return;
 
-    Display *dpy = display;
+    Display *dpy = itn_core_get_display();
     if (!dpy) return;
 
     // CRITICAL: Never add our own overlay window!
@@ -390,9 +386,9 @@ void itn_composite_add_override(Window win, XWindowAttributes *attrs) {
 
 // Remove an override-redirect window
 bool itn_composite_remove_override(Window win) {
-    if (!g_compositor_active) return false;
+    if (!itn_composite_is_active()) return false;
 
-    Display *dpy = display;
+    Display *dpy = itn_core_get_display();
     if (!dpy) return false;
 
     OverrideWin **prev = &override_list;
@@ -427,10 +423,10 @@ bool itn_composite_remove_override(Window win) {
 
 // Render all windows to back buffer
 void itn_composite_render_all(void) {
-    Display *dpy = display;
-    if (!dpy || !g_compositor_active || !back_buffer) {
+    Display *dpy = itn_core_get_display();
+    if (!dpy || !itn_composite_is_active() || !back_buffer) {
         log_error("[COMPOSITE] render_all failed: dpy=%p, active=%d, back_buffer=%p",
-                  dpy, g_compositor_active, back_buffer);
+                  dpy, itn_composite_is_active(), back_buffer);
         return;
     }
 
@@ -459,7 +455,7 @@ void itn_composite_render_all(void) {
     Window *children = NULL;
     unsigned int nchildren = 0;
 
-    if (XQueryTree(dpy, root, &root_return, &parent_return, &children, &nchildren)) {
+    if (XQueryTree(dpy, itn_core_get_root(), &root_return, &parent_return, &children, &nchildren)) {
         // Children are returned in bottom-to-top stacking order
         for (unsigned int i = 0; i < nchildren && visible_count < 256; i++) {
             Window w = children[i];
@@ -588,10 +584,10 @@ void itn_composite_render_all(void) {
 
 // Swap back buffer to front (display on overlay or root)
 void itn_composite_swap_buffers(void) {
-    Display *dpy = display;
-    if (!dpy || !g_compositor_active || !back_buffer) {
+    Display *dpy = itn_core_get_display();
+    if (!dpy || !itn_composite_is_active() || !back_buffer) {
         log_error("[COMPOSITE] swap_buffers failed: dpy=%p, active=%d, back_buffer=%p",
-                  dpy, g_compositor_active, back_buffer);
+                  dpy, itn_composite_is_active(), back_buffer);
         return;
     }
 
@@ -605,11 +601,11 @@ void itn_composite_swap_buffers(void) {
         // Create a picture for the root window if we don't have one
         static Picture root_pict = None;
         if (!root_pict) {
-            XRenderPictFormat *fmt = XRenderFindVisualFormat(dpy, DefaultVisual(dpy, screen));
+            XRenderPictFormat *fmt = XRenderFindVisualFormat(dpy, DefaultVisual(dpy, itn_core_get_screen()));
             if (fmt) {
                 XRenderPictureAttributes pa = {0};
                 pa.subwindow_mode = IncludeInferiors;
-                root_pict = XRenderCreatePicture(dpy, root, fmt, CPSubwindowMode, &pa);
+                root_pict = XRenderCreatePicture(dpy, itn_core_get_root(), fmt, CPSubwindowMode, &pa);
             }
         }
         output_target = root_pict;
@@ -633,9 +629,9 @@ void itn_composite_swap_buffers(void) {
 
 // Render a single canvas (for partial updates)
 void itn_composite_render_canvas(Canvas *canvas) {
-    if (!canvas || !g_compositor_active) return;
+    if (!canvas || !itn_composite_is_active()) return;
 
-    Display *dpy = display;
+    Display *dpy = itn_core_get_display();
     if (!dpy || !canvas->comp_picture || !back_buffer) return;
 
     // Composite this canvas to back buffer at its position
@@ -647,11 +643,11 @@ void itn_composite_render_canvas(Canvas *canvas) {
 
 // Get canvas XRender picture (create if needed)
 Picture itn_composite_get_canvas_picture(Canvas *canvas) {
-    if (!canvas || !g_compositor_active) return None;
+    if (!canvas || !itn_composite_is_active()) return None;
 
     // Create picture if needed
     if (!canvas->comp_picture && canvas->comp_pixmap) {
-        Display *dpy = display;
+        Display *dpy = itn_core_get_display();
         if (dpy) {
             int win_depth = canvas->depth ? canvas->depth : depth;
             canvas->comp_picture = create_picture_from_pixmap(dpy, canvas->comp_pixmap, win_depth);
@@ -663,9 +659,9 @@ Picture itn_composite_get_canvas_picture(Canvas *canvas) {
 
 // Process damage event for a window
 void itn_composite_process_damage(XDamageNotifyEvent *ev) {
-    if (!g_compositor_active) return;
+    if (!itn_composite_is_active()) return;
 
-    Display *dpy = display;
+    Display *dpy = itn_core_get_display();
     if (!dpy) return;
 
     // Find the canvas for this damage event
@@ -730,7 +726,7 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
 
 // Handle expose events
 void itn_composite_handle_expose(XExposeEvent *ev) {
-    if (!g_compositor_active) return;
+    if (!itn_composite_is_active()) return;
 
     // Find canvas for this window
     Canvas *canvas = NULL;
@@ -751,7 +747,7 @@ void itn_composite_handle_expose(XExposeEvent *ev) {
 
 // Check if any canvas needs compositing
 bool itn_composite_needs_frame(void) {
-    if (!g_compositor_active) return false;
+    if (!itn_composite_is_active()) return false;
 
     for (int i = 0; i < canvas_count; i++) {
         Canvas *c = canvas_array[i];

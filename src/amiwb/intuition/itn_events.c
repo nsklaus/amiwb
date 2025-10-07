@@ -14,16 +14,18 @@
 #include <time.h>
 #include <math.h>
 
-// External references (temporary during migration)
-extern Display *display;
-extern int screen;
-extern Window root;
-extern int width, height;
-extern Canvas *active_window;
-extern bool fullscreen_active;
 // Define the RandR event base (was in intuition.c)
 int randr_event_base = 0;
-extern bool g_last_press_consumed;
+
+// Module-private state
+static bool g_last_press_consumed = false;
+
+// Note: Global state now accessed via getter functions from itn_internal.h:
+// - itn_core_get_display() instead of extern Display *display
+// - itn_core_get_root() instead of extern Window root
+// - itn_core_get_screen() instead of extern int screen
+// - itn_focus_get_active() instead of extern Canvas *active_window
+// - itn_core_is_fullscreen_active() instead of extern bool fullscreen_active
 
 // External functions from intuition.c (temporary during migration)
 // find_canvas is now itn_canvas_find_by_window
@@ -76,7 +78,7 @@ extern int hit_test(Canvas *canvas, int x, int y);
 // ============================================================================
 
 void itn_events_handle_damage(XDamageNotifyEvent *event) {
-    if (!event || !g_compositor_active) return;
+    if (!event || !itn_composite_is_active()) return;
 
     // Find canvas for this damage event
     Canvas *canvas = itn_canvas_find_by_client(event->drawable);
@@ -128,6 +130,8 @@ void itn_events_handle_damage(XDamageNotifyEvent *event) {
 
 void intuition_handle_client_message(XClientMessageEvent *event) {
     if (!event) return;
+    Display *display = itn_core_get_display();
+    if (!display) return;
     Atom net_wm_state = XInternAtom(display, "_NET_WM_STATE", False);
     if ((Atom)event->message_type != net_wm_state) return;
     Atom fs = XInternAtom(display, "_NET_WM_STATE_FULLSCREEN", False);
@@ -153,7 +157,7 @@ void intuition_handle_client_message(XClientMessageEvent *event) {
 
 void intuition_handle_expose(XExposeEvent *event) {
     Canvas *canvas = itn_canvas_find_by_window(event->window);
-    if (canvas && !fullscreen_active) {
+    if (canvas && !itn_core_is_fullscreen_active()) {
         // Only damage non-composited canvases
         // Client windows (type==WINDOW with client_win) are tracked via XDamage
         // We only need to handle Expose for our own rendering: desktop, menus, dialogs
@@ -171,6 +175,10 @@ void intuition_handle_expose(XExposeEvent *event) {
 // ============================================================================
 
 void intuition_handle_property_notify(XPropertyEvent *event) {
+    Display *display = itn_core_get_display();
+    Window root = itn_core_get_root();
+    if (!display) return;
+
     // Check for IPC from ReqASL to open directory
     static Atom amiwb_open_dir = None;
     if (amiwb_open_dir == None) {
@@ -243,6 +251,9 @@ void intuition_handle_property_notify(XPropertyEvent *event) {
 // ============================================================================
 
 void intuition_handle_button_press(XButtonEvent *event) {
+    Display *display = itn_core_get_display();
+    if (!display) return;
+
     Canvas *canvas = itn_canvas_find_by_window(event->window);
 
     // If not found by frame window, check if event is on a client window
@@ -310,14 +321,19 @@ void intuition_handle_button_press(XButtonEvent *event) {
             canvas->scroll_y = max(0, canvas->scroll_y - SCROLL_STEP);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
+            g_last_press_consumed = true;  // Wheel scroll consumed
+            return;
         } else if (event->button == Button5) {  // Scroll down
             canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + SCROLL_STEP);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
+            g_last_press_consumed = true;  // Wheel scroll consumed
+            return;
         }
     }
 
-    g_last_press_consumed = true;  // Window controls always consume the press
+    // If we get here, the click was in the content area and NOT consumed by intuition
+    // Leave g_last_press_consumed = false so workbench can handle it
 }
 
 // ============================================================================
@@ -355,6 +371,9 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
 // ============================================================================
 
 void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
+    Display *display = itn_core_get_display();
+    if (!display) return;
+
     // First check if this is one of our frame windows being destroyed
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (canvas) {
@@ -455,6 +474,9 @@ void intuition_handle_button_release(XButtonEvent *event) {
 
 // Frame a client window, activate its frame, optionally map the client.
 static void frame_and_activate(Window client, XWindowAttributes *attrs, bool map_client) {
+    Display *display = itn_core_get_display();
+    if (!display) return;
+
     Canvas *frame = frame_client_window(client, attrs);
     if (!frame) {
         if (map_client) XMapWindow(display, client);
@@ -469,6 +491,9 @@ static void frame_and_activate(Window client, XWindowAttributes *attrs, bool map
 }
 
 void intuition_handle_map_request(XMapRequestEvent *event) {
+    Display *display = itn_core_get_display();
+    if (!display) return;
+
     XWindowAttributes attrs;
     if (!get_window_attrs_with_defaults(event->window, &attrs)) {
         // Not a valid Window - ignore
@@ -490,6 +515,9 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
 
 // Handle MapNotify for toplevel client windows that became viewable without a MapRequest
 void intuition_handle_map_notify(XMapEvent *event) {
+    Display *display = itn_core_get_display();
+    if (!display) return;
+
     // CRITICAL: Skip our own overlay window!
     extern Window itn_composite_get_overlay_window(void);
     Window overlay = itn_composite_get_overlay_window();
@@ -541,6 +569,9 @@ void intuition_handle_map_notify(XMapEvent *event) {
 // ============================================================================
 
 static void handle_configure_unmanaged(XConfigureRequestEvent *event) {
+    Display *display = itn_core_get_display();
+    if (!display) return;
+
     XWindowAttributes attrs;
     bool attrs_valid = get_window_attrs_with_defaults(event->window, &attrs);
     unsigned long safe_mask = unmanaged_safe_mask(event, &attrs, attrs_valid);
@@ -564,6 +595,9 @@ static void handle_configure_unmanaged(XConfigureRequestEvent *event) {
 }
 
 static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *event) {
+    Display *display = itn_core_get_display();
+    if (!display) return;
+
     XWindowChanges frame_changes = (XWindowChanges){0};
     unsigned long frame_mask = 0;
 
@@ -587,7 +621,7 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
             // Mark as fullscreen and hide menubar
             if (!canvas->fullscreen) {
                 canvas->fullscreen = true;
-                fullscreen_active = True;
+                itn_core_set_fullscreen_active(true);
                 menubar_apply_fullscreen(true);
             }
         } else {
@@ -597,7 +631,7 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
             // If we were fullscreen, exit fullscreen mode
             if (canvas->fullscreen) {
                 canvas->fullscreen = false;
-                fullscreen_active = False;
+                itn_core_set_fullscreen_active(false);
                 menubar_apply_fullscreen(false);
             }
         }
@@ -722,10 +756,10 @@ void intuition_handle_configure_notify(XConfigureEvent *event) {
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) return;
 
-    // Only process if this is our frame window
-    if (canvas->type == WINDOW || canvas->type == DIALOG) {
-        itn_geometry_apply_resize(canvas, event->width, event->height);
-    }
+    // Process ConfigureNotify for ALL canvas types to stay in sync with X11
+    // This is critical: if XMoveResizeWindow fails, ConfigureNotify tells us the actual size
+    // Ignoring it causes canvas->width to desync from real window geometry
+    itn_geometry_apply_resize(canvas, event->width, event->height);
 }
 
 // Also need to implement the new itn_events versions that were in the stub
@@ -782,7 +816,7 @@ void itn_events_handle_map(XMapEvent *event) {
     canvas->comp_visible = true;
 
     // Setup compositing if needed
-    if (!canvas->comp_damage && g_compositor_active) {
+    if (!canvas->comp_damage && itn_composite_is_active()) {
         itn_composite_setup_canvas(canvas);
     }
 
@@ -828,12 +862,45 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     // Without this, DisplayWidth()/DisplayHeight() will return stale values
     XRRUpdateConfiguration((XEvent *)event);
 
-    width = event->width;
-    height = event->height;
+    log_error("[INFO] XRandR screen change: %dx%d", event->width, event->height);
+
+    itn_core_set_screen_dimensions(event->width, event->height);
+
+    // CRITICAL: Recreate compositor back buffer for new screen dimensions
+    // Without this, compositor is stuck rendering into old-sized buffer (black bands)
+    if (itn_composite_is_active()) {
+        log_error("[INFO] Recreating compositor back buffer for new dimensions");
+        itn_composite_create_back_buffer();
+    }
+
+    // Resize desktop canvas to new screen dimensions
+    Canvas *desktop = itn_canvas_get_desktop();
+    if (desktop) {
+        log_error("[INFO] Resizing desktop to %dx%d", event->width, event->height - MENUBAR_HEIGHT);
+        itn_geometry_move_resize(desktop, 0, MENUBAR_HEIGHT, event->width, event->height - MENUBAR_HEIGHT);
+    } else {
+        log_error("[WARN] Desktop canvas not found!");
+    }
+
+    // Resize menubar to new screen width
+    extern Canvas *get_menubar(void);
+    Canvas *menubar = get_menubar();
+    if (menubar) {
+        log_error("[INFO] Resizing menubar to width %d", event->width);
+        itn_geometry_move_resize(menubar, 0, 0, event->width, MENUBAR_HEIGHT);
+    } else {
+        log_error("[WARN] Menubar canvas not found!");
+    }
+
+    // Reload wallpapers for new screen dimensions
+    extern void render_load_wallpapers(void);
+    log_error("[INFO] Reloading wallpapers...");
+    render_load_wallpapers();
 
     // Mark entire screen as damaged
-    DAMAGE_RECT(0, 0, width, height);
+    DAMAGE_RECT(0, 0, event->width, event->height);
     SCHEDULE_FRAME();
+    log_error("[INFO] XRandR screen change complete");
 }
 
 // ============================================================================
@@ -856,7 +923,7 @@ void itn_events_route_to_canvas(Canvas *canvas, XEvent *event) {
             break;
         default:
             // Check for damage events
-            if (g_compositor_active && event->type == g_damage_event_base + XDamageNotify) {
+            if (itn_composite_is_active() && event->type == itn_core_get_damage_event_base() + XDamageNotify) {
                 itn_events_handle_damage((XDamageNotifyEvent *)event);
             }
             break;
@@ -889,6 +956,10 @@ void handle_desktop_button(XButtonEvent *event) {
 
 bool itn_events_last_press_consumed(void) {
     return g_last_press_consumed;
+}
+
+void itn_events_reset_press_consumed(void) {
+    g_last_press_consumed = false;
 }
 
 bool itn_events_is_scrolling_active(void) {

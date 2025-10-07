@@ -157,6 +157,7 @@ extern int randr_event_base;
 
 // --- Core initialization ---
 Display *itn_core_get_display(void);
+int itn_core_get_damage_event_base(void);
 Canvas *init_intuition(void);
 void cleanup_intuition(void);
 bool init_display_and_root(void);
@@ -225,6 +226,7 @@ void intuition_handle_client_message(XClientMessageEvent *event);
 bool intuition_last_press_consumed(void);
 bool intuition_is_scrolling_active(void);
 bool itn_events_last_press_consumed(void);
+void itn_events_reset_press_consumed(void);
 bool itn_events_is_scrolling_active(void);
 
 // --- Render/frame scheduling ---

@@ -23,13 +23,10 @@
 #include <execinfo.h>  // For backtrace support
 
 // Global state
-Display *g_display = NULL;
-Canvas *g_canvas_list = NULL;
-Canvas *g_active_canvas = NULL;
-Canvas *g_desktop_canvas = NULL;
-bool g_compositor_active = false;
-int g_damage_event_base = 0;
-int g_damage_error_base = 0;
+static Display *g_display = NULL;  // Now encapsulated via itn_core_get_display()
+static bool g_compositor_active = false;  // Now encapsulated via getter/setter
+static int g_damage_event_base = 0;
+static int g_damage_error_base = 0;
 
 // Global state flags (exposed for itn_canvas.c)
 bool g_shutting_down = false;
@@ -60,10 +57,54 @@ int window_start_x = 0, window_start_y = 0;
 bool scrolling_vertical = false;
 int initial_scroll = 0, scroll_start_pos = 0;
 bool fullscreen_active = false;
-bool g_last_press_consumed = false;
 
 Display *itn_core_get_display(void) {
     return g_display ? g_display : display;  // Use global during migration
+}
+
+int itn_core_get_screen(void) {
+    return screen;
+}
+
+Window itn_core_get_root(void) {
+    return root;
+}
+
+int itn_core_get_screen_width(void) {
+    return width;
+}
+
+int itn_core_get_screen_height(void) {
+    return height;
+}
+
+void itn_core_set_screen_dimensions(int w, int h) {
+    width = w;
+    height = h;
+}
+
+bool itn_core_is_fullscreen_active(void) {
+    return fullscreen_active;
+}
+
+void itn_core_set_fullscreen_active(bool active) {
+    fullscreen_active = active;
+}
+
+bool itn_composite_is_active(void) {
+    return g_compositor_active;
+}
+
+void itn_composite_set_active(bool active) {
+    g_compositor_active = active;
+}
+
+int itn_core_get_damage_event_base(void) {
+    return g_damage_event_base;
+}
+
+int itn_core_get_damage_error_base(void) {
+    return g_damage_error_base;
 }
 
 bool itn_core_init_compositor(void) {
@@ -137,7 +178,7 @@ bool itn_core_init_compositor(void) {
 
     // MUST set active BEFORE setting up canvases!
     // Otherwise itn_composite_setup_canvas() will return early
-    g_compositor_active = true;
+    itn_composite_set_active(true);
 
     // Setup compositing for existing canvases
     // When compositor starts, existing windows need compositing setup
@@ -219,7 +260,7 @@ void itn_core_shutdown_compositor(void) {
 
     // TODO: Release compositor selection and destroy owner window
 
-    g_compositor_active = false;
+    itn_composite_set_active(false);
 }
 
 bool itn_core_is_compositor_active(void) {

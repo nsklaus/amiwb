@@ -15,10 +15,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Module-private state
+static Canvas *g_canvas_list = NULL;  // Linked list of all canvases
+
 // External references (temporary during migration)
-extern Display *display;
-extern int screen;
-extern Window root;
 extern int width, height, depth;
 extern Canvas **canvas_array;
 extern int canvas_count;
@@ -100,16 +100,19 @@ static Canvas *manage_canvases(bool should_add_canvas, Canvas *canvas_to_remove)
 
 // Choose appropriate visual and depth for different canvas types
 static void choose_visual_for_canvas_type(CanvasType canvas_type, XVisualInfo *visual_info) {
+    Display *dpy = itn_core_get_display();
+    int scr = itn_core_get_screen();
+
     if (canvas_type == DESKTOP) {
         // Desktop uses default visual/depth
-        visual_info->visual = DefaultVisual(display, screen);
-        visual_info->depth = DefaultDepth(display, screen);
+        visual_info->visual = DefaultVisual(dpy, scr);
+        visual_info->depth = DefaultDepth(dpy, scr);
     } else {
         // Try to match GLOBAL_DEPTH with TrueColor visual
-        if (!XMatchVisualInfo(display, screen, GLOBAL_DEPTH, TrueColor, visual_info)) {
+        if (!XMatchVisualInfo(dpy, scr, GLOBAL_DEPTH, TrueColor, visual_info)) {
             // Fallback to default visual if GLOBAL_DEPTH not available
-            visual_info->visual = DefaultVisual(display, screen);
-            visual_info->depth = DefaultDepth(display, screen);
+            visual_info->visual = DefaultVisual(dpy, scr);
+            visual_info->depth = DefaultDepth(dpy, scr);
         }
         // visual_info is now properly set either by XMatchVisualInfo or to defaults
     }
@@ -120,13 +123,15 @@ static long get_event_mask_for_canvas_type(CanvasType canvas_type) {
     long base_events = ExposureMask | ButtonPressMask | PointerMotionMask | ButtonReleaseMask | KeyPressMask;
 
     if (canvas_type == DESKTOP)
-        return base_events | SubstructureRedirectMask | SubstructureNotifyMask;
+        // StructureNotifyMask required for ConfigureNotify (geometry change events)
+        return base_events | StructureNotifyMask | SubstructureRedirectMask | SubstructureNotifyMask;
     if (canvas_type == WINDOW)
         // Need SubstructureRedirectMask to intercept client resize attempts!
         return base_events | StructureNotifyMask | SubstructureNotifyMask |
                SubstructureRedirectMask | EnterWindowMask | FocusChangeMask;
     if (canvas_type == MENU)
-        return base_events | PointerMotionMask | ButtonPressMask | ButtonReleaseMask;
+        // StructureNotifyMask required for ConfigureNotify (geometry change events)
+        return base_events | StructureNotifyMask | PointerMotionMask | ButtonPressMask | ButtonReleaseMask;
 
     return base_events;
 }
@@ -211,7 +216,7 @@ static Bool setup_visual_and_window(Canvas *c, CanvasType t,
     // XCreateColormap: Allocates a color palette for this window
     // A colormap maps pixel values to actual RGB colors on screen
     // AllocNone means we don't pre-allocate any specific colors
-    attrs.colormap          = XCreateColormap(ctx->dpy, root, c->visual, AllocNone);
+    attrs.colormap          = XCreateColormap(ctx->dpy, itn_core_get_root(), c->visual, AllocNone);
     attrs.border_pixel      = 0;      // Border color (0 = black)
     attrs.background_pixel  = 0;      // Background color (0 = black)
     attrs.background_pixmap = None;   // No background image
@@ -228,7 +233,7 @@ static Bool setup_visual_and_window(Canvas *c, CanvasType t,
     // Parameters: display, parent window, x, y, width, height,
     //            border width, color depth, window class, visual, attribute mask, attributes
     // InputOutput means this window can both display content and receive input
-    c->win = XCreateWindow(display, root, win_x, win_y, win_w, win_h,
+    c->win = XCreateWindow(itn_core_get_display(), itn_core_get_root(), win_x, win_y, win_w, win_h,
                            0, vinfo.depth, InputOutput, c->visual, mask, &attrs);
     if (c->win == None) {
         log_error("[ERROR] XCreateWindow failed for frame at %d,%d size %dx%d", win_x, win_y, win_w, win_h);
@@ -312,7 +317,7 @@ void select_next_window(Canvas *closing_canvas) {  // Exported for intuition.c
     Window root_return, parent_return;
     Window *children;
     unsigned int nchildren;
-    if (XQueryTree(display, root, &root_return, &parent_return,
+    if (XQueryTree(itn_core_get_display(), itn_core_get_root(), &root_return, &parent_return,
             &children, &nchildren)) {
 
         for (int i = nchildren - 1; i >= 0; i--) {  // Top to bottom
@@ -401,8 +406,9 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
     canvas->pre_max_h = 0;
 
     // Initialize window size constraints
-    int screen_width = DisplayWidth(display, DefaultScreen(display));
-    int screen_height = DisplayHeight(display, DefaultScreen(display));
+    Display *dpy = itn_core_get_display();
+    int screen_width = DisplayWidth(dpy, DefaultScreen(dpy));
+    int screen_height = DisplayHeight(dpy, DefaultScreen(dpy));
     canvas->min_width = 150;  // Default minimum
     canvas->min_height = 150;
     canvas->max_width = screen_width;  // Workbench windows can use full width
@@ -432,7 +438,7 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
         if (type == WINDOW ) {
             XSetWindowAttributes attrs = {0};
             attrs.background_pixmap = None;
-            XChangeWindowAttributes(display, canvas->win, CWBackPixmap, &attrs);
+            XChangeWindowAttributes(itn_core_get_display(), canvas->win, CWBackPixmap, &attrs);
             // Use damage accumulation instead of immediate redraw
             DAMAGE_CANVAS(canvas);
         }
@@ -451,8 +457,7 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
     }
 
     // Setup compositing for this canvas (if compositor is active)
-    extern bool g_compositor_active;
-    if (g_compositor_active) {
+    if (itn_composite_is_active()) {
         itn_composite_setup_canvas(canvas);
     }
 
@@ -529,7 +534,7 @@ void itn_canvas_destroy(Canvas *canvas) {
 
         if (g_restarting) {
             // Restarting - preserve client by unparenting back to root
-            XReparentWindow(dpy, canvas->client_win, root,
+            XReparentWindow(dpy, canvas->client_win, itn_core_get_root(),
                           canvas->x + BORDER_WIDTH_LEFT,
                           canvas->y + BORDER_HEIGHT_TOP);
             XRemoveFromSaveSet(dpy, canvas->client_win);
@@ -681,7 +686,7 @@ void itn_canvas_manage_list(Canvas *canvas, bool add) {
 // ============================================================================
 
 void itn_canvas_setup_compositing(Canvas *canvas) {
-    if (!canvas || !g_compositor_active) return;
+    if (!canvas || !itn_composite_is_active()) return;
 
     Display *dpy = itn_core_get_display();
     if (!dpy) return;
@@ -713,7 +718,7 @@ static int ignore_bad_damage(Display *dpy, XErrorEvent *error) {
 }
 
 void itn_canvas_cleanup_compositing(Canvas *canvas) {
-    if (!canvas || !g_compositor_active) return;
+    if (!canvas || !itn_composite_is_active()) return;
 
     Display *dpy = itn_core_get_display();
     if (!dpy) return;

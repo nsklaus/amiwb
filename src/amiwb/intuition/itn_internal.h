@@ -14,29 +14,21 @@
 #include <time.h>
 
 // ============================================================================
-// Global State (shared between modules)
-// ============================================================================
-
-// From itn_core.c
-extern Display *g_display;
-extern Canvas *g_canvas_list;
-extern Canvas *g_active_canvas;
-extern Canvas *g_desktop_canvas;
-extern bool g_compositor_active;
-extern int g_damage_event_base;
-extern int g_damage_error_base;
-
-// Frame scheduling state (from itn_render.c)
-extern int g_frame_timer_fd;
-extern bool g_frame_scheduled;
-extern int g_target_fps;
-
-// ============================================================================
 // Internal Module APIs
+// All state properly encapsulated - no extern globals!
 // ============================================================================
 
 // --- itn_core.c ---
 Display *itn_core_get_display(void);
+int itn_core_get_screen(void);
+Window itn_core_get_root(void);
+int itn_core_get_screen_width(void);
+int itn_core_get_screen_height(void);
+void itn_core_set_screen_dimensions(int w, int h);
+bool itn_core_is_fullscreen_active(void);
+void itn_core_set_fullscreen_active(bool active);
+int itn_core_get_damage_event_base(void);
+int itn_core_get_damage_error_base(void);
 bool itn_core_init_compositor(void);
 void itn_core_shutdown_compositor(void);
 bool itn_core_is_compositor_active(void);
@@ -82,6 +74,8 @@ void itn_render_log_metrics(void);
 bool itn_composite_init_overlay(void);
 void itn_composite_cleanup_overlay(void);
 Window itn_composite_get_overlay_window(void);
+bool itn_composite_is_active(void);
+void itn_composite_set_active(bool active);
 bool itn_composite_create_back_buffer(void);
 void itn_composite_setup_canvas(Canvas *canvas);
 void itn_composite_render_all(void);
@@ -99,6 +93,7 @@ void itn_events_handle_damage(XDamageNotifyEvent *event);
 void itn_events_handle_configure(XConfigureEvent *event);
 void itn_events_handle_map(XMapEvent *event);
 bool itn_events_last_press_consumed(void);
+void itn_events_reset_press_consumed(void);
 bool itn_events_is_scrolling_active(void);
 void itn_events_handle_unmap(XUnmapEvent *event);
 void itn_events_route_to_canvas(Canvas *canvas, XEvent *event);

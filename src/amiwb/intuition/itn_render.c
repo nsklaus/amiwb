@@ -12,10 +12,10 @@
 #include <string.h>
 #include <errno.h>
 
-// Frame scheduling state
-int g_frame_timer_fd = -1;
-bool g_frame_scheduled = false;
-int g_target_fps = 120;  // Default 120Hz
+// Frame scheduling state (module-private)
+static int g_frame_timer_fd = -1;
+static bool g_frame_scheduled = false;
+static int g_target_fps = 120;  // Default 120Hz
 bool g_continuous_mode = false;  // Default on-demand rendering
 
 // Damage accumulation state
@@ -55,8 +55,6 @@ static struct {
 } metrics = {0};
 
 // External references (temporary during migration)
-extern Display *display;
-extern Window root;
 extern int width, height;
 extern Canvas **canvas_array;
 extern int canvas_count;
@@ -161,7 +159,7 @@ void itn_render_process_frame(void) {
     metrics.full_repaints++;  // Currently always full repaint
 
     // If compositor is active, use it
-    if (g_compositor_active) {
+    if (itn_composite_is_active()) {
         itn_composite_render_all();
     } else {
         // Fallback: render damaged canvases using legacy path
@@ -371,7 +369,7 @@ void itn_render_log_metrics(void) {
     double max_rps = (avg_frame > 0) ? 1000.0 / avg_frame : 0;
 
     log_error("[METRICS] ===== Performance Snapshot =====");
-    log_error("[METRICS] Compositor: %s", g_compositor_active ? "ACTIVE" : "INACTIVE");
+    log_error("[METRICS] Compositor: %s", itn_composite_is_active() ? "ACTIVE" : "INACTIVE");
 
     log_error("[METRICS] Frame Statistics:");
     log_error("[METRICS]   Frames rendered: %lu", metrics.frame_count);

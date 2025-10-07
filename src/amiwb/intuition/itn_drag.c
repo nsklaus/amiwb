@@ -6,9 +6,6 @@
 #include "../config.h"
 #include <X11/Xlib.h>
 
-// External references
-extern Display *display;
-
 // Module-private state (no longer extern - encapsulated)
 static Canvas *dragging_canvas = NULL;
 static int drag_start_x = 0;
@@ -23,7 +20,8 @@ static int window_start_y = 0;
 // Start window drag from titlebar
 // Returns true on success, false on failure
 bool itn_drag_start(Canvas *canvas, int x_root, int y_root) {
-    if (!canvas || !display) return false;
+    Display *dpy = itn_core_get_display();
+    if (!canvas || !dpy) return false;
 
     // Initialize drag state
     dragging_canvas = canvas;
@@ -33,7 +31,7 @@ bool itn_drag_start(Canvas *canvas, int x_root, int y_root) {
     window_start_y = canvas->y;
 
     // Grab pointer for smooth dragging
-    XGrabPointer(display, canvas->win, False,
+    XGrabPointer(dpy, canvas->win, False,
                 ButtonReleaseMask | PointerMotionMask,
                 GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
 
@@ -45,6 +43,9 @@ bool itn_drag_start(Canvas *canvas, int x_root, int y_root) {
 bool itn_drag_motion(XMotionEvent *event) {
     if (!dragging_canvas || !event) return false;
 
+    Display *dpy = itn_core_get_display();
+    if (!dpy) return false;
+
     int delta_x = event->x_root - drag_start_x;
     int delta_y = event->y_root - drag_start_y;
     window_start_x += delta_x;
@@ -54,7 +55,7 @@ bool itn_drag_motion(XMotionEvent *event) {
     // Damage old position
     DAMAGE_CANVAS(dragging_canvas);
 
-    XMoveWindow(display, dragging_canvas->win, window_start_x, window_start_y);
+    XMoveWindow(dpy, dragging_canvas->win, window_start_x, window_start_y);
     dragging_canvas->x = window_start_x;
     dragging_canvas->y = window_start_y;
     drag_start_x = event->x_root;
@@ -65,7 +66,7 @@ bool itn_drag_motion(XMotionEvent *event) {
     if (dragging_canvas->client_win != None) {
         XConfigureEvent ce;
         ce.type = ConfigureNotify;
-        ce.display = display;
+        ce.display = dpy;
         ce.event = dragging_canvas->client_win;
         ce.window = dragging_canvas->client_win;
         // Send root-relative coordinates (frame position + decoration offsets)
@@ -79,7 +80,7 @@ bool itn_drag_motion(XMotionEvent *event) {
         ce.border_width = 0;
         ce.above = None;
         ce.override_redirect = False;
-        XSendEvent(display, dragging_canvas->client_win, False,
+        XSendEvent(dpy, dragging_canvas->client_win, False,
                   StructureNotifyMask, (XEvent *)&ce);
     }
 
@@ -94,8 +95,11 @@ bool itn_drag_motion(XMotionEvent *event) {
 void itn_drag_end(void) {
     if (!dragging_canvas) return;
 
+    Display *dpy = itn_core_get_display();
+    if (!dpy) return;
+
     // Release pointer grab
-    XUngrabPointer(display, CurrentTime);
+    XUngrabPointer(dpy, CurrentTime);
 
     // Clear drag state
     dragging_canvas = NULL;

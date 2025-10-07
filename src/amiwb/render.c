@@ -1141,11 +1141,21 @@ void render_recreate_canvas_surfaces(Canvas *canvas) {
     // Free existing resources first
     render_destroy_canvas_surfaces(canvas);
 
-    // Use buffer dimensions if they're larger (for resize), otherwise use canvas size
-    int buffer_width = (canvas->buffer_width > canvas->width) ? canvas->buffer_width : canvas->width;
-    int buffer_height = (canvas->buffer_height > canvas->height) ? canvas->buffer_height : canvas->height;
-    
-    // Update buffer dimensions (preserve larger dimensions during resize)
+    // Buffer sizing strategy depends on canvas type:
+    // - DESKTOP/MENU: Always match current size (screen-fixed, no interactive resize)
+    // - WINDOW/DIALOG: Preserve larger dimensions to optimize interactive drag-resize
+    int buffer_width, buffer_height;
+    if (canvas->type == DESKTOP || canvas->type == MENU) {
+        // Screen-fixed canvases: Always use exact current dimensions
+        buffer_width = canvas->width;
+        buffer_height = canvas->height;
+    } else {
+        // Resizable canvases: Preserve larger dimensions to avoid reallocation
+        buffer_width = (canvas->buffer_width > canvas->width) ? canvas->buffer_width : canvas->width;
+        buffer_height = (canvas->buffer_height > canvas->height) ? canvas->buffer_height : canvas->height;
+    }
+
+    // Update buffer dimensions
     canvas->buffer_width = buffer_width;
     canvas->buffer_height = buffer_height;
 

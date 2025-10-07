@@ -275,8 +275,7 @@ void handle_events(void) {
 
                 // Route events to appropriate itn modules
                 // Check for damage events
-                extern int g_damage_event_base;
-                if (event.type == g_damage_event_base + XDamageNotify) {
+                if (event.type == itn_core_get_damage_event_base() + XDamageNotify) {
                     itn_composite_process_damage((XDamageNotifyEvent *)&event);
                 } else {
                     // Compositor events now handled by itn modules
@@ -672,6 +671,7 @@ void handle_button_press(XButtonEvent *event) {
         
         // If dialog didn't consume the event, handle as normal window
         if (!dialog_consumed) {
+            itn_events_reset_press_consumed();  // Reset flag before processing
             intuition_handle_button_press(&ev);
             if (!itn_events_last_press_consumed()) {
                 workbench_handle_button_press(&ev);

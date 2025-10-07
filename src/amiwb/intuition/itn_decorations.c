@@ -7,9 +7,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-// External references (temporary during migration)
-extern Display *display;
-
 // Helper function to get right border width based on window type
 static int get_right_border_width(Canvas *canvas) {
     if (!canvas) return 0;
