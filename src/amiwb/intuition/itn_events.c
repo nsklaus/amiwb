@@ -1,8 +1,11 @@
 // Event routing and handling
-// This module handles X11 events and damage notifications
+// This module routes X11 events to specialized handlers
 
 #include "../config.h"
 #include "itn_internal.h"
+#include "itn_scrollbar.h"
+#include "itn_drag.h"
+#include "itn_buttons.h"
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/extensions/Xdamage.h>
@@ -21,17 +24,6 @@ extern bool fullscreen_active;
 // Define the RandR event base (was in intuition.c)
 int randr_event_base = 0;
 extern bool g_last_press_consumed;
-extern Canvas *dragging_canvas;
-extern Canvas *scrolling_canvas;
-extern Canvas *arrow_scroll_canvas;
-extern int arrow_scroll_direction;
-extern bool arrow_scroll_vertical;
-extern struct timeval arrow_scroll_start_time;
-extern struct timeval arrow_scroll_last_time;
-extern int drag_start_x, drag_start_y;
-extern int window_start_x, window_start_y;
-extern bool scrolling_vertical;
-extern int initial_scroll, scroll_start_pos;
 
 // External functions from intuition.c (temporary during migration)
 // find_canvas is now itn_canvas_find_by_window
@@ -62,111 +54,20 @@ extern void remove_canvas_from_array(Canvas *canvas);
 extern void workbench_open_directory(const char *path);
 extern void itn_canvas_destroy(Canvas *canvas);
 extern void create_iconified_icon(Canvas *canvas);
-// Scrollbar constants
-#define SCROLL_STEP 20
-#define TRACK_MARGIN 10
-#define TRACK_RESERVED 54
 
 extern int clamp_value_between(int value, int min, int max);
-
-// Scrollbar calculation functions
-static void get_scrollbar_track_area(Canvas *canvas, bool is_vertical, int *x, int *y, int *width, int *height) {
-    if (is_vertical) {
-        *x = canvas->width - BORDER_WIDTH_RIGHT;
-        *y = BORDER_HEIGHT_TOP + TRACK_MARGIN;
-        *width = BORDER_WIDTH_RIGHT;
-        *height = (canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM) - TRACK_RESERVED - TRACK_MARGIN;
-    } else {
-        *x = BORDER_WIDTH_LEFT + TRACK_MARGIN;
-        *y = canvas->height - BORDER_HEIGHT_BOTTOM;
-        *width = (canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT) - TRACK_RESERVED - TRACK_MARGIN;
-        *height = BORDER_HEIGHT_BOTTOM;
-    }
-}
-
-static int calculate_scrollbar_knob_size(int track_length, int content_length) {
-    float size_ratio = (float)track_length / (float)content_length;
-    int knob_size = (int)(size_ratio * track_length);
-    if (knob_size < MIN_KNOB_SIZE) knob_size = MIN_KNOB_SIZE;
-    if (knob_size > track_length) knob_size = track_length;
-    return knob_size;
-}
-
-static int calculate_knob_position_from_scroll(int track_length, int knob_length, int scroll_amount, int max_scroll) {
-    if (max_scroll <= 0) return 0;
-    float position_ratio = (float)scroll_amount / (float)max_scroll;
-    int available_space = track_length - knob_length;
-    if (available_space <= 0) return 0;
-    return (int)(position_ratio * available_space);
-}
-
-static int calculate_scroll_from_mouse_click(int track_start, int track_length, int max_scroll, int click_position) {
-    float click_ratio = (float)(click_position - track_start) / (float)track_length;
-    int scroll_value = (int)(click_ratio * (float)max_scroll);
-    return clamp_value_between(scroll_value, 0, max_scroll);
-}
-
-static bool handle_scrollbar_click(Canvas *canvas, XButtonEvent *event, bool is_vertical) {
-    if (event->button != Button1) return false;
-
-    int track_x, track_y, track_width, track_height;
-    get_scrollbar_track_area(canvas, is_vertical, &track_x, &track_y, &track_width, &track_height);
-
-    // Check if click is within track area
-    bool click_in_track = (event->x >= track_x && event->x < track_x + track_width &&
-                          event->y >= track_y && event->y < track_y + track_height);
-    if (!click_in_track) return false;
-
-    int track_length = is_vertical ? track_height : track_width;
-    int content_length = is_vertical ? canvas->content_height : canvas->content_width;
-    int current_scroll = is_vertical ? canvas->scroll_y : canvas->scroll_x;
-    int max_scroll = is_vertical ? canvas->max_scroll_y : canvas->max_scroll_x;
-
-    int knob_length = calculate_scrollbar_knob_size(track_length, content_length);
-    int knob_position = (is_vertical ? track_y : track_x) +
-                       calculate_knob_position_from_scroll(track_length, knob_length, current_scroll, max_scroll);
-
-    int click_coordinate = is_vertical ? event->y : event->x;
-    bool click_on_knob = (click_coordinate >= knob_position && click_coordinate < knob_position + knob_length);
-
-    if (click_on_knob) {
-        // Start dragging the knob
-        int root_coordinate = is_vertical ? event->y_root : event->x_root;
-        scrolling_canvas = canvas;
-        scrolling_vertical = is_vertical;
-        initial_scroll = current_scroll;
-        scroll_start_pos = root_coordinate;
-    } else {
-        // Click on track - jump to that position
-        int track_start = is_vertical ? track_y : track_x;
-        int new_scroll = calculate_scroll_from_mouse_click(track_start, track_length, max_scroll, click_coordinate);
-        if (is_vertical) canvas->scroll_y = new_scroll;
-        else canvas->scroll_x = new_scroll;
-        DAMAGE_CANVAS(canvas);
-        SCHEDULE_FRAME();
-    }
-    return true;
-}
-
 extern bool resize_is_active(void);
 
-// Hit test for window controls
-typedef enum {
-    HIT_NONE,      // 0
-    HIT_CLOSE,     // 1
-    HIT_LOWER,     // 2
-    HIT_ICONIFY,   // 3
-    HIT_MAXIMIZE,  // 4
-    HIT_TITLEBAR,  // 5
-    HIT_RESIZE_N,  // 6
-    HIT_RESIZE_NE, // 7
-    HIT_RESIZE_E,  // 8
-    HIT_RESIZE_SE, // 9
-    HIT_RESIZE_S,  // 10
-    HIT_RESIZE_SW, // 11
-    HIT_RESIZE_W,  // 12
-    HIT_RESIZE_NW  // 13
-} TitlebarHit;
+// Mouse wheel scrolling constant (same as scrollbar module)
+#define SCROLL_STEP 20
+
+// Hit test constants (used by button module)
+#define HIT_NONE      0
+#define HIT_CLOSE     1
+#define HIT_LOWER     2
+#define HIT_ICONIFY   3
+#define HIT_MAXIMIZE  4
+#define HIT_TITLEBAR  5
 
 extern int hit_test(Canvas *canvas, int x, int y);
 
@@ -380,164 +281,25 @@ void intuition_handle_button_press(XButtonEvent *event) {
         return;
     }
 
-    // Check for scrollbar interactions FIRST (for workbench windows)
-    if (event->button == Button1 && canvas->client_win == None && !canvas->disable_scrollbars) {
-        int x = event->x;
-        int y = event->y;
-        int w = canvas->width;
-        int h = canvas->height;
-
-        // Check vertical scroll arrows (on right border) FIRST
-        if (x >= w - BORDER_WIDTH_RIGHT && x < w) {
-            // Up arrow area
-            if (y >= h - BORDER_HEIGHT_BOTTOM - 41 && y < h - BORDER_HEIGHT_BOTTOM - 21) {
-                canvas->v_arrow_up_armed = true;
-                arrow_scroll_canvas = canvas;
-                arrow_scroll_direction = -1;
-                arrow_scroll_vertical = true;
-                gettimeofday(&arrow_scroll_start_time, NULL);
-                arrow_scroll_last_time = arrow_scroll_start_time;
-                // Perform initial scroll
-                if (canvas->scroll_y > 0) {
-                    canvas->scroll_y = max(0, canvas->scroll_y - SCROLL_STEP);
-                }
-                DAMAGE_CANVAS(canvas);
-                SCHEDULE_FRAME();
-                g_last_press_consumed = true;
-                return;
-            }
-            // Down arrow area
-            else if (y >= h - BORDER_HEIGHT_BOTTOM - 21 && y < h - BORDER_HEIGHT_BOTTOM) {
-                canvas->v_arrow_down_armed = true;
-                arrow_scroll_canvas = canvas;
-                arrow_scroll_direction = 1;
-                arrow_scroll_vertical = true;
-                gettimeofday(&arrow_scroll_start_time, NULL);
-                arrow_scroll_last_time = arrow_scroll_start_time;
-                // Perform initial scroll
-                if (canvas->scroll_y < canvas->max_scroll_y) {
-                    canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + SCROLL_STEP);
-                }
-                DAMAGE_CANVAS(canvas);
-                SCHEDULE_FRAME();
-                g_last_press_consumed = true;
-                return;
-            }
-        }
-
-        // Check horizontal scroll arrows (on bottom border)
-        if (y >= h - BORDER_HEIGHT_BOTTOM && y < h) {
-            // Left arrow area
-            if (x >= w - BORDER_WIDTH_RIGHT - 41 && x < w - BORDER_WIDTH_RIGHT - 21) {
-                canvas->h_arrow_left_armed = true;
-                arrow_scroll_canvas = canvas;
-                arrow_scroll_direction = -1;
-                arrow_scroll_vertical = false;
-                gettimeofday(&arrow_scroll_start_time, NULL);
-                arrow_scroll_last_time = arrow_scroll_start_time;
-                // Perform initial scroll
-                if (canvas->scroll_x > 0) {
-                    canvas->scroll_x = max(0, canvas->scroll_x - SCROLL_STEP);
-                }
-                DAMAGE_CANVAS(canvas);
-                SCHEDULE_FRAME();
-                g_last_press_consumed = true;
-                return;
-            }
-            // Right arrow area
-            else if (x >= w - BORDER_WIDTH_RIGHT - 21 && x < w - BORDER_WIDTH_RIGHT) {
-                canvas->h_arrow_right_armed = true;
-                arrow_scroll_canvas = canvas;
-                arrow_scroll_direction = 1;
-                arrow_scroll_vertical = false;
-                gettimeofday(&arrow_scroll_start_time, NULL);
-                arrow_scroll_last_time = arrow_scroll_start_time;
-                // Perform initial scroll
-                if (canvas->scroll_x < canvas->max_scroll_x) {
-                    canvas->scroll_x = min(canvas->max_scroll_x, canvas->scroll_x + SCROLL_STEP);
-                }
-                DAMAGE_CANVAS(canvas);
-                SCHEDULE_FRAME();
-                g_last_press_consumed = true;
-                return;
-            }
-        }
-
-        // Now check scrollbar track/knob
-        // Try vertical scrollbar first
-        if (handle_scrollbar_click(canvas, event, true)) {
-            g_last_press_consumed = true;
-            return;
-        }
-        // Then horizontal scrollbar
-        if (handle_scrollbar_click(canvas, event, false)) {
-            g_last_press_consumed = true;
-            return;
-        }
+    // Route to scrollbar module (handles arrows, track, knob)
+    if (itn_scrollbar_handle_button_press(canvas, event)) {
+        g_last_press_consumed = true;
+        return;
     }
 
-    // Handle window control clicks
+    // Handle window control buttons (delegated to button module)
+    if (itn_buttons_handle_press(canvas, event)) {
+        g_last_press_consumed = true;
+        return;
+    }
+
+    // Handle titlebar drag (not a button, special case)
     if (event->button == Button1) {
         int hit = hit_test(canvas, event->x, event->y);
-
-        switch (hit) {
-            case HIT_CLOSE:
-                canvas->close_armed = true;
-                DAMAGE_CANVAS(canvas);
-                SCHEDULE_FRAME();
-                break;
-
-            case HIT_ICONIFY:
-                canvas->iconify_armed = true;
-                DAMAGE_CANVAS(canvas);
-                SCHEDULE_FRAME();
-                break;
-
-            case HIT_MAXIMIZE:
-                canvas->maximize_armed = true;
-                DAMAGE_CANVAS(canvas);
-                SCHEDULE_FRAME();
-                break;
-
-            case HIT_LOWER:
-                canvas->lower_armed = true;
-                DAMAGE_CANVAS(canvas);
-                SCHEDULE_FRAME();
-                break;
-
-            case HIT_TITLEBAR:
-                // Start window drag
-                dragging_canvas = canvas;
-                drag_start_x = event->x_root;
-                drag_start_y = event->y_root;
-                window_start_x = canvas->x;
-                window_start_y = canvas->y;
-
-                // Grab pointer for smooth dragging
-                XGrabPointer(display, canvas->win, False,
-                           ButtonReleaseMask | PointerMotionMask,
-                           GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
-                break;
-
-            case HIT_RESIZE_NE:
-            case HIT_RESIZE_NW:
-            case HIT_RESIZE_SE:
-            case HIT_RESIZE_SW:
-            case HIT_RESIZE_N:
-            case HIT_RESIZE_S:
-            case HIT_RESIZE_E:
-            case HIT_RESIZE_W:
-                canvas->resize_armed = true;
-                DAMAGE_CANVAS(canvas);
-                SCHEDULE_FRAME();
-                // Start resize operation with the specific corner/edge
-                itn_resize_start(canvas, hit);
-                break;
-
-            case HIT_NONE:
-                // Click in client area - don't consume, let it pass to workbench handler
-                g_last_press_consumed = false;
-                return;
+        if (hit == HIT_TITLEBAR) {
+            itn_drag_start(canvas, event->x_root, event->y_root);
+            g_last_press_consumed = true;
+            return;
         }
     }
 
@@ -562,55 +324,6 @@ void intuition_handle_button_press(XButtonEvent *event) {
 // Motion Notify Events
 // ============================================================================
 
-static Bool handle_drag_motion(XMotionEvent *event) {
-    if (dragging_canvas) {
-        int delta_x = event->x_root - drag_start_x;
-        int delta_y = event->y_root - drag_start_y;
-        window_start_x += delta_x;
-        // Clamp y to ensure titlebar is below menubar
-        window_start_y = max(window_start_y + delta_y, MENUBAR_HEIGHT);
-
-        // Damage old position
-        DAMAGE_CANVAS(dragging_canvas);
-
-        XMoveWindow(display, dragging_canvas->win, window_start_x, window_start_y);
-        dragging_canvas->x = window_start_x;
-        dragging_canvas->y = window_start_y;
-        drag_start_x = event->x_root;
-        drag_start_y = event->y_root;
-
-        // Send ConfigureNotify to client window so it knows its new position
-        // This is crucial for apps with menus (Steam, fs-uae-launcher, etc)
-        if (dragging_canvas->client_win != None) {
-            XConfigureEvent ce;
-            ce.type = ConfigureNotify;
-            ce.display = display;
-            ce.event = dragging_canvas->client_win;
-            ce.window = dragging_canvas->client_win;
-            // Send root-relative coordinates (frame position + decoration offsets)
-            ce.x = window_start_x + BORDER_WIDTH_LEFT;
-            ce.y = window_start_y + BORDER_HEIGHT_TOP;
-            // Client dimensions (subtract decorations from frame size)
-            int right_border = (dragging_canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT);
-            ce.width = dragging_canvas->width - BORDER_WIDTH_LEFT - right_border;
-            ce.height = dragging_canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
-
-            ce.border_width = 0;
-            ce.above = None;
-            ce.override_redirect = False;
-            XSendEvent(display, dragging_canvas->client_win, False,
-                      StructureNotifyMask, (XEvent *)&ce);
-        }
-
-        // Damage new position
-        DAMAGE_CANVAS(dragging_canvas);
-        SCHEDULE_FRAME();
-
-        return True;
-    }
-    return False;
-}
-
 static Bool handle_resize_motion(XMotionEvent *event) {
     // Use the new clean resize module with motion compression
     if (itn_resize_is_active()) {
@@ -620,111 +333,20 @@ static Bool handle_resize_motion(XMotionEvent *event) {
     return False;
 }
 
-static Bool handle_scroll_motion(XMotionEvent *event) {
-    if (scrolling_canvas) {
-        // Pass the motion coordinate in the appropriate axis
-        int current_mouse_pos = scrolling_vertical ? event->y_root : event->x_root;
-        update_scroll_from_mouse_drag(scrolling_canvas, scrolling_vertical,
-                                     initial_scroll, scroll_start_pos, current_mouse_pos);
-        return True;
-    }
-    return False;
-}
-
-// Handle arrow button auto-repeat while held
-static Bool handle_arrow_scroll_repeat(void) {
-    if (!arrow_scroll_canvas || arrow_scroll_direction == 0) return False;
-
-    if (arrow_scroll_vertical) {
-        int current_scroll = arrow_scroll_canvas->scroll_y;
-        int new_scroll = current_scroll + (arrow_scroll_direction * SCROLL_STEP);
-        new_scroll = clamp_value_between(new_scroll, 0, arrow_scroll_canvas->max_scroll_y);
-
-        if (new_scroll != current_scroll) {
-            arrow_scroll_canvas->scroll_y = new_scroll;
-            DAMAGE_CANVAS(arrow_scroll_canvas);
-            SCHEDULE_FRAME();
-            return True;
-        }
-    } else {
-        int current_scroll = arrow_scroll_canvas->scroll_x;
-        int new_scroll = current_scroll + (arrow_scroll_direction * SCROLL_STEP);
-        new_scroll = clamp_value_between(new_scroll, 0, arrow_scroll_canvas->max_scroll_x);
-
-        if (new_scroll != current_scroll) {
-            arrow_scroll_canvas->scroll_x = new_scroll;
-            DAMAGE_CANVAS(arrow_scroll_canvas);
-            SCHEDULE_FRAME();
-            return True;
-        }
-    }
-
-    // If we can't scroll anymore, stop the repeat
-    arrow_scroll_canvas = NULL;
-    arrow_scroll_direction = 0;
-    return False;
-}
-
-// Check if enough time has passed for arrow scroll repeat
+// Check if enough time has passed for arrow scroll repeat (delegated to scrollbar module)
 void intuition_check_arrow_scroll_repeat(void) {
-    if (!arrow_scroll_canvas || arrow_scroll_direction == 0) return;
-
-    struct timeval now;
-    gettimeofday(&now, NULL);
-
-    // Calculate time since last scroll
-    long elapsed_ms = (now.tv_sec - arrow_scroll_last_time.tv_sec) * 1000 +
-                      (now.tv_usec - arrow_scroll_last_time.tv_usec) / 1000;
-
-    // Initial delay: 400ms, then repeat every 50ms
-    long delay_ms = 50;  // Fast repeat rate
-    if (now.tv_sec == arrow_scroll_start_time.tv_sec &&
-        (now.tv_usec - arrow_scroll_start_time.tv_usec) < 400000) {
-        delay_ms = 400;  // Initial delay before auto-repeat starts
-    }
-
-    if (elapsed_ms >= delay_ms) {
-        handle_arrow_scroll_repeat();
-        arrow_scroll_last_time = now;
-    }
+    itn_scrollbar_check_arrow_repeat();
 }
 
 void intuition_handle_motion_notify(XMotionEvent *event) {
-    if (handle_drag_motion(event)) return;
+    if (itn_drag_motion(event)) return;
     if (handle_resize_motion(event)) return;
-    if (handle_scroll_motion(event)) return;
+    if (itn_scrollbar_handle_motion(event)) return;
 
-    // Handle button cancel when mouse moves away
+    // Cancel armed buttons if mouse moves away (delegated to button module)
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (canvas) {
-        // Check if mouse is outside window bounds entirely
-        bool outside_window = (event->x < 0 || event->y < 0 ||
-                              event->x >= canvas->width || event->y >= canvas->height);
-
-        // Cancel any armed buttons if mouse moves outside or too far
-        bool needs_redraw = false;
-
-        if (canvas->close_armed && (outside_window || hit_test(canvas, event->x, event->y) != HIT_CLOSE)) {
-            canvas->close_armed = false;
-            needs_redraw = true;
-        }
-        if (canvas->iconify_armed && (outside_window || hit_test(canvas, event->x, event->y) != HIT_ICONIFY)) {
-            canvas->iconify_armed = false;
-            needs_redraw = true;
-        }
-        if (canvas->maximize_armed && (outside_window || hit_test(canvas, event->x, event->y) != HIT_MAXIMIZE)) {
-            canvas->maximize_armed = false;
-            needs_redraw = true;
-        }
-        if (canvas->lower_armed && (outside_window || hit_test(canvas, event->x, event->y) != HIT_LOWER)) {
-            canvas->lower_armed = false;
-            needs_redraw = true;
-        }
-
-        if (needs_redraw) {
-            DAMAGE_CANVAS(canvas);
-            SCHEDULE_FRAME();
-        }
+        itn_buttons_handle_motion_cancel(canvas, event);
     }
 }
 
@@ -811,151 +433,19 @@ void intuition_handle_button_release(XButtonEvent *event) {
         }
     }
 
-    // Release pointer grab if we were dragging
-    if (dragging_canvas) {
-        XUngrabPointer(display, CurrentTime);
-        dragging_canvas = NULL;
+    // End window drag if active (delegated to drag module)
+    if (itn_drag_is_active()) {
+        itn_drag_end();
     }
-
-    scrolling_canvas = NULL;
-    arrow_scroll_canvas = NULL;  // Stop arrow button auto-repeat
-    arrow_scroll_direction = 0;
 
     // Handle deferred button actions
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (canvas) {
-        TitlebarHit hit = hit_test(canvas, event->x, event->y);
+        // Handle scrollbar arrow releases (delegated to scrollbar module)
+        itn_scrollbar_handle_button_release(canvas, event);
 
-        // Handle scroll arrow releases with damage accumulation
-        if (canvas->v_arrow_up_armed) {
-            canvas->v_arrow_up_armed = false;
-            DAMAGE_CANVAS(canvas);
-            // Check if still on button
-            if (event->x >= canvas->width - BORDER_WIDTH_RIGHT && event->x < canvas->width &&
-                event->y >= canvas->height - BORDER_HEIGHT_BOTTOM - 41 &&
-                event->y < canvas->height - BORDER_HEIGHT_BOTTOM - 21) {
-                if (canvas->scroll_y > 0) {
-                    canvas->scroll_y = max(0, canvas->scroll_y - SCROLL_STEP);
-                    DAMAGE_CANVAS(canvas);
-                }
-            }
-            SCHEDULE_FRAME();
-        }
-
-        if (canvas->v_arrow_down_armed) {
-            canvas->v_arrow_down_armed = false;
-            DAMAGE_CANVAS(canvas);
-            // Check if still on button
-            if (event->x >= canvas->width - BORDER_WIDTH_RIGHT && event->x < canvas->width &&
-                event->y >= canvas->height - BORDER_HEIGHT_BOTTOM - 21 &&
-                event->y < canvas->height - BORDER_HEIGHT_BOTTOM) {
-                if (canvas->scroll_y < canvas->max_scroll_y) {
-                    canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + SCROLL_STEP);
-                    DAMAGE_CANVAS(canvas);
-                }
-            }
-            SCHEDULE_FRAME();
-        }
-
-        if (canvas->h_arrow_left_armed) {
-            canvas->h_arrow_left_armed = false;
-            DAMAGE_CANVAS(canvas);
-            // Check if still on button
-            if (event->y >= canvas->height - BORDER_HEIGHT_BOTTOM && event->y < canvas->height &&
-                event->x >= canvas->width - BORDER_WIDTH_RIGHT - 42 &&
-                event->x < canvas->width - BORDER_WIDTH_RIGHT - 22) {
-                if (canvas->scroll_x > 0) {
-                    canvas->scroll_x = max(0, canvas->scroll_x - SCROLL_STEP);
-                    DAMAGE_CANVAS(canvas);
-                }
-            }
-            SCHEDULE_FRAME();
-        }
-
-        if (canvas->h_arrow_right_armed) {
-            canvas->h_arrow_right_armed = false;
-            DAMAGE_CANVAS(canvas);
-            // Check if still on button
-            if (event->y >= canvas->height - BORDER_HEIGHT_BOTTOM && event->y < canvas->height &&
-                event->x >= canvas->width - BORDER_WIDTH_RIGHT - 22 &&
-                event->x < canvas->width - BORDER_WIDTH_RIGHT) {
-                if (canvas->scroll_x < canvas->max_scroll_x) {
-                    canvas->scroll_x = min(canvas->max_scroll_x, canvas->scroll_x + SCROLL_STEP);
-                    DAMAGE_CANVAS(canvas);
-                }
-            }
-            SCHEDULE_FRAME();
-        }
-
-        if (canvas->resize_armed) {
-            canvas->resize_armed = false;
-            DAMAGE_CANVAS(canvas);
-            SCHEDULE_FRAME();
-            // Resize already began on press, no action needed on release
-        }
-
-        if (canvas->close_armed) {
-            canvas->close_armed = false;
-            DAMAGE_CANVAS(canvas);
-            SCHEDULE_FRAME();
-            if (hit == HIT_CLOSE) {
-                request_client_close(canvas);
-                return;
-            }
-        }
-
-        if (canvas->iconify_armed) {
-            canvas->iconify_armed = false;
-            DAMAGE_CANVAS(canvas);
-            SCHEDULE_FRAME();
-            if (hit == HIT_ICONIFY) {
-                iconify_canvas(canvas);
-                return;
-            }
-        }
-
-        if (canvas->maximize_armed) {
-            canvas->maximize_armed = false;
-            DAMAGE_CANVAS(canvas);
-            SCHEDULE_FRAME();
-            if (hit == HIT_MAXIMIZE) {
-                Canvas *desk = itn_canvas_get_desktop();
-                if (desk) {
-                    if (!canvas->maximized) {
-                        // Save current position and dimensions before maximizing
-                        canvas->pre_max_x = canvas->x;
-                        canvas->pre_max_y = canvas->y;
-                        canvas->pre_max_w = canvas->width;
-                        canvas->pre_max_h = canvas->height;
-
-                        // Maximize the window
-                        int new_w = desk->width;
-                        int new_h = desk->height - (MENUBAR_HEIGHT - 1);
-                        itn_geometry_move_resize(canvas, 0, MENUBAR_HEIGHT, new_w, new_h);
-                        canvas->maximized = true;
-                    } else {
-                        // Restore to saved dimensions
-                        itn_geometry_move_resize(canvas, canvas->pre_max_x, canvas->pre_max_y,
-                                            canvas->pre_max_w, canvas->pre_max_h);
-                        canvas->maximized = false;
-                    }
-                }
-                return;
-            }
-        }
-
-        if (canvas->lower_armed) {
-            canvas->lower_armed = false;
-            DAMAGE_CANVAS(canvas);
-            SCHEDULE_FRAME();
-            if (hit == HIT_LOWER) {
-                itn_geometry_lower(canvas);
-                canvas->active = false;
-                itn_focus_activate_window_behind(canvas);
-                // Let compositor handle stacking through ConfigureNotify events
-                return;
-            }
-        }
+        // Handle button releases (delegated to button module)
+        itn_buttons_handle_release(canvas, event);
     }
 }
 
@@ -1402,5 +892,5 @@ bool itn_events_last_press_consumed(void) {
 }
 
 bool itn_events_is_scrolling_active(void) {
-    return scrolling_canvas != NULL;
+    return itn_scrollbar_is_scrolling_active();
 }

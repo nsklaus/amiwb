@@ -28,7 +28,7 @@ status: the base environment is mostly complete.
     shortcuts hardcoded in for now). 
     app menus substitutions works (for amiwb apps).
     additional custom menus parsed from file, toolsdaemon style. 
-    show date and time. 
+    show optional menu addons (cpu, mem, sensors) 
 
 - window decorations:
     sliders, arrows, close, resize, iconify, lower and maximize buttons work. 
@@ -37,12 +37,12 @@ status: the base environment is mostly complete.
     "workbench" windows use a fixed "filer.info" icon for now, and clients use 
     a name matching system, so if a app has a "kitty" name it will look for 
     a "kitty.info" icon in /usr/local/share/amiwb/icons/
-    if matching result fail it will show in file amiwb.log see config.h
+    if matching check fails, it will show in file amiwb.log see config.h
 
 - icons:
-    show amiga icons, both normal and selected images.
+    show amiga icons, both normal and selected images. (classic, mwb, glowicons supported).
     the icon matching system works like on amiga: "xyz" dir will display image 
-    from "xyz.info" icon next to it, while hidding the .info file. same for 
+    from "xyz.info" icon next to it, while hidding the .info file itself. same for 
     files. multiselection works. some menu actions do support it, like delete. 
     for now, one icon only can be dragged around at a time.
     file execution works through xdg-open for now.
@@ -53,7 +53,7 @@ status: the base environment is mostly complete.
 - it handles: fullscreen for apps, and X resolutions changes and resizes accordingly
 
 - file operations:
-    copy, move, drag and drop (with progress dialog)
+    copy, move, dnd (with progress dialog and preserve extended attributes for comments)  
     delete (with warning dialog)
     rename (rename dialog) 
     execute (execute dialog, with file completion)
@@ -64,10 +64,11 @@ status: the base environment is mostly complete.
     browse the filesystem, using mouse or keyboard. 
     open files (xdg-open) and dirs (in wb windows), 
     clipboard support for inputfields.
+    can add bookmarks, select all/none, show hidden
 
 - toolkit:
     using amiwb UI elements in new apps:
-    button, listview, inputfield, progress bar 
+    button, listview, textview, inputfield, progress bar 
 
 
 TODO:
