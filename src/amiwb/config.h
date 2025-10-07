@@ -58,7 +58,7 @@
 
 #define GLOBAL_DEPTH 24         // Set to 8, 16, 24, or 32
 // TYPE_ICONIFIED is defined as enum in icons.h
-#define MAX_WINDOWS 100         // Max open windows.
+#define MAX_WINDOWS 256         // Max open windows.
 #define ICON_HEADER_SIZE 20     // Size of icon file header.
 #define ICON_RENDER_DEPTH 32    // Icons need 32-bit for alpha channel
 // TYPE_TOOL and TYPE_DRAWER are defined as enum in icons.h

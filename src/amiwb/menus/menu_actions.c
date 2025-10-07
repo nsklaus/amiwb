@@ -557,18 +557,18 @@ void handle_menu_selection(Menu *menu, int item_index) {
 	    */
 
 	    else if (strcmp(item, "Shell") == 0) {
-                system("kitty &"); 
+                launch_with_hook("kitty"); 
 
             } else if (strcmp(item, "Debug Console") == 0) {
                 // Open a terminal that tails the configured log file live.
                 // Uses config.h LOG_FILE_PATH and kitty.
                 #if LOGGING_ENABLED
                 // Embed LOG_FILE_PATH into the shell; $HOME in the macro will expand in sh -lc
-                system("sh -lc 'exec kitty -e sh -lc "
-                       "\"tail -f \\\"" LOG_FILE_PATH "\\\"\"' &");
+                launch_with_hook("sh -lc 'exec kitty -e sh -lc "
+                       "\"tail -f \\\"" LOG_FILE_PATH "\\\"\"'");
                 #else
-                system("sh -lc 'exec kitty -e sh -lc "
-                       "\"echo Logging is disabled in config.h; echo Enable LOGGING_ENABLED and rebuild.; echo; read -p '""'Press Enter to close'""' \"\"\"' &");
+                launch_with_hook("sh -lc 'exec kitty -e sh -lc "
+                       "\"echo Logging is disabled in config.h; echo Enable LOGGING_ENABLED and rebuild.; echo; read -p '""'Press Enter to close'""' \"\"\"'");
                 #endif
             }
 
@@ -1295,7 +1295,7 @@ void handle_quit_request(void) {
 }
 
 void handle_suspend_request(void) {
-    system("systemctl suspend &");
+    launch_with_hook("systemctl suspend");
 }
 
 void handle_restart_request(void) {

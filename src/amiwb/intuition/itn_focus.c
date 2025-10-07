@@ -104,7 +104,7 @@ void itn_focus_deactivate_all(void) {
 
 void itn_focus_cycle_next(void) {
     // Build list of eligible windows (WINDOW and DIALOG types)
-    Canvas *windows[256];  // Max 256 windows
+    Canvas *windows[MAX_WINDOWS];
     int window_count = 0;
     int current_index = -1;
 
@@ -116,7 +116,7 @@ void itn_focus_cycle_next(void) {
                 current_index = window_count;
             }
             windows[window_count++] = c;
-            if (window_count >= 256) break;
+            if (window_count >= MAX_WINDOWS) break;
         }
     }
 
@@ -155,7 +155,7 @@ void itn_focus_cycle_next(void) {
 
 void itn_focus_cycle_prev(void) {
     // Build list of eligible windows (WINDOW and DIALOG types)
-    Canvas *windows[256];  // Max 256 windows
+    Canvas *windows[MAX_WINDOWS];
     int window_count = 0;
     int current_index = -1;
 
@@ -167,7 +167,7 @@ void itn_focus_cycle_prev(void) {
                 current_index = window_count;
             }
             windows[window_count++] = c;
-            if (window_count >= 256) break;
+            if (window_count >= MAX_WINDOWS) break;
         }
     }
 

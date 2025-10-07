@@ -449,7 +449,7 @@ RenderContext *get_render_context(void) {
 }
 
 int get_window_list(Canvas ***windows) {
-    static Canvas *window_list[256];  // Static to avoid allocation
+    static Canvas *window_list[MAX_WINDOWS];  // Static to avoid allocation
     int count = 0;
 
     int total = itn_manager_get_count();
@@ -457,7 +457,7 @@ int get_window_list(Canvas ***windows) {
         Canvas *c = itn_manager_get_canvas(i);
         if (c && (c->type == WINDOW || c->type == DIALOG)) {
             window_list[count++] = c;
-            if (count >= 256) break;  // Safety limit
+            if (count >= MAX_WINDOWS) break;  // Safety limit
         }
     }
 

@@ -857,21 +857,17 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     // Without this, DisplayWidth()/DisplayHeight() will return stale values
     XRRUpdateConfiguration((XEvent *)event);
 
-    log_error("[INFO] XRandR screen change: %dx%d", event->width, event->height);
-
     itn_core_set_screen_dimensions(event->width, event->height);
 
     // CRITICAL: Recreate compositor back buffer for new screen dimensions
     // Without this, compositor is stuck rendering into old-sized buffer (black bands)
     if (itn_composite_is_active()) {
-        log_error("[INFO] Recreating compositor back buffer for new dimensions");
         itn_composite_create_back_buffer();
     }
 
     // Resize desktop canvas to new screen dimensions
     Canvas *desktop = itn_canvas_get_desktop();
     if (desktop) {
-        log_error("[INFO] Resizing desktop to %dx%d", event->width, event->height - MENUBAR_HEIGHT);
         itn_geometry_move_resize(desktop, 0, MENUBAR_HEIGHT, event->width, event->height - MENUBAR_HEIGHT);
     } else {
         log_error("[WARN] Desktop canvas not found!");
@@ -881,7 +877,6 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     extern Canvas *get_menubar(void);
     Canvas *menubar = get_menubar();
     if (menubar) {
-        log_error("[INFO] Resizing menubar to width %d", event->width);
         itn_geometry_move_resize(menubar, 0, 0, event->width, MENUBAR_HEIGHT);
     } else {
         log_error("[WARN] Menubar canvas not found!");
@@ -889,13 +884,11 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
 
     // Reload wallpapers for new screen dimensions
     extern void render_load_wallpapers(void);
-    log_error("[INFO] Reloading wallpapers...");
     render_load_wallpapers();
 
     // Mark entire screen as damaged
     DAMAGE_RECT(0, 0, event->width, event->height);
     SCHEDULE_FRAME();
-    log_error("[INFO] XRandR screen change complete");
 }
 
 // ============================================================================

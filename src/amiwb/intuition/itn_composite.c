@@ -445,7 +445,7 @@ void itn_composite_render_all(void) {
     }
 
     // Render each canvas from bottom to top using X11 stacking order
-    Canvas *visible[256];
+    Canvas *visible[MAX_WINDOWS];
     int visible_count = 0;
 
     // Query X11 for actual stacking order (bottom-to-top)
@@ -455,7 +455,7 @@ void itn_composite_render_all(void) {
 
     if (XQueryTree(dpy, itn_core_get_root(), &root_return, &parent_return, &children, &nchildren)) {
         // Children are returned in bottom-to-top stacking order
-        for (unsigned int i = 0; i < nchildren && visible_count < 256; i++) {
+        for (unsigned int i = 0; i < nchildren && visible_count < MAX_WINDOWS; i++) {
             Window w = children[i];
 
             // Skip overlay window if it exists
