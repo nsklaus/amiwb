@@ -80,6 +80,10 @@ void set_spatial_mode(bool mode);
 bool get_global_show_hidden_state(void);
 void set_global_show_hidden_state(bool show);
 
+// Global view mode control
+ViewMode get_global_view_mode(void);
+void set_global_view_mode(ViewMode mode);
+
 // Archive extraction
 int extract_file_at_path(const char *archive_path, Canvas *canvas);
 

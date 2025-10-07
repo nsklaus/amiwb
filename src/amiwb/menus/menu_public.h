@@ -47,8 +47,9 @@ void toggle_menubar_state(void);    // Toggle between logo and menus state
 // Menubar Updates
 // ============================================================================
 
-void update_menubar_time(void);     // Check if time changed and redraw menubar if needed
-void menu_addon_update_all(void);   // Update all menu addons (called periodically)
+void update_menubar_time(void);         // Check if time changed and redraw menubar if needed
+void menu_addon_update_all(void);       // Update all menu addons (called periodically)
+void update_view_modes_checkmarks(void); // Update View Modes submenu checkmarks based on current state
 
 // ============================================================================
 // Event Handlers (called from main event loop)

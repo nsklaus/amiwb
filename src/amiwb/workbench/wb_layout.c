@@ -22,6 +22,7 @@ extern FileIcon **wb_icons_for_canvas(Canvas *canvas, int *out_count);
 // Global state
 static bool spatial_mode = true;  // New window per directory
 static bool global_show_hidden = false;
+static ViewMode global_view_mode = VIEW_ICONS;  // Default to icons mode
 
 // ============================================================================
 // Icon Sorting Comparators
@@ -89,6 +90,14 @@ bool get_global_show_hidden_state(void) {
 
 void set_global_show_hidden_state(bool show) {
     global_show_hidden = show;
+}
+
+ViewMode get_global_view_mode(void) {
+    return global_view_mode;
+}
+
+void set_global_view_mode(ViewMode mode) {
+    global_view_mode = mode;
 }
 
 // ============================================================================
@@ -315,15 +324,17 @@ void apply_view_layout(Canvas *canvas) {
 void set_canvas_view_mode(Canvas *canvas, ViewMode m) {
     if (!canvas) return;
     if (canvas->view_mode == m) return;
-    
+
     canvas->view_mode = m;
     canvas->scroll_x = 0;
     canvas->scroll_y = 0;
-    
-    if (m == VIEW_NAMES) {
-        icon_cleanup(canvas);
-    }
-    
+
+    // Update global view mode so new windows use the same mode
+    set_global_view_mode(m);
+
+    // Always cleanup icons when switching modes to ensure proper positioning
+    icon_cleanup(canvas);
+
     apply_view_layout(canvas);
     redraw_canvas(canvas);
 }

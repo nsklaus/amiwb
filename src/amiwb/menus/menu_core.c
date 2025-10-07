@@ -132,13 +132,6 @@ void parse_menu_item_shortcuts(Menu *menu) {
         free(item);  // Free the working copy
     }
 }
-
-// Helper: Check if active window is in icons view mode
-static bool get_active_view_is_icons(void) {
-    Canvas *active_window = itn_focus_get_active();
-    return active_window ? (active_window->view_mode == VIEW_ICONS) : true;  // Default to Icons
-}
-
 // Update View Modes menu checkmarks based on current state
 void update_view_modes_checkmarks(void) {
     Menu *menubar_menu = get_menubar_menu();
@@ -150,12 +143,12 @@ void update_view_modes_checkmarks(void) {
     Menu *view_modes = win_menu->submenus[6];  // View Modes submenu
     if (!view_modes->checkmarks) return;
 
-    // Update checkmarks based on current state
-    bool is_icons = get_active_view_is_icons();
-    view_modes->checkmarks[0] = is_icons;      // Icons
-    view_modes->checkmarks[1] = !is_icons;     // Names
-    view_modes->checkmarks[2] = get_global_show_hidden_state();  // Hidden
-    view_modes->checkmarks[3] = get_spatial_mode();  // Spatial
+    // Update checkmarks based on global state
+    ViewMode global_mode = get_global_view_mode();
+    view_modes->checkmarks[0] = (global_mode == VIEW_ICONS);   // Icons
+    view_modes->checkmarks[1] = (global_mode == VIEW_NAMES);   // Names
+    view_modes->checkmarks[2] = get_global_show_hidden_state(); // Hidden
+    view_modes->checkmarks[3] = get_spatial_mode();             // Spatial
 }
 
 // Get submenu width - measure widest label to size the dropdown width
@@ -404,19 +397,21 @@ create_windows_menu:
         log_error("[ERROR] Failed to create View Modes submenu - feature unavailable");
         win_submenu->submenus[6] = NULL;
     } else {
-        view_by_sub->items[0] = safe_strdup("Icons");
-    view_by_sub->items[1] = safe_strdup("Names");
-    view_by_sub->items[2] = safe_strdup("Hidden");
-    view_by_sub->items[3] = safe_strdup("Spatial");
+        view_by_sub->items[0] = safe_strdup("Icons #1");
+    view_by_sub->items[1] = safe_strdup("Names #2");
+    view_by_sub->items[2] = safe_strdup("Hidden #3");
+    view_by_sub->items[3] = safe_strdup("Spatial #4");
     init_menu_shortcuts(view_by_sub);  // Initialize all shortcuts to NULL
     init_menu_enabled(view_by_sub);  // Initialize all items as enabled
     init_menu_checkmarks(view_by_sub);  // Initialize checkmarks array
-    // Set initial checkmark states based on current system state
-    // Default to icons mode on startup (first window will set actual state)
-    view_by_sub->checkmarks[0] = true;   // Icons checked by default
-    view_by_sub->checkmarks[1] = false;  // Names unchecked by default
-    view_by_sub->checkmarks[2] = get_global_show_hidden_state();  // Hidden checked if showing hidden
-    view_by_sub->checkmarks[3] = get_spatial_mode();  // Spatial checked if in spatial mode
+    // Parse shortcuts from menu items (e.g., "Icons #^1" -> "Icons" + "^1")
+    parse_menu_item_shortcuts(view_by_sub);
+    // Set initial checkmark states based on global system state
+    ViewMode init_mode = get_global_view_mode();
+    view_by_sub->checkmarks[0] = (init_mode == VIEW_ICONS);      // Icons
+    view_by_sub->checkmarks[1] = (init_mode == VIEW_NAMES);      // Names
+    view_by_sub->checkmarks[2] = get_global_show_hidden_state(); // Hidden
+    view_by_sub->checkmarks[3] = get_spatial_mode();             // Spatial
     view_by_sub->selected_item = -1;
     view_by_sub->parent_menu = win_submenu;
     view_by_sub->parent_index = 6;  // Position within Windows submenu

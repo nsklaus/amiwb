@@ -77,12 +77,31 @@ void grab_global_shortcuts(Display *display, Window root) {
     XGrabKey(display, XKeysymToKeycode(display, XK_m),
              Mod4Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);  // Super+Shift+M (cycle prev)
     
-    // Icon operations - DO NOT GRAB
-    // Super+R (Rename), Super+; (Cleanup), Super+P (Parent), Super+O (Open), 
+    // View Modes - ALWAYS grabbed (but only active when no client has focus)
+    // Grab both QWERTY numbers and AZERTY characters
+    XGrabKey(display, XKeysymToKeycode(display, XK_1),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+1 (QWERTY)
+    XGrabKey(display, XKeysymToKeycode(display, 0x26),  // ampersand &
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+& (AZERTY position 1)
+    XGrabKey(display, XKeysymToKeycode(display, XK_2),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+2 (QWERTY)
+    XGrabKey(display, XKeysymToKeycode(display, 0xe9),  // eacute é
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+é (AZERTY position 2)
+    XGrabKey(display, XKeysymToKeycode(display, XK_3),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+3 (QWERTY)
+    XGrabKey(display, XKeysymToKeycode(display, 0x22),  // quotedbl "
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+" (AZERTY position 3)
+    XGrabKey(display, XKeysymToKeycode(display, XK_4),
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+4 (QWERTY)
+    XGrabKey(display, XKeysymToKeycode(display, 0x27),  // apostrophe '
+             Mod4Mask, root, True, GrabModeAsync, GrabModeAsync);  // Super+' (AZERTY position 4)
+
+    // Workbench operations - DO NOT GRAB
+    // Super+R (Rename), Super+; (Cleanup), Super+P (Parent), Super+O (Open),
     // Super+C (Copy), Super+D (Delete), Super+N (New), Super+A (Select All)
     // These will only work when AmiWB or its windows have focus,
     // allowing client apps to use these shortcuts for their own purposes
-    
+
     // Media keys - grab with AnyModifier so they work everywhere
     XGrabKey(display, XKeysymToKeycode(display, XF86XK_MonBrightnessUp),
              AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
@@ -758,7 +777,7 @@ void handle_key_press(XKeyEvent *event) {
         return;
     }
     */
-    
+
     // Check for global shortcuts (Super/Windows key + letter)
     KeySym keysym = XLookupKeysym(event, 0);
     
@@ -942,6 +961,78 @@ void handle_key_press(XKeyEvent *event) {
                 return;
             }
         }
+
+        // View Modes shortcuts - work with or without Shift (for AZERTY support)
+        // Super+1: Icons view mode (only if no client window has focus)
+        // QWERTY: XK_1 (0x31), AZERTY: ampersand (0x26 = &)
+        if (keysym == XK_1 || keysym == 0x26) {
+            Canvas *active = itn_focus_get_active();
+            if (!active || active->client_win == None) {
+                Canvas *target = active ? active : itn_canvas_get_desktop();
+                if (target) {
+                    set_canvas_view_mode(target, VIEW_ICONS);
+                    update_view_modes_checkmarks();
+                }
+                return;
+            }
+        }
+        // Super+2: Names view mode (only if no client window has focus)
+        // QWERTY: XK_2 (0x32), AZERTY: eacute (0xe9 = é)
+        if (keysym == XK_2 || keysym == 0xe9) {
+            Canvas *active = itn_focus_get_active();
+            if (!active || active->client_win == None) {
+                Canvas *target = active ? active : itn_canvas_get_desktop();
+                if (target && target->type != DESKTOP) {  // Names mode not available for desktop
+                    set_canvas_view_mode(target, VIEW_NAMES);
+                    update_view_modes_checkmarks();
+                }
+                return;
+            }
+        }
+        // Super+3: Toggle hidden files (only if no client window has focus)
+        // QWERTY: XK_3 (0x33), AZERTY: quotedbl (0x22 = ")
+        if (keysym == XK_3 || keysym == 0x22) {
+            Canvas *active = itn_focus_get_active();
+            if (!active || active->client_win == None) {
+                Canvas *target = active ? active : itn_canvas_get_desktop();
+                if (target) {
+                    // Toggle global hidden files state
+                    bool new_state = !get_global_show_hidden_state();
+                    set_global_show_hidden_state(new_state);
+                    target->show_hidden = new_state;
+
+                    // Refresh directory view
+                    if (target->path) {
+                        refresh_canvas_from_directory(target, target->path);
+                    } else if (target->type == DESKTOP) {
+                        const char *home = getenv("HOME");
+                        if (home) {
+                            char desktop_path[PATH_SIZE];
+                            snprintf(desktop_path, sizeof(desktop_path), "%s/Desktop", home);
+                            refresh_canvas_from_directory(target, desktop_path);
+                        }
+                    }
+                    if (target->type == WINDOW) {
+                        apply_view_layout(target);
+                        compute_max_scroll(target);
+                    }
+                    redraw_canvas(target);
+                    update_view_modes_checkmarks();
+                }
+                return;
+            }
+        }
+        // Super+4: Toggle spatial mode (only if no client window has focus)
+        // QWERTY: XK_4 (0x34), AZERTY: apostrophe (0x27 = ')
+        if (keysym == XK_4 || keysym == 0x27) {
+            Canvas *active = itn_focus_get_active();
+            if (!active || active->client_win == None) {
+                set_spatial_mode(!get_spatial_mode());
+                update_view_modes_checkmarks();
+                return;
+            }
+        }
+
         // Add more global shortcuts here in the future
     }
     

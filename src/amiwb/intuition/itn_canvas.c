@@ -180,6 +180,9 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
     c->resizing_interactive = false;
     // Use global show_hidden state for new windows
     c->show_hidden = get_global_show_hidden_state();
+    // Use global view mode for new windows
+    extern ViewMode get_global_view_mode(void);
+    c->view_mode = get_global_view_mode();
     // Initialize damage tracking - mark entire canvas as needing initial draw
     c->needs_redraw = true;
     c->dirty_x = 0;
