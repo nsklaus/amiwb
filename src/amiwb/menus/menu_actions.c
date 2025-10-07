@@ -412,16 +412,18 @@ void handle_menu_selection(Menu *menu, int item_index) {
             if (target) {
                 if (strcmp(item, "Icons") == 0) {
                     set_canvas_view_mode(target, VIEW_ICONS);
+                    update_view_modes_checkmarks();  // Update checkmarks to reflect new state
                 } else if (strcmp(item, "Names") == 0) {
                     set_canvas_view_mode(target, VIEW_NAMES);
+                    update_view_modes_checkmarks();  // Update checkmarks to reflect new state
                 } else if (strcmp(item, "Hidden") == 0) {
                     // Toggle global hidden files state
                     bool new_state = !get_global_show_hidden_state();
                     set_global_show_hidden_state(new_state);
-                    
+
                     // Apply to current target window
                     target->show_hidden = new_state;
-                    
+
                     // Refresh directory view to apply hidden filter
                     if (target->path) {
                         refresh_canvas_from_directory(target, target->path);
@@ -440,9 +442,11 @@ void handle_menu_selection(Menu *menu, int item_index) {
                         compute_max_scroll(target);
                     }
                     redraw_canvas(target);
+                    update_view_modes_checkmarks();  // Update checkmarks to reflect new state
                 } else if (strcmp(item, "Spatial") == 0) {
                     // Toggle spatial mode
                     set_spatial_mode(!get_spatial_mode());
+                    update_view_modes_checkmarks();  // Update checkmarks to reflect new state
                 }
             }
         } else if (menu->parent_index == 6) { // Cycle

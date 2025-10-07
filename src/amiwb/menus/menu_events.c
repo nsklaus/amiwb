@@ -423,7 +423,7 @@ void maybe_open_nested_for_selection(void) {
             nested_menu->canvas->bg_color = (XRenderColor){0xFFFF,0xFFFF,0xFFFF,0xFFFF};
             nested_menu->selected_item = -1;
 
-            // Update enabled states for View Modes submenu
+            // Update enabled states and checkmarks for View Modes submenu
             if (nested_menu->parent_menu && nested_menu->parent_menu->parent_index == 1 &&
                 nested_menu->parent_index == 6) { // View Modes submenu
                 Canvas *active = itn_focus_get_active();
@@ -436,6 +436,9 @@ void maybe_open_nested_for_selection(void) {
                     nested_menu->enabled[2] = true;  // Hidden - always enabled
                     nested_menu->enabled[3] = true;  // Spatial - always enabled
                 }
+
+                // Update checkmarks to reflect current state
+                update_view_modes_checkmarks();
             }
 
             XMapRaised(ctx->dpy, nested_menu->canvas->win);
