@@ -446,18 +446,18 @@ static volatile Window g_validating_window = None;
 // Must be volatile because error handler runs in signal-like context
 static volatile int g_validation_error = 0;
 
-// Temporary error handler to suppress BadWindow errors during attribute queries
-// This silently ignores expected "window doesn't exist" errors when querying
-// window attributes on windows that may have been destroyed asynchronously
+// Temporary error handler to suppress BadWindow errors during X11 operations
+// Expected X11 race: window destroyed between validation and operation - unavoidable, must silence
+// Only suppresses errors for g_validating_window to avoid hiding unrelated bugs
 static int ignore_bad_window_on_get_attrs(Display *dpy, XErrorEvent *error) {
     extern void log_error(const char *format, ...);
 
-    // CRITICAL: Only mark validation failed if the error is for the window we're validating
+    // CRITICAL: Only suppress if error is for the EXACT window we're validating
     // X11 errors are asynchronous - we may receive errors from previous operations
     if (error->error_code == 3 && error->resourceid == g_validating_window) {  // BadWindow error code
-        // Silently ignore - window was destroyed asynchronously
+        // Expected X11 async race - window destroyed between validation and operation (unavoidable)
         g_validation_error = 1;  // Mark validation as failed
-        return 0;
+        return 0;  // Suppress (expected, harmless)
     }
 
     if (error->error_code == 4) {  // BadPixmap error code
@@ -540,6 +540,10 @@ bool is_window_valid(Display *dpy, Window win) {
 Bool safe_get_window_attributes(Display *dpy, Window win, XWindowAttributes *attrs) {
     if (win == None) return False;
 
+    // Set window being validated so error handler can match errors correctly
+    g_validating_window = win;
+    g_validation_error = 0;
+
     // Install temporary error handler to ignore BadWindow errors
     XErrorHandler old_handler = XSetErrorHandler(ignore_bad_window_on_get_attrs);
 
@@ -548,6 +552,9 @@ Bool safe_get_window_attributes(Display *dpy, Window win, XWindowAttributes *att
 
     // Restore original error handler
     XSetErrorHandler(old_handler);
+
+    // Clear window being validated
+    g_validating_window = None;
 
     return result;
 }
@@ -619,6 +626,7 @@ void safe_set_input_focus(Display *dpy, Window win, int revert_to, Time time) {
 
 // Debug wrapper for XGetWindowProperty to trace property access
 // Set to 1 to enable verbose property access logging (disabled now that errors are fixed)
+// Also provides error protection against X11 async race (window destroyed during property read)
 static int g_debug_property_access = 0;
 
 int debug_get_window_property(Display *dpy, Window win, Atom property,
@@ -634,9 +642,22 @@ int debug_get_window_property(Display *dpy, Window win, Atom property,
         if (prop_name) XFree(prop_name);
     }
 
-    return XGetWindowProperty(dpy, win, property, offset, length, delete,
-                              req_type, actual_type, actual_format, nitems,
-                              bytes_after, prop);
+    // Protect against BadWindow when window destroyed during property read (expected X11 race)
+    g_validating_window = win;
+    g_validation_error = 0;
+
+    XErrorHandler old_handler = XSetErrorHandler(ignore_bad_window_on_get_attrs);
+
+    int result = XGetWindowProperty(dpy, win, property, offset, length, delete,
+                                     req_type, actual_type, actual_format, nitems,
+                                     bytes_after, prop);
+
+    XSync(dpy, False);  // Force immediate error delivery
+    XSetErrorHandler(old_handler);
+
+    g_validating_window = None;
+
+    return result;
 }
 
 // Enable property access debugging

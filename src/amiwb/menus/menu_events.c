@@ -107,6 +107,7 @@ void close_all_menus(void) {
         }
         itn_canvas_destroy(nested_menu->canvas);
         nested_menu->canvas = NULL;
+        nested_menu = NULL;  // Clear pointer to prevent stale reference
     }
 
     // Close active menu if open
@@ -198,6 +199,9 @@ void menu_handle_button_press(XButtonEvent *event) {
 void menu_handle_button_release(XButtonEvent *event) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
+
+    // Only LMB (Button1) executes menu items - ignore MMB, RMB, and scroll wheel
+    if (event->button != Button1) return;
 
     Menu *target_menu = NULL;
     if (active_menu && active_menu->canvas && event->window == active_menu->canvas->win) target_menu = active_menu;
