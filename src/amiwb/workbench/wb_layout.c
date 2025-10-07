@@ -5,6 +5,7 @@
 #include "wb_internal.h"
 #include "../config.h"
 #include "../render.h"
+#include "../render_public.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -14,9 +15,7 @@ void apply_view_layout(Canvas *canvas);
 
 // External dependencies
 extern void refresh_canvas(Canvas *canvas);
-extern void redraw_canvas(Canvas *canvas);
 extern void compute_max_scroll(Canvas *canvas);
-extern int get_text_width(const char *text);
 extern FileIcon **wb_icons_for_canvas(Canvas *canvas, int *out_count);
 
 // Global state

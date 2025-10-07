@@ -17,7 +17,6 @@
 extern void suppress_desktop_deactivate_for_ms(int ms);
 extern void clear_press_target_if_matches(Window win);
 extern void refresh_canvas(Canvas *canvas);
-extern int get_text_width(const char *text);
 
 // ============================================================================
 // Icon Movement

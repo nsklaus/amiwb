@@ -3,6 +3,7 @@
 
 #include "../config.h"
 #include "itn_internal.h"
+#include "../render_public.h"
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>  // For XClassHint, XGetWMProtocols
 #include <X11/Xatom.h>
@@ -36,15 +37,13 @@ bool g_restarting = false;
 Display *display = NULL;
 int screen = 0;
 Window root = 0;
-int width = 0, height = 0, depth = 0;
+static int width = 0, height = 0, depth = 0;  // Encapsulated - use getters
 Cursor root_cursor = 0;
 RenderContext *render_context = NULL;
-Canvas **canvas_array = NULL;
-int canvas_count = 0;
-int canvas_array_size = 0;
+// Canvas array moved to itn_manager.c - use itn_manager_* functions
 
-// Additional globals for event handling
-Canvas *active_window = NULL;
+// Additional globals for event handling (legacy - to be migrated)
+// active_window removed - use itn_focus_get_active() / itn_focus_set_active()
 Canvas *dragging_canvas = NULL;
 Canvas *scrolling_canvas = NULL;
 Canvas *arrow_scroll_canvas = NULL;
@@ -76,6 +75,10 @@ int itn_core_get_screen_width(void) {
 
 int itn_core_get_screen_height(void) {
     return height;
+}
+
+int itn_core_get_screen_depth(void) {
+    return depth;
 }
 
 void itn_core_set_screen_dimensions(int w, int h) {
@@ -182,8 +185,9 @@ bool itn_core_init_compositor(void) {
 
     // Setup compositing for existing canvases
     // When compositor starts, existing windows need compositing setup
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (!c || !c->win) continue;
 
         // Check if window is mapped
@@ -313,7 +317,6 @@ Canvas *init_intuition(void) {
     frame_existing_client_windows();
 
     // Redraw the desktop to show wallpaper
-    extern void redraw_canvas(Canvas *canvas);
     redraw_canvas(desktop);
 
     return desktop;
@@ -326,14 +329,19 @@ void cleanup_intuition(void) {
 
     // CRITICAL: Destroy all canvases BEFORE closing display
     // This triggers client preservation logic if g_restarting is true
-    if (canvas_array && canvas_count > 0) {
+    int count = itn_manager_get_count();
+    if (count > 0) {
         // Iterate backwards to avoid array shifting issues
-        for (int i = canvas_count - 1; i >= 0; i--) {
-            if (canvas_array[i]) {
-                itn_canvas_destroy(canvas_array[i]);
+        for (int i = count - 1; i >= 0; i--) {
+            Canvas *c = itn_manager_get_canvas(i);
+            if (c) {
+                itn_canvas_destroy(c);
             }
         }
     }
+
+    // Cleanup manager
+    itn_manager_cleanup();
 
     // Cleanup render context
     if (render_context) {
@@ -444,8 +452,9 @@ int get_window_list(Canvas ***windows) {
     static Canvas *window_list[256];  // Static to avoid allocation
     int count = 0;
 
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int total = itn_manager_get_count();
+    for (int i = 0; i < total; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (c && (c->type == WINDOW || c->type == DIALOG)) {
             window_list[count++] = c;
             if (count >= 256) break;  // Safety limit
@@ -457,8 +466,9 @@ int get_window_list(Canvas ***windows) {
 }
 
 void iconify_all_windows(void) {
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (c && c->type == WINDOW && c != itn_canvas_get_desktop()) {
             extern void iconify_canvas(Canvas *canvas);
             iconify_canvas(c);
@@ -469,8 +479,9 @@ void iconify_all_windows(void) {
 Canvas *find_window_by_path(const char *path) {
     if (!path) return NULL;
 
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         // Only check WINDOW type canvases with valid paths
         if (!c || c->type != WINDOW || !c->path) continue;
 
@@ -741,19 +752,7 @@ void suppress_desktop_deactivate_for_ms(int ms) {
 
 
 void remove_canvas_from_array(Canvas *canvas) {
-    if (!canvas) return;
-
-    for (int i = 0; i < canvas_count; i++) {
-        if (canvas_array[i] == canvas) {
-            // Shift remaining canvases down
-            for (int j = i; j < canvas_count - 1; j++) {
-                canvas_array[j] = canvas_array[j + 1];
-            }
-            canvas_count--;
-            canvas_array[canvas_count] = NULL;
-            break;
-        }
-    }
+    itn_manager_remove(canvas);
 }
 
 void set_active_window(Canvas *canvas) {
@@ -890,14 +889,14 @@ unsigned long unmanaged_safe_mask(void) {
     return CWX | CWY | CWWidth | CWHeight;
 }
 
-// Public API to get canvas array
+// Public API to get canvas array (transition helper)
 Canvas **get_canvas_array(void) {
-    return canvas_array;
+    return itn_manager_get_array();
 }
 
 // Public API to get canvas count
 int get_canvas_count(void) {
-    return canvas_count;
+    return itn_manager_get_count();
 }
 
 // X11 error handler with request decoding

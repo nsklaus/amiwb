@@ -6,6 +6,7 @@
 #include "wb_queue.h"
 #include "wb_xattr.h"
 #include "../config.h"
+#include "../render_public.h"
 #include "../dialogs.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,19 +22,9 @@
 #include <libgen.h>
 #include <time.h>
 
-// Forward declarations from dialogs.c
-extern void add_progress_dialog_to_list(ProgressDialog *dialog);
-extern ProgressDialog *get_all_progress_dialogs(void);
-extern void update_progress_dialog(ProgressDialog *dialog, const char *filename, float percent);
-extern void close_progress_dialog(ProgressDialog *dialog);
-extern void remove_progress_dialog_from_list(ProgressDialog *dialog);
-
 // Forward declarations from intuition
 extern Canvas *itn_canvas_find_by_window(Window win);
 extern void compute_max_scroll(Canvas *canvas);
-
-// Forward declarations from render.c
-extern void redraw_canvas(Canvas *canvas);
 
 // Forward declarations from wb_layout.c
 extern void compute_content_bounds(Canvas *canvas);

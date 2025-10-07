@@ -55,9 +55,6 @@ static struct {
 } metrics = {0};
 
 // External references (temporary during migration)
-extern int width, height;
-extern Canvas **canvas_array;
-extern int canvas_count;
 
 void itn_render_accumulate_damage(int x, int y, int width, int height) {
     if (width <= 0 || height <= 0) return;
@@ -200,8 +197,9 @@ void itn_render_process_frame(void) {
 // Render canvases that have damage (fallback for non-compositor mode)
 void itn_render_damaged_canvases(void) {
     // Find canvases that intersect with damage bounds
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *canvas = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *canvas = itn_manager_get_canvas(i);
         if (!canvas) continue;
 
         // Check if canvas intersects with damage bounds
@@ -394,7 +392,7 @@ void itn_render_log_metrics(void) {
     }
 
     log_error("[METRICS] Window Statistics:");
-    log_error("[METRICS]   Windows tracked: %d", canvas_count);
+    log_error("[METRICS]   Windows tracked: %d", itn_manager_get_count());
     log_error("[METRICS]   Visible windows: %d", metrics.visible_windows);
 
     // Repaint reason breakdown

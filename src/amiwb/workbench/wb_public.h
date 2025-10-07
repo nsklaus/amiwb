@@ -87,4 +87,12 @@ void set_global_view_mode(ViewMode mode);
 // Archive extraction
 int extract_file_at_path(const char *archive_path, Canvas *canvas);
 
+// Drag operations (from wb_drag.c)
+void start_drag_icon(FileIcon *icon, int x, int y);
+void continue_drag_icon(XMotionEvent *event, Canvas *canvas);
+void end_drag_icon(Canvas *canvas);
+
+// Directory operations (from wb_core.c)
+void open_directory(FileIcon *icon, Canvas *current_canvas);
+
 #endif // WB_PUBLIC_H

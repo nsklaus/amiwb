@@ -5,16 +5,11 @@
 #include "wb_public.h"
 #include "../config.h"
 #include "../render.h"
+#include "../render_public.h"
 #include <X11/Xlib.h>
 
 // External dependencies
-extern void redraw_canvas(Canvas *canvas);
 extern void safe_set_input_focus(Display *dpy, Window win, int revert, Time time);
-extern void start_drag_icon(FileIcon *icon, int x, int y);
-extern void open_directory(FileIcon *icon, Canvas *current_canvas);
-extern void open_file(FileIcon *icon);
-extern void continue_drag_icon(XMotionEvent *event, Canvas *canvas);
-extern void end_drag_icon(Canvas *canvas);
 
 // ============================================================================
 // Selection Helpers

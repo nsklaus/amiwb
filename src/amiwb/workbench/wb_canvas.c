@@ -5,6 +5,7 @@
 #include "wb_internal.h"
 #include "wb_public.h"
 #include "../config.h"
+#include "../render_public.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +14,6 @@
 #include <X11/Xlib.h>
 
 // External dependencies
-extern void redraw_canvas(Canvas *canvas);
 extern void refresh_canvas(Canvas *canvas);
 
 // Helper to check if string ends with suffix

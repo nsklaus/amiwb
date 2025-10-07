@@ -5,6 +5,7 @@
 #include "itn_internal.h"
 #include "../workbench/wb_public.h"
 #include "../menus/menu_public.h"
+#include "../render_public.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xdamage.h>
@@ -19,11 +20,8 @@
 static Canvas *g_canvas_list = NULL;  // Linked list of all canvases
 
 // External references (temporary during migration)
-extern int width, height, depth;
-extern Canvas **canvas_array;
-extern int canvas_count;
-extern int canvas_array_size;
-extern Canvas *active_window;
+// Canvas array now managed by itn_manager.c
+// active_window removed - use itn_focus_get_active() / itn_focus_set_active()
 extern bool fullscreen_active;
 extern bool g_restarting;
 extern bool g_shutting_down;
@@ -31,23 +29,16 @@ extern RenderContext *render_context;
 
 // External functions from intuition.c (temporary during migration)
 extern RenderContext *get_render_context(void);
-extern bool is_window_valid(Display *dpy, Window win);
 extern Display *get_display(void);
-extern void send_x_command_and_sync(void);
-extern void send_close_request_to_client(Window client);
 // get_desktop_canvas is now itn_canvas_get_desktop (defined below)
 extern bool get_window_attributes_safely(Window w, XWindowAttributes *a);
 extern void clear_canvas_icons(Canvas *canvas);
-extern void menubar_apply_fullscreen(bool fullscreen);
 extern void remove_icon_for_canvas(Canvas *canvas);
-extern void render_recreate_canvas_surfaces(Canvas *canvas);
 extern void init_scroll(Canvas *canvas);
 extern void compute_max_scroll(Canvas *canvas);
 extern void calculate_content_area_inside_frame(Canvas *c, int *w, int *h);
 extern void set_active_window(Canvas *canvas);
 // find_canvas is now itn_canvas_find_by_window
-extern void redraw_canvas(Canvas *canvas);
-extern void restore_system_menu(void);
 extern bool get_global_show_hidden_state(void);
 
 // External compositing functions
@@ -62,18 +53,6 @@ extern void itn_composite_update_canvas_pixmap(Canvas *canvas);
 // ============================================================================
 
 static Canvas *add_new_canvas_to_array(void) {
-    // Expand array if needed
-    if (canvas_count >= canvas_array_size) {
-        int new_size = canvas_array_size ? canvas_array_size * 2 : INITIAL_CANVAS_CAPACITY;
-        Canvas **expanded_array = realloc(canvas_array, new_size * sizeof(Canvas *));
-        if (!expanded_array) {
-            log_error("[ERROR] realloc failed for canvas_array (new size=%d) - canvas creation failed", new_size);
-            return NULL;  // Graceful degradation: can't create new canvas
-        }
-        canvas_array = expanded_array;
-        canvas_array_size = new_size;
-    }
-
     // Allocate new canvas
     Canvas *new_canvas = malloc(sizeof(Canvas));
     if (!new_canvas) {
@@ -81,7 +60,13 @@ static Canvas *add_new_canvas_to_array(void) {
         return NULL;
     }
 
-    canvas_array[canvas_count++] = new_canvas;
+    // Add to manager (handles array growth automatically)
+    if (!itn_manager_add(new_canvas)) {
+        log_error("[ERROR] Failed to add canvas to manager");
+        free(new_canvas);
+        return NULL;
+    }
+
     return new_canvas;
 }
 
@@ -312,7 +297,7 @@ static Bool init_render_pictures(Canvas *c, CanvasType t) {
 
 // Select next window after closing
 void select_next_window(Canvas *closing_canvas) {  // Exported for intuition.c
-    if (active_window == closing_canvas) active_window = NULL;
+    if (itn_focus_get_active() == closing_canvas) itn_focus_set_active(NULL);
 
     Window root_return, parent_return;
     Window *children;
@@ -334,8 +319,8 @@ void select_next_window(Canvas *closing_canvas) {  // Exported for intuition.c
     }
 
     // Fallback if none
-    if (!active_window) {
-        active_window = itn_canvas_get_desktop();
+    if (!itn_focus_get_active()) {
+        itn_focus_set_active(itn_canvas_get_desktop());
     }
 }
 
@@ -606,7 +591,7 @@ void itn_canvas_destroy(Canvas *canvas) {
     free(canvas->title_base);
     free(canvas->title_change);
 
-    if (active_window == canvas) active_window = NULL;
+    if (itn_focus_get_active() == canvas) itn_focus_set_active(NULL);
 
     manage_canvases(false, canvas);
     remove_icon_for_canvas(canvas);
@@ -625,8 +610,8 @@ void itn_canvas_destroy(Canvas *canvas) {
 // ============================================================================
 
 Canvas *itn_canvas_get_desktop(void) {
-    // Desktop is always the first canvas (canvas_array[0])
-    if (canvas_array && canvas_count > 0) return canvas_array[0];
+    // Desktop is always the first canvas
+    if (itn_manager_get_count() > 0) return itn_manager_get_canvas(0);
     return NULL;
 }
 
@@ -634,11 +619,11 @@ Canvas *itn_canvas_find_by_window(Window win) {
     for (Canvas *c = g_canvas_list; c; c = c->next) {
         if (c->win == win) return c;
     }
-    // Fall back to array search during migration
-    if (canvas_array) {  // Guard against init failure
-        for (int i = 0; i < canvas_count; i++) {
-            if (canvas_array[i]->win == win) return canvas_array[i];
-        }
+    // Fall back to manager search during migration
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
+        if (c && c->win == win) return c;
     }
     return NULL;
 }
@@ -647,11 +632,11 @@ Canvas *itn_canvas_find_by_client(Window client) {
     for (Canvas *c = g_canvas_list; c; c = c->next) {
         if (c->client_win == client) return c;
     }
-    // Fall back to array search during migration
-    if (canvas_array) {  // Guard against init failure
-        for (int i = 0; i < canvas_count; i++) {
-            if (canvas_array[i]->client_win == client) return canvas_array[i];
-        }
+    // Fall back to manager search during migration
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
+        if (c && c->client_win == client) return c;
     }
     return NULL;
 }

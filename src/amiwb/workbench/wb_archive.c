@@ -14,9 +14,6 @@
 #include <unistd.h>
 #include <time.h>
 
-// External dependencies
-extern void add_progress_dialog_to_list(ProgressDialog *dialog);
-
 // ============================================================================
 // Archive Detection
 // ============================================================================

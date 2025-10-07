@@ -3,17 +3,14 @@
 
 #include "../config.h"
 #include "itn_internal.h"
+#include "../render_public.h"
 #include <X11/Xlib.h>
 #include "../menus/menu_public.h"  // For check_for_app_menus
 #include "../workbench/wb_public.h"
 #include "../render.h"  // For redraw_canvas (temporary)
 
 // External references (temporary during migration)
-extern Canvas **canvas_array;
-extern int canvas_count;
-extern void redraw_canvas(Canvas *c);  // From render.c
 extern void check_for_app_menus(Window w);  // From menus.c
-extern void restore_system_menu(void);  // From menus.c
 extern FileIcon **get_icon_array(void);  // From workbench.c
 extern int get_icon_count(void);  // From workbench.c
 extern void restore_iconified(FileIcon *icon);  // From workbench.c
@@ -30,15 +27,15 @@ void itn_focus_set_active(Canvas *canvas) {
     if (!dpy) return;
 
     // Deactivate all other windows
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *o = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *o = itn_manager_get_canvas(i);
         if (!o) continue;
 
         if ((o->type == WINDOW || o->type == DIALOG) && o != canvas) {
             if (o->active) {
                 o->active = false;
                 // Must redraw decorations to update border color
-                extern void redraw_canvas(Canvas *c);
                 redraw_canvas(o);  // This updates the window pixmap with new decoration colors
                 DAMAGE_CANVAS(o);  // Then mark for compositor update
             }
@@ -63,7 +60,6 @@ void itn_focus_set_active(Canvas *canvas) {
     safe_set_input_focus(dpy, focus, RevertToParent, CurrentTime);
 
     // Redraw decorations with active color
-    extern void redraw_canvas(Canvas *c);
     redraw_canvas(canvas);  // This updates the window pixmap with new decoration colors
 
     // Damage new active window
@@ -88,10 +84,9 @@ Canvas *itn_focus_get_active(void) {
 }
 
 void itn_focus_deactivate_all(void) {
-    extern void redraw_canvas(Canvas *c);
-
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (c && c->active) {
             c->active = false;
             // Must redraw decorations to show inactive color
@@ -113,8 +108,9 @@ void itn_focus_cycle_next(void) {
     int window_count = 0;
     int current_index = -1;
 
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (c && (c->type == WINDOW || c->type == DIALOG)) {
             if (c == g_active_canvas) {
                 current_index = window_count;
@@ -163,8 +159,9 @@ void itn_focus_cycle_prev(void) {
     int window_count = 0;
     int current_index = -1;
 
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (c && (c->type == WINDOW || c->type == DIALOG)) {
             if (c == g_active_canvas) {
                 current_index = window_count;
@@ -281,12 +278,13 @@ void itn_focus_select_next(Canvas *closing_canvas) {
 }
 
 void itn_focus_activate_by_index(int index) {
-    if (index < 0 || index >= canvas_count) return;
+    if (index < 0 || index >= itn_manager_get_count()) return;
 
     // Count WINDOW/DIALOG type canvases
     int window_index = 0;
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (!c || (c->type != WINDOW && c->type != DIALOG)) continue;
 
         if (window_index == index) {

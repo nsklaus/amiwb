@@ -4,6 +4,7 @@
 
 #include "../config.h"
 #include "itn_internal.h"
+#include "../render_public.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/Xcomposite.h>
@@ -24,11 +25,7 @@ static Picture wallpaper_pict = None;
 static XRenderPictFormat *format_32 = NULL;
 static XRenderPictFormat *format_24 = NULL;
 
-// External references
-extern int width, height, depth;
-extern Canvas **canvas_array;
-extern int canvas_count;
-extern bool is_window_valid(Display *dpy, Window win);
+// External references (none needed - all in itn_public.h via itn_internal.h)
 
 // Lightweight structure for override-redirect windows (popup menus, tooltips)
 typedef struct OverrideWin {
@@ -168,8 +165,9 @@ void itn_composite_cleanup_overlay(void) {
     if (!dpy) return;
 
     // Clean up compositing data from all canvases
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (!c) continue;
 
         // Free damage object
@@ -208,9 +206,9 @@ bool itn_composite_create_back_buffer(void) {
     safe_free_pixmap(dpy, &back_pixmap);
 
     // Get actual screen dimensions if width/height are 0
-    int actual_width = width;
-    int actual_height = height;
-    int actual_depth = depth;
+    int actual_width = itn_core_get_screen_width();
+    int actual_height = itn_core_get_screen_height();
+    int actual_depth = itn_core_get_screen_depth();
     int actual_screen = itn_core_get_screen();
     Window actual_root = itn_core_get_root();
 
@@ -260,7 +258,7 @@ void itn_composite_setup_canvas(Canvas *canvas) {
     }
 
     // Create XRender picture from the pixmap
-    int win_depth = canvas->depth ? canvas->depth : depth;
+    int win_depth = canvas->depth ? canvas->depth : itn_core_get_screen_depth();
     canvas->comp_picture = create_picture_from_pixmap(dpy, canvas->comp_pixmap, win_depth);
 
     // Create damage tracking for this window
@@ -290,7 +288,7 @@ void itn_composite_update_canvas_pixmap(Canvas *canvas) {
     // Get new composite pixmap (allocates new GPU memory)
     canvas->comp_pixmap = XCompositeNameWindowPixmap(dpy, canvas->win);
     if (canvas->comp_pixmap) {
-        int win_depth = canvas->depth ? canvas->depth : depth;
+        int win_depth = canvas->depth ? canvas->depth : itn_core_get_screen_depth();
         canvas->comp_picture = create_picture_from_pixmap(dpy, canvas->comp_pixmap, win_depth);
     }
 
@@ -431,8 +429,8 @@ void itn_composite_render_all(void) {
     }
 
     // Get actual dimensions
-    int actual_width = width > 0 ? width : DisplayWidth(dpy, DefaultScreen(dpy));
-    int actual_height = height > 0 ? height : DisplayHeight(dpy, DefaultScreen(dpy));
+    int actual_width = itn_core_get_screen_width() > 0 ? itn_core_get_screen_width() : DisplayWidth(dpy, DefaultScreen(dpy));
+    int actual_height = itn_core_get_screen_height() > 0 ? itn_core_get_screen_height() : DisplayHeight(dpy, DefaultScreen(dpy));
 
     // log_error("[COMPOSITE] Rendering all windows (w=%d, h=%d)", actual_width, actual_height);
 
@@ -501,7 +499,6 @@ void itn_composite_render_all(void) {
         // If this canvas needs repainting, ensure its window content is current
         // This handles button state changes and other visual updates
         if (c->comp_needs_repaint) {
-            extern void redraw_canvas(Canvas *canvas);
             redraw_canvas(c);
         }
 
@@ -519,7 +516,7 @@ void itn_composite_render_all(void) {
         }
 
         if (!c->comp_picture && c->comp_pixmap) {
-            int win_depth = c->depth ? c->depth : depth;
+            int win_depth = c->depth ? c->depth : itn_core_get_screen_depth();
             c->comp_picture = create_picture_from_pixmap(dpy, c->comp_pixmap, win_depth);
         }
 
@@ -617,8 +614,8 @@ void itn_composite_swap_buffers(void) {
     }
 
     // Get actual dimensions
-    int actual_width = width > 0 ? width : DisplayWidth(dpy, DefaultScreen(dpy));
-    int actual_height = height > 0 ? height : DisplayHeight(dpy, DefaultScreen(dpy));
+    int actual_width = itn_core_get_screen_width() > 0 ? itn_core_get_screen_width() : DisplayWidth(dpy, DefaultScreen(dpy));
+    int actual_height = itn_core_get_screen_height() > 0 ? itn_core_get_screen_height() : DisplayHeight(dpy, DefaultScreen(dpy));
 
     // Copy back buffer to output target (overlay or root)
     XRenderComposite(dpy, PictOpSrc, back_buffer, None, output_target,
@@ -649,7 +646,7 @@ Picture itn_composite_get_canvas_picture(Canvas *canvas) {
     if (!canvas->comp_picture && canvas->comp_pixmap) {
         Display *dpy = itn_core_get_display();
         if (dpy) {
-            int win_depth = canvas->depth ? canvas->depth : depth;
+            int win_depth = canvas->depth ? canvas->depth : itn_core_get_screen_depth();
             canvas->comp_picture = create_picture_from_pixmap(dpy, canvas->comp_pixmap, win_depth);
         }
     }
@@ -666,8 +663,9 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
 
     // Find the canvas for this damage event
     Canvas *damaged = NULL;
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (c && c->comp_damage == ev->damage) {
             damaged = c;
             break;
@@ -730,8 +728,9 @@ void itn_composite_handle_expose(XExposeEvent *ev) {
 
     // Find canvas for this window
     Canvas *canvas = NULL;
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (c && c->win == ev->window) {
             canvas = c;
             break;
@@ -749,8 +748,9 @@ void itn_composite_handle_expose(XExposeEvent *ev) {
 bool itn_composite_needs_frame(void) {
     if (!itn_composite_is_active()) return false;
 
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (c && c->comp_needs_repaint) {
             return true;
         }
@@ -763,8 +763,9 @@ bool itn_composite_needs_frame(void) {
 void itn_composite_reorder_windows(void) {
     // TODO: Implement proper stacking order tracking
     // For now, just mark all as needing repaint
-    for (int i = 0; i < canvas_count; i++) {
-        Canvas *c = canvas_array[i];
+    int count = itn_manager_get_count();
+    for (int i = 0; i < count; i++) {
+        Canvas *c = itn_manager_get_canvas(i);
         if (c) {
             c->comp_needs_repaint = true;
         }

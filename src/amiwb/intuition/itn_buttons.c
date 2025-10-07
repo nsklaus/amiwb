@@ -7,7 +7,6 @@
 #include <X11/Xlib.h>
 
 // External functions we need
-extern int hit_test(Canvas *canvas, int x, int y);
 extern void request_client_close(Canvas *canvas);
 extern void iconify_canvas(Canvas *canvas);
 extern Canvas *itn_canvas_get_desktop(void);

@@ -9,7 +9,6 @@
 #include <math.h>
 
 // External functions we need
-extern int clamp_value_between(int value, int min, int max);
 extern void update_scroll_from_mouse_drag(Canvas *canvas, bool is_vertical,
                                          int initial_scroll, int drag_start_pos,
                                          int current_mouse_pos);

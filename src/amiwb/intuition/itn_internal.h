@@ -24,6 +24,7 @@ int itn_core_get_screen(void);
 Window itn_core_get_root(void);
 int itn_core_get_screen_width(void);
 int itn_core_get_screen_height(void);
+int itn_core_get_screen_depth(void);
 void itn_core_set_screen_dimensions(int w, int h);
 bool itn_core_is_fullscreen_active(void);
 void itn_core_set_fullscreen_active(bool active);
@@ -42,6 +43,17 @@ Canvas *itn_canvas_get_desktop(void);
 void itn_canvas_manage_list(Canvas *canvas, bool add);
 void itn_canvas_setup_compositing(Canvas *canvas);
 void itn_canvas_cleanup_compositing(Canvas *canvas);
+
+// --- itn_manager.c ---
+Canvas *itn_manager_get_canvas(int index);
+int itn_manager_get_count(void);
+int itn_manager_get_array_size(void);
+Canvas **itn_manager_get_array(void);  // Transition helper - avoid in new code
+bool itn_manager_add(Canvas *canvas);
+void itn_manager_remove(Canvas *canvas);
+Canvas *itn_manager_find_by_predicate(bool (*predicate)(Canvas*, void*), void *ctx);
+void itn_manager_foreach(void (*callback)(Canvas*, void*), void *ctx);
+void itn_manager_cleanup(void);
 
 // --- itn_geometry.c ---
 void itn_geometry_move(Canvas *canvas, int x, int y);

@@ -5,6 +5,7 @@
 #include "wb_internal.h"
 #include "../config.h"
 #include "../render.h"
+#include "../render_public.h"
 #include "../events.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +17,6 @@
 #include <X11/Xlib.h>
 
 // External dependencies
-extern void redraw_canvas(Canvas *canvas);
 extern Canvas *find_window_by_path(const char *path);  // From intuition
 extern Canvas *create_canvas(const char *path, int x, int y, int w, int h, CanvasType type);  // From intuition
 extern void compute_max_scroll(Canvas *canvas);

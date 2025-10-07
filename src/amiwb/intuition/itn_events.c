@@ -3,6 +3,7 @@
 
 #include "../config.h"
 #include "itn_internal.h"
+#include "../render_public.h"
 #include "itn_scrollbar.h"
 #include "itn_drag.h"
 #include "itn_buttons.h"
@@ -31,14 +32,9 @@ static bool g_last_press_consumed = false;
 // find_canvas is now itn_canvas_find_by_window
 extern Canvas *itn_canvas_find_by_client(Window client);
 extern void set_active_window(Canvas *canvas);
-extern void redraw_canvas(Canvas *canvas);  // Will be replaced with damage accumulation
 // get_desktop_canvas is now itn_canvas_get_desktop
-extern bool is_window_valid(Display *dpy, Window win);
-extern void send_x_command_and_sync(void);
-extern void send_close_request_to_client(Window client);
 extern void request_client_close(Canvas *canvas);
 extern void iconify_canvas(Canvas *canvas);
-extern void menubar_apply_fullscreen(bool fullscreen);
 extern bool get_show_menus_state(void);
 extern void toggle_menubar_state(void);
 extern void intuition_enter_fullscreen(Canvas *canvas);
@@ -51,7 +47,6 @@ extern bool is_toplevel_under_root(Window win);
 extern unsigned long unmanaged_safe_mask(XConfigureRequestEvent *event, XWindowAttributes *attrs, bool attrs_valid);
 extern void calculate_frame_size_from_client_size(int client_w, int client_h, int *frame_w, int *frame_h);
 extern bool is_fullscreen_active(Window win);
-extern void render_recreate_canvas_surfaces(Canvas *canvas);
 extern void remove_canvas_from_array(Canvas *canvas);
 extern void workbench_open_directory(const char *path);
 extern void itn_canvas_destroy(Canvas *canvas);

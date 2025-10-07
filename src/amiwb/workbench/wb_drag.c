@@ -6,6 +6,7 @@
 #include "wb_public.h"
 #include "../config.h"
 #include "../render.h"
+#include "../render_public.h"
 #include "../xdnd.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,11 +22,7 @@
 #include <X11/extensions/Xrender.h>
 
 // External dependencies
-extern XdndContext xdnd_ctx;
-extern void redraw_canvas(Canvas *canvas);
-extern XftFont *get_font(void);
 extern void compute_max_scroll(Canvas *canvas);
-extern int get_text_width(const char *text);
 
 // Progress system (from wb_progress.c)
 typedef struct {

@@ -358,9 +358,6 @@ static void calculate_layout(Dialog *dialog, int *input_x, int *input_y, int *in
     }
 }
 
-// Helper to get font (from render.c)
-extern XftFont *get_font(void);
-
 // Forward declarations for internal functions
 static void draw_checkerboard_pattern(Picture dest, int x, int y, int w, int h);
 

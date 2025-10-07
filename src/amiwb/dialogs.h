@@ -110,4 +110,9 @@ bool is_progress_dialog(Canvas *canvas);
 ProgressDialog* get_progress_dialog_for_canvas(Canvas *canvas);
 void render_progress_dialog_content(Canvas *canvas);
 
+// Progress dialog list management
+void add_progress_dialog_to_list(ProgressDialog *dialog);
+ProgressDialog *get_all_progress_dialogs(void);
+void remove_progress_dialog_from_list(ProgressDialog *dialog);
+
 #endif

@@ -259,6 +259,7 @@ void suppress_desktop_deactivate_for_ms(int ms);
 
 // --- Menu operations ---
 void toggle_menubar_and_redraw(void);
+void menubar_apply_fullscreen(bool fullscreen);
 
 // --- Error handling and debugging ---
 void install_error_handler(void);
@@ -270,6 +271,10 @@ Bool safe_translate_coordinates(Display *dpy, Window src_w, Window dest_w,
                                 int src_x, int src_y, int *dest_x, int *dest_y,
                                 Window *child);
 void safe_set_input_focus(Display *dpy, Window win, int revert_to, Time time);
+
+// --- Client communication ---
+void send_x_command_and_sync(void);
+bool send_close_request_to_client(Window client);
 int debug_get_window_property(Display *dpy, Window win, Atom property,
                                long offset, long length, Bool delete,
                                Atom req_type, Atom *actual_type,

@@ -26,9 +26,6 @@
 // Global dialog list
 static IconInfoDialog *g_iconinfo_dialogs = NULL;
 
-// External functions
-extern XftFont *get_font(void);
-
 // Forward declarations
 static void load_file_info(IconInfoDialog *dialog);
 static Picture create_2x_icon(FileIcon *icon);

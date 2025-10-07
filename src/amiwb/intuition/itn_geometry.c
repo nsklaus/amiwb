@@ -3,20 +3,15 @@
 
 #include "../config.h"
 #include "itn_internal.h"
+#include "../render_public.h"
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>  // For XA_ATOM
 #include <math.h>       // For fmax, fmin, roundf
 #include "../render.h"  // For apply_resize_and_redraw (temporary)
 
 // External references (temporary during migration)
-extern int width, height;
-extern Canvas **canvas_array;
-extern int canvas_count;
-extern bool is_window_valid(Display *dpy, Window win);  // From intuition.c
 // get_desktop_canvas is now itn_canvas_get_desktop
 // find_canvas is now itn_canvas_find_by_window
-extern void render_recreate_canvas_surfaces(Canvas *c);  // From render.c
-extern void redraw_canvas(Canvas *c);  // From render.c
 extern void compute_max_scroll(Canvas *c);  // From intuition.c
 // get_right_border_width is inline in intuition.h
 
@@ -92,7 +87,7 @@ void itn_geometry_raise(Canvas *canvas) {
     XRaiseWindow(dpy, canvas->win);
 
     // Stacking change affects entire screen
-    DAMAGE_RECT(0, 0, width, height);
+    DAMAGE_RECT(0, 0, itn_core_get_screen_width(), itn_core_get_screen_height());
     SCHEDULE_FRAME();
 }
 
@@ -116,13 +111,13 @@ void itn_geometry_lower(Canvas *canvas) {
     }
 
     // Stacking change affects entire screen
-    DAMAGE_RECT(0, 0, width, height);
+    DAMAGE_RECT(0, 0, itn_core_get_screen_width(), itn_core_get_screen_height());
     SCHEDULE_FRAME();
 }
 
 void itn_geometry_restack(void) {
     // Mark entire screen as damaged when stacking changes
-    DAMAGE_RECT(0, 0, width, height);
+    DAMAGE_RECT(0, 0, itn_core_get_screen_width(), itn_core_get_screen_height());
     SCHEDULE_FRAME();
 }
 
