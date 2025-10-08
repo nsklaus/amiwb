@@ -6,7 +6,7 @@
 #include "../intuition/itn_public.h"
 #include "../workbench/wb_public.h"
 #include "../font_manager.h"
-#include "../events.h"
+#include "../events/evt_public.h"
 #include "../config.h"
 #include <stdlib.h>
 #include <string.h>

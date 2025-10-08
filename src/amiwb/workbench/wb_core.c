@@ -7,7 +7,7 @@
 #include "../render.h"
 #include "../render_public.h"
 #include "../intuition/itn_internal.h"
-#include "../events.h"
+#include "../events/evt_public.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

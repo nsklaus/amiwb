@@ -7,7 +7,7 @@
 #include "../workbench/wb_public.h"
 #include "../workbench/wb_internal.h"
 #include "../font_manager.h"
-#include "../events.h"
+#include "../events/evt_public.h"
 
 // ============================================================================
 // Dropdown Menu Creation and Display

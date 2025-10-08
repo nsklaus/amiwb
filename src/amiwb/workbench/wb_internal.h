@@ -1,6 +1,7 @@
 #ifndef WB_INTERNAL_H
 #define WB_INTERNAL_H
 
+#include "wb_public.h"
 #include "../config.h"
 #include "../icons.h"
 #include "../intuition/itn_public.h"

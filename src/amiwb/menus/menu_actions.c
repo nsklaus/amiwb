@@ -8,7 +8,7 @@
 #include "../workbench/wb_internal.h"
 #include "../dialogs/dialog_public.h"
 #include "../dialogs/dialog_public.h"
-#include "../events.h"
+#include "../events/evt_public.h"
 #include "../config.h"
 #include "../diskdrives.h"
 #include <sys/stat.h>

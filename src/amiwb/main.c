@@ -4,7 +4,7 @@
 #include "dialogs/dialog_public.h"
 #include "dialogs/dialog_public.h"
 #include "workbench/wb_public.h"
-#include "events.h"
+#include "events/evt_public.h"
 // #include "compositor.h"  // Now using itn modules
 #include "render.h"
 #include "config.h"

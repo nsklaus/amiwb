@@ -5,7 +5,7 @@
 #include "menu_public.h"
 #include "../intuition/itn_public.h"
 #include "../font_manager.h"
-#include "../events.h"
+#include "../events/evt_public.h"
 #include "../config.h"
 #include <string.h>
 #include <stdlib.h>

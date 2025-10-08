@@ -5,7 +5,7 @@
 #include "wb_internal.h"
 #include "../config.h"
 #include "../render.h"
-#include "../events.h"
+#include "../events/evt_public.h"
 #include "../intuition/itn_public.h"
 #include <stdio.h>
 #include <stdlib.h>

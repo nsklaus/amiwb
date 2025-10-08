@@ -5,7 +5,7 @@
 #include "menu_public.h"
 #include "../intuition/itn_public.h"
 #include "../font_manager.h"
-#include "../events.h"
+#include "../events/evt_public.h"
 #include "../config.h"
 
 // ============================================================================
@@ -241,10 +241,10 @@ void menu_handle_button_release(XButtonEvent *event) {
         active_menu = NULL;
     }
 
-    // Conditional redraw: only if not quitting (running is true)
+    // Conditional redraw: only if not quitting (event loop still running)
     Menu *menubar = get_menubar_menu();
     Canvas *menubar_canvas = get_menubar();
-    if (running && menubar && menubar_canvas) {
+    if (evt_core_is_running() && menubar && menubar_canvas) {
         // Always revert menubar to logo state after a click
         if (get_show_menus_state()) toggle_menubar_state();
         redraw_canvas(menubar_canvas);

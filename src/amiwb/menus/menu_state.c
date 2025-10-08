@@ -4,7 +4,7 @@
 #include "menu_internal.h"
 #include "menu_public.h"
 #include "../intuition/itn_public.h"
-#include "../events.h"
+#include "../events/evt_public.h"
 #include "../config.h"
 #include <time.h>
 
