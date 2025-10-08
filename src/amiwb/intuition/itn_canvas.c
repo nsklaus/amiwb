@@ -4,10 +4,11 @@
 #include "../config.h"
 #include "itn_internal.h"
 #include "../workbench/wb_public.h"
+#include "../workbench/wb_internal.h"
 #include "../menus/menu_public.h"
 #include "../menus/menu_internal.h"
 #include "../render_public.h"
-#include "../dialogs.h"
+#include "../dialogs/dialog_public.h"
 #include "../iconinfo.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xcomposite.h>
@@ -459,8 +460,8 @@ void itn_canvas_destroy(Canvas *canvas) {
         } else {
             // Try regular dialogs (rename/delete/execute)
             close_dialog_by_canvas(canvas);
-            // Try progress dialogs
-            close_progress_dialog_by_canvas(canvas);
+            // Try progress monitors
+            wb_progress_monitor_close_by_canvas(canvas);
         }
     }
 

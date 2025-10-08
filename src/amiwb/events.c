@@ -6,7 +6,7 @@
 // #include "compositor.h"  // Now using itn modules
 #include "intuition/itn_public.h"  // Public intuition API
 #include "workbench/wb_public.h"
-#include "dialogs.h"
+#include "dialogs/dialog_public.h"
 #include "iconinfo.h"  // For iconinfo_check_size_calculations
 #include "render.h"  // For redraw_canvas
 #include "config.h"
@@ -504,10 +504,10 @@ void handle_events(void) {
             diskdrives_poll();
         }
 
-        // CRITICAL FIX: Check progress dialogs on EVERY iteration, not just timeout
+        // CRITICAL FIX: Check progress monitors on EVERY iteration, not just timeout
         // These functions use non-blocking I/O and return immediately if no data
-        // Without this, progress dialogs never appear because select() rarely times out
-        workbench_check_progress_dialogs();
+        // Without this, progress monitors never appear because select() rarely times out
+        workbench_check_progress_monitors();
         iconinfo_check_size_calculations();
         intuition_check_arrow_scroll_repeat();
     }  // End of while (running)

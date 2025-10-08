@@ -1,7 +1,7 @@
 // File: main.c
 #include "intuition/itn_internal.h"
 #include "menus/menu_public.h"
-#include "dialogs.h"
+#include "dialogs/dialog_public.h"
 #include "iconinfo.h"
 #include "workbench/wb_public.h"
 #include "events.h"

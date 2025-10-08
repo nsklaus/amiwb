@@ -65,8 +65,8 @@ typedef void (*size_callback_t)(off_t size, void *userdata);
 pid_t calculate_directory_size(const char *path, int *pipe_fd); // Start size calculation, returns child PID and pipe FD
 off_t read_directory_size_result(int pipe_fd);                 // Read result from pipe when ready
 
-// Progress dialog monitoring (called from event loop)
-void workbench_check_progress_dialogs(void);
+// Progress monitor polling (called from event loop)
+void workbench_check_progress_monitors(void);
 
 // Cache invalidation for performance optimization
 void invalidate_pointer_cache(void);

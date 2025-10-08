@@ -8,7 +8,7 @@
 #include "amiwbrc.h"  // For config access
 #include "menus/menu_public.h"
 #include "menus/menu_internal.h"  // For menu_addon_render_all
-#include "dialogs.h"
+#include "dialogs/dialog_public.h"
 #include "iconinfo.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
@@ -846,9 +846,9 @@ void redraw_canvas(Canvas *canvas) {
     // ===========
     if (canvas->type == DIALOG) {
         
-        // Check if it's a progress dialog first
-        if (is_progress_dialog(canvas)) {
-            render_progress_dialog_content(canvas);
+        // Check if it's a progress monitor first
+        if (wb_progress_monitor_is_canvas(canvas)) {
+            wb_progress_monitor_render(canvas);
         } else if (is_iconinfo_canvas(canvas)) {
             // Check if it's an icon info dialog
             render_iconinfo_content(canvas);

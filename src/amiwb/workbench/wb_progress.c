@@ -8,7 +8,6 @@
 #include "../config.h"
 #include "../render_public.h"
 #include "../intuition/itn_internal.h"
-#include "../dialogs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -78,7 +77,7 @@ typedef struct {
     int files_processed;
     off_t total_bytes;
     off_t bytes_copied;
-    ProgressDialog *dialog;
+    ProgressMonitor *dialog;
     bool abort;
     int pipe_fd;
     time_t last_update_time;  // For time-based update throttling
@@ -433,27 +432,21 @@ int wb_progress_perform_operation_ex(
         }
     }
 
-    ProgressDialog *dialog = calloc(1, sizeof(ProgressDialog));
+    // Extract basename for progress monitor
+    char temp_path[PATH_SIZE];
+    strncpy(temp_path, src_path, PATH_SIZE - 1);
+    temp_path[PATH_SIZE - 1] = '\0';
+    const char *filename = basename(temp_path);
+
+    // Create background progress monitor (no UI initially)
+    ProgressMonitor *dialog = wb_progress_monitor_create_background(
+        prog_op, filename, pipefd[0], pid);
     if (!dialog) {
         close(pipefd[0]);
         int status;
         waitpid(pid, &status, 0);
         return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     }
-
-    dialog->operation = prog_op;
-    dialog->pipe_fd = pipefd[0];
-    dialog->child_pid = pid;
-    dialog->start_time = time(NULL);
-    dialog->canvas = NULL;
-    dialog->percent = -1.0f;
-    // Extract basename without memory leak
-    char temp_path[PATH_SIZE];
-    strncpy(temp_path, src_path, PATH_SIZE - 1);
-    temp_path[PATH_SIZE - 1] = '\0';
-    strncpy(dialog->current_file, basename(temp_path), PATH_SIZE - 1);
-
-    add_progress_dialog_to_list(dialog);
 
     return 0;
 }
@@ -704,7 +697,7 @@ static int copy_directory_recursive_with_progress(const char *src_dir, const cha
                     } else if (progress->dialog) {
                         float percent = (progress->total_bytes > 0) ?
                             ((float)progress->bytes_copied / progress->total_bytes * 100.0f) : 0.0f;
-                        update_progress_dialog(progress->dialog, entry->d_name, percent);
+                        wb_progress_monitor_update(progress->dialog, entry->d_name, percent);
                     }
                 }
             }
@@ -735,13 +728,13 @@ static int copy_directory_recursive_with_progress(const char *src_dir, const cha
 // Progress Dialog Polling (called from event loop)
 // ============================================================================
 
-void workbench_check_progress_dialogs(void) {
-    ProgressDialog *dialog = get_all_progress_dialogs();
+void workbench_check_progress_monitors(void) {
+    ProgressMonitor *dialog = wb_progress_monitor_get_all();
     time_t now = time(NULL);
     
     
     while (dialog) {
-        ProgressDialog *next = dialog->next;  // Save next before potential deletion
+        ProgressMonitor *next = dialog->next;  // Save next before potential deletion
         
         if (dialog->pipe_fd > 0) {
             // Check for messages from child using header-based protocol
@@ -757,10 +750,10 @@ void workbench_check_progress_dialogs(void) {
                                       dialog->operation == PROGRESS_DELETE ? "Deleting Files..." :
                                       dialog->operation == PROGRESS_EXTRACT ? "Extracting Archive..." :
                                       "Processing...";
-                    dialog->canvas = create_progress_window(dialog->operation, title);
+                    dialog->canvas = wb_progress_monitor_create_window(dialog, title);
                     if (dialog->canvas) {
                         float percent = (dialog->percent >= 0) ? dialog->percent : 0.0f;
-                        update_progress_dialog(dialog, dialog->current_file, percent);
+                        wb_progress_monitor_update(dialog, dialog->current_file, percent);
                     }
                 }
                 dialog = next;
@@ -804,13 +797,13 @@ void workbench_check_progress_dialogs(void) {
                                       dialog->operation == PROGRESS_DELETE ? "Deleting Files..." :
                                       dialog->operation == PROGRESS_EXTRACT ? "Extracting Archive..." :
                                       "Processing...";
-                    dialog->canvas = create_progress_window(dialog->operation, title);
+                    dialog->canvas = wb_progress_monitor_create_window(dialog, title);
                     if (dialog->canvas) {
-                        update_progress_dialog(dialog, dialog->current_file, percent);
+                        wb_progress_monitor_update(dialog, dialog->current_file, percent);
                     }
                 } else if (dialog->canvas) {
                     // Update existing dialog
-                    update_progress_dialog(dialog, dialog->current_file, percent);
+                    wb_progress_monitor_update(dialog, dialog->current_file, percent);
                 }
 
                 dialog->percent = percent;
@@ -841,9 +834,9 @@ void workbench_check_progress_dialogs(void) {
                                           dialog->operation == PROGRESS_DELETE ? "Deleting Files..." :
                                           dialog->operation == PROGRESS_EXTRACT ? "Extracting Archive..." :
                                           "Processing...";
-                        dialog->canvas = create_progress_window(dialog->operation, title);
+                        dialog->canvas = wb_progress_monitor_create_window(dialog, title);
                         if (dialog->canvas) {
-                            update_progress_dialog(dialog, dialog->current_file, 0.0f);
+                            wb_progress_monitor_update(dialog, dialog->current_file, 0.0f);
                         } else {
                             log_error("[ERROR] Failed to create progress window");
                         }
@@ -866,15 +859,15 @@ void workbench_check_progress_dialogs(void) {
                                               dialog->operation == PROGRESS_DELETE ? "Deleting Files..." :
                                               dialog->operation == PROGRESS_EXTRACT ? "Extracting Archive..." :
                                               "Processing...";
-                            dialog->canvas = create_progress_window(dialog->operation, title);
+                            dialog->canvas = wb_progress_monitor_create_window(dialog, title);
                             if (dialog->canvas) {
-                                update_progress_dialog(dialog, msg.current_file, percent);
+                                wb_progress_monitor_update(dialog, msg.current_file, percent);
                             }
                         } else {
                         }
                     } else if (dialog->canvas) {
                         // Update existing dialog
-                        update_progress_dialog(dialog, msg.current_file, percent);
+                        wb_progress_monitor_update(dialog, msg.current_file, percent);
                     }
 
                     dialog->percent = percent;
@@ -990,13 +983,7 @@ void workbench_check_progress_dialogs(void) {
                     
                     close(dialog->pipe_fd);
                     dialog->pipe_fd = -1;
-                    if (dialog->canvas) {
-                        close_progress_dialog(dialog);
-                    } else {
-                        // No window was created, just free the structure
-                        remove_progress_dialog_from_list(dialog);
-                        free(dialog);
-                    }
+                    wb_progress_monitor_close(dialog);
                     dialog = next;
                     continue;
                 }
@@ -1021,14 +1008,14 @@ void workbench_check_progress_dialogs(void) {
                     title = "Extracting Archive...";
                 }
                 
-                dialog->canvas = create_progress_window(dialog->operation, title);
+                dialog->canvas = wb_progress_monitor_create_window(dialog, title);
                 if (dialog->canvas) {
                     // Update with current state
                     float percent = 0.0f;
                     if (dialog->percent > 0) {
                         percent = dialog->percent;
                     }
-                    update_progress_dialog(dialog, dialog->current_file, percent);
+                    wb_progress_monitor_update(dialog, dialog->current_file, percent);
                 } else {
                     log_error("[ERROR] Failed to create progress window from timer check");
                 }
@@ -1045,13 +1032,7 @@ void workbench_check_progress_dialogs(void) {
                     close(dialog->pipe_fd);
                     dialog->pipe_fd = -1;
                 }
-                if (dialog->canvas) {
-                    close_progress_dialog(dialog);
-                } else {
-                    // No window was created, just free the structure
-                    remove_progress_dialog_from_list(dialog);
-                    free(dialog);
-                }
+                wb_progress_monitor_close(dialog);
                 dialog = next;
                 continue;
             }

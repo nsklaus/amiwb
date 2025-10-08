@@ -4,7 +4,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "wb_internal.h"
 #include "../config.h"
-#include "../dialogs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -232,25 +231,16 @@ int extract_file_at_path(const char *archive_path, Canvas *canvas) {
     // Parent process
     close(pipefd[1]);
     
-    // Create progress dialog
-    ProgressDialog *dialog = calloc(1, sizeof(ProgressDialog));
-    if (!dialog) {
-        log_error("[ERROR] calloc failed for ProgressDialog");
+    // Create background progress monitor (no UI initially, monitored via polling)
+    ProgressMonitor *monitor = wb_progress_monitor_create_background(
+        PROGRESS_EXTRACT, archive_name, pipefd[0], pid);
+    if (!monitor) {
+        log_error("[ERROR] Failed to create background progress monitor");
         close(pipefd[0]);
         int status;
         waitpid(pid, &status, 0);
         return -1;
     }
-    
-    dialog->operation = PROGRESS_EXTRACT;
-    dialog->pipe_fd = pipefd[0];
-    dialog->child_pid = pid;
-    dialog->start_time = time(NULL);
-    dialog->canvas = NULL;
-    dialog->percent = -1.0f;
-    strncpy(dialog->current_file, archive_name, PATH_SIZE - 1);
-    
-    add_progress_dialog_to_list(dialog);
     
     return 0;
 }

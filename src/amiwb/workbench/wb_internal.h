@@ -1,10 +1,14 @@
 #ifndef WB_INTERNAL_H
 #define WB_INTERNAL_H
 
+#include "../config.h"
 #include "../icons.h"
 #include "../intuition/itn_public.h"
+#include "../../toolkit/progressbar/progressbar.h"
 #include <X11/Xlib.h>
 #include <stdbool.h>
+#include <time.h>
+#include <sys/types.h>
 
 // Internal workbench module communication API
 // This header is used by workbench modules to call each other
@@ -20,6 +24,71 @@ typedef enum {
     FILE_OP_MOVE,
     FILE_OP_DELETE
 } FileOperation;
+
+// Progress operation types (for progress monitoring UI)
+typedef enum {
+    PROGRESS_COPY,
+    PROGRESS_MOVE,
+    PROGRESS_DELETE,
+    PROGRESS_EXTRACT
+} ProgressOperation;
+
+// Forward declaration for progress monitor
+typedef struct ProgressMonitor ProgressMonitor;
+
+// Progress monitor structure (full definition - internal to workbench module)
+struct ProgressMonitor {
+    Canvas *canvas;                  // Optional UI window (NULL for background)
+    ProgressBar *progress_bar;       // Toolkit progress bar widget
+    ProgressOperation operation;     // Type of operation being monitored
+    char current_file[PATH_SIZE];    // Current file being processed
+    float percent;                   // Progress percentage (0-100, -1 = not started)
+    int files_done;                  // Files completed
+    int files_total;                 // Total files (-1 = unknown)
+    off_t bytes_done;                // Bytes processed
+    off_t bytes_total;               // Total bytes (-1 = unknown)
+    int pipe_fd;                     // IPC pipe from child process
+    pid_t child_pid;                 // Child process PID
+    time_t start_time;               // When operation started (for threshold)
+    bool abort_requested;            // User requested abort
+    void (*on_abort)(void);          // Abort callback
+    struct ProgressMonitor *next;    // Linked list pointer
+};
+
+// ============================================================================
+// wb_progress_monitor.c - Progress Monitoring
+// ============================================================================
+
+// Create progress monitor with UI (shows window immediately)
+ProgressMonitor* wb_progress_monitor_create(ProgressOperation op, const char *title);
+
+// Create background progress monitor (no UI initially, for child process tracking)
+ProgressMonitor* wb_progress_monitor_create_background(ProgressOperation op, const char *filename,
+                                                       int pipe_fd, pid_t child_pid);
+
+// Update progress monitor state
+void wb_progress_monitor_update(ProgressMonitor *monitor, const char *file, float percent);
+
+// Close progress monitor
+void wb_progress_monitor_close(ProgressMonitor *monitor);
+
+// Close progress monitor by canvas (called from intuition when window is closed)
+void wb_progress_monitor_close_by_canvas(Canvas *canvas);
+
+// Render progress monitor content
+void wb_progress_monitor_render(Canvas *canvas);
+
+// Get all monitors (for polling in event loop)
+ProgressMonitor* wb_progress_monitor_get_all(void);
+
+// Check if canvas is a progress monitor window
+bool wb_progress_monitor_is_canvas(Canvas *canvas);
+
+// Get monitor for canvas
+ProgressMonitor* wb_progress_monitor_get_for_canvas(Canvas *canvas);
+
+// Create progress window for existing monitor after threshold (internal use by wb_progress.c)
+Canvas* wb_progress_monitor_create_window(ProgressMonitor *monitor, const char *title);
 
 // ============================================================================
 // wb_deficons.c - Default Icons System
