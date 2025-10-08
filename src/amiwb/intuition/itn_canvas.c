@@ -19,32 +19,7 @@
 // Module-private state
 static Canvas *g_canvas_list = NULL;  // Linked list of all canvases
 
-// External references (temporary during migration)
-// Canvas array now managed by itn_manager.c
-// active_window removed - use itn_focus_get_active() / itn_focus_set_active()
-extern bool fullscreen_active;
-extern bool g_restarting;
-extern bool g_shutting_down;
-extern RenderContext *render_context;
-
-// External functions from intuition.c (temporary during migration)
-extern RenderContext *get_render_context(void);
-extern Display *get_display(void);
-// get_desktop_canvas is now itn_canvas_get_desktop (defined below)
-extern bool get_window_attributes_safely(Window w, XWindowAttributes *a);
-extern void clear_canvas_icons(Canvas *canvas);
-extern void remove_icon_for_canvas(Canvas *canvas);
-extern void init_scroll(Canvas *canvas);
-extern void compute_max_scroll(Canvas *canvas);
-extern void calculate_content_area_inside_frame(Canvas *c, int *w, int *h);
-extern void set_active_window(Canvas *canvas);
-// find_canvas is now itn_canvas_find_by_window
-extern bool get_global_show_hidden_state(void);
-
-// External compositing functions
-extern bool itn_composite_init_overlay(void);
-extern void itn_composite_cleanup_overlay(void);
-extern void itn_composite_update_canvas_pixmap(Canvas *canvas);
+// Note: All external functions now properly declared in headers (itn_internal.h, render_public.h, wb_public.h)
 
 #define INITIAL_CANVAS_CAPACITY 16
 
@@ -311,7 +286,7 @@ void select_next_window(Canvas *closing_canvas) {  // Exported for intuition.c
 
             Canvas *next_canvas = itn_canvas_find_by_window(children[i]);
             if (next_canvas && next_canvas->type == WINDOW) {
-                set_active_window(next_canvas);
+                itn_focus_set_active(next_canvas);
                 break;
             }
         }
@@ -430,7 +405,7 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
         XMapRaised(ctx->dpy, canvas->win);
         if (type == WINDOW) {
             // Newly created Workbench windows should become active immediately
-            set_active_window(canvas);
+            itn_focus_set_active(canvas);
         }
         XSync(ctx->dpy, False);
     } else {
@@ -470,7 +445,7 @@ void itn_canvas_destroy(Canvas *canvas) {
     // If destroying a fullscreen window, restore menubar
     if (canvas->fullscreen) {
         canvas->fullscreen = false;
-        fullscreen_active = False;
+        itn_core_set_fullscreen_active(false);
         menubar_apply_fullscreen(false);
     }
 
@@ -508,7 +483,7 @@ void itn_canvas_destroy(Canvas *canvas) {
         }
     }
 
-    Display *dpy = get_display();
+    Display *dpy = itn_core_get_display();
 
     // Cleanup compositing resources first
     itn_canvas_cleanup_compositing(canvas);
@@ -517,7 +492,7 @@ void itn_canvas_destroy(Canvas *canvas) {
     if (canvas->client_win != None) {
         XGrabServer(dpy);
 
-        if (g_restarting) {
+        if (itn_core_is_restarting()) {
             // Restarting - preserve client by unparenting back to root
             XReparentWindow(dpy, canvas->client_win, itn_core_get_root(),
                           canvas->x + BORDER_WIDTH_LEFT,
@@ -531,7 +506,7 @@ void itn_canvas_destroy(Canvas *canvas) {
         XUngrabServer(dpy);
         XSync(dpy, False);
 
-        if (g_restarting && canvas->client_win != None) {
+        if (itn_core_is_restarting() && canvas->client_win != None) {
             // Map client on root so it's visible after restart
             XMapWindow(dpy, canvas->client_win);
             XSync(dpy, False);
@@ -564,7 +539,7 @@ void itn_canvas_destroy(Canvas *canvas) {
     }
 
     // Skip other X11 operations if shutting down or display is invalid
-    if (!g_shutting_down && dpy) {
+    if (!itn_core_is_shutting_down() && dpy) {
         // Free pre-allocated Xft colors
         if (canvas->xft_colors_allocated) {
             XftColorFree(dpy, canvas->visual, canvas->colormap, &canvas->xft_black);

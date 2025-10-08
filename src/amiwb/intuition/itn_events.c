@@ -4,6 +4,8 @@
 #include "../config.h"
 #include "itn_internal.h"
 #include "../render_public.h"
+#include "../workbench/wb_public.h"
+#include "../menus/menu_public.h"
 #include "itn_scrollbar.h"
 #include "itn_drag.h"
 #include "itn_buttons.h"
@@ -21,40 +23,6 @@ int randr_event_base = 0;
 // Module-private state
 static bool g_last_press_consumed = false;
 
-// Note: Global state now accessed via getter functions from itn_internal.h:
-// - itn_core_get_display() instead of extern Display *display
-// - itn_core_get_root() instead of extern Window root
-// - itn_core_get_screen() instead of extern int screen
-// - itn_focus_get_active() instead of extern Canvas *active_window
-// - itn_core_is_fullscreen_active() instead of extern bool fullscreen_active
-
-// External functions from intuition.c (temporary during migration)
-// find_canvas is now itn_canvas_find_by_window
-extern Canvas *itn_canvas_find_by_client(Window client);
-extern void set_active_window(Canvas *canvas);
-// get_desktop_canvas is now itn_canvas_get_desktop
-extern void request_client_close(Canvas *canvas);
-extern void iconify_canvas(Canvas *canvas);
-extern bool get_show_menus_state(void);
-extern void toggle_menubar_state(void);
-extern void intuition_enter_fullscreen(Canvas *canvas);
-extern void intuition_exit_fullscreen(Canvas *canvas);
-extern Canvas *frame_client_window(Window client, XWindowAttributes *attrs);
-extern bool get_window_attrs_with_defaults(Window win, XWindowAttributes *attrs);
-extern bool should_skip_framing(Window win, XWindowAttributes *attrs);
-extern bool is_viewable_client(Window win);
-extern bool is_toplevel_under_root(Window win);
-extern unsigned long unmanaged_safe_mask(XConfigureRequestEvent *event, XWindowAttributes *attrs, bool attrs_valid);
-extern void calculate_frame_size_from_client_size(int client_w, int client_h, int *frame_w, int *frame_h);
-extern bool is_fullscreen_active(Window win);
-extern void remove_canvas_from_array(Canvas *canvas);
-extern void workbench_open_directory(const char *path);
-extern void itn_canvas_destroy(Canvas *canvas);
-extern void create_iconified_icon(Canvas *canvas);
-
-extern int clamp_value_between(int value, int min, int max);
-extern bool resize_is_active(void);
-
 // Mouse wheel scrolling constant (same as scrollbar module)
 #define SCROLL_STEP 20
 
@@ -65,8 +33,6 @@ extern bool resize_is_active(void);
 #define HIT_ICONIFY   3
 #define HIT_MAXIMIZE  4
 #define HIT_TITLEBAR  5
-
-extern int hit_test(Canvas *canvas, int x, int y);
 
 // ============================================================================
 // Damage Event Handling (Compositor Integration)
@@ -278,7 +244,7 @@ void intuition_handle_button_press(XButtonEvent *event) {
     if (canvas->type != WINDOW && canvas->type != DIALOG)
         return;
 
-    set_active_window(canvas);
+    itn_focus_set_active(canvas);
 
     // If this click was on the client window itself (grabbed via XGrabButton),
     // replay it to the client so they receive the click after activation
@@ -404,7 +370,7 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
             Window parent_win = canvas->transient_for;
 
             // Remove from canvas list
-            remove_canvas_from_array(canvas);
+            itn_manager_remove(canvas);
 
             // Free our frame window if it exists
             if (canvas->win != None && is_window_valid(display, canvas->win)) {
@@ -421,7 +387,7 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
             if (parent_win != None) {
                 Canvas *parent_canvas = itn_canvas_find_by_client(parent_win);
                 if (parent_canvas) {
-                    set_active_window(parent_canvas);
+                    itn_focus_set_active(parent_canvas);
                     // Safe focus with validation and BadMatch error handling
                     safe_set_input_focus(display, parent_win, RevertToParent, CurrentTime);
                 }
@@ -479,7 +445,7 @@ static void frame_and_activate(Window client, XWindowAttributes *attrs, bool map
     }
 
     if (map_client) XMapWindow(display, client);
-    set_active_window(frame);
+    itn_focus_set_active(frame);
     DAMAGE_CANVAS(frame);
     SCHEDULE_FRAME();
     XSync(display, False);

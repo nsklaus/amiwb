@@ -6,6 +6,7 @@
 #include "../config.h"
 #include "../render.h"
 #include "../render_public.h"
+#include "../intuition/itn_internal.h"
 #include "../events.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,12 +16,6 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <X11/Xlib.h>
-
-// External dependencies
-extern Canvas *find_window_by_path(const char *path);  // From intuition
-extern Canvas *create_canvas(const char *path, int x, int y, int w, int h, CanvasType type);  // From intuition
-extern void compute_max_scroll(Canvas *canvas);
-extern void find_free_slot(Canvas *canvas, int *x, int *y);
 
 // Module initialization flag
 static bool wb_initialized = false;

@@ -77,6 +77,7 @@ void handle_menu_selection(Menu *menu, int item_index);         // Route selecti
 void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Window app_window);
 void update_app_menu_states(Window app_window);                 // Update checkmarks/enabled from property
 void send_menu_selection_to_app(Window app_window, int menu_index, int item_index);
+void cache_app_menus(const char *app_type, char **menu_items, Menu **submenus, int menu_count);
 
 // ============================================================================
 // Rendering Helpers

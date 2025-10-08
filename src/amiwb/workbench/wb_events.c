@@ -6,10 +6,9 @@
 #include "../config.h"
 #include "../render.h"
 #include "../render_public.h"
+#include "../intuition/itn_public.h"
 #include <X11/Xlib.h>
 
-// External dependencies
-extern void safe_set_input_focus(Display *dpy, Window win, int revert, Time time);
 
 // ============================================================================
 // Selection Helpers

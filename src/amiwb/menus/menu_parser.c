@@ -8,8 +8,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Forward declaration for cache function (defined in menu_substitution.c)
-extern void cache_app_menus(const char *app_type, char **menu_items, Menu **submenus, int menu_count);
 
 // ============================================================================
 // Safe Memory Allocation Helpers

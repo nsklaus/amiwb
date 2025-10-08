@@ -33,6 +33,13 @@ int itn_core_get_damage_error_base(void);
 bool itn_core_init_compositor(void);
 void itn_core_shutdown_compositor(void);
 bool itn_core_is_compositor_active(void);
+bool get_window_attrs_with_defaults(Window win, XWindowAttributes *attrs);
+unsigned long unmanaged_safe_mask(XConfigureRequestEvent *event, XWindowAttributes *attrs, bool attrs_valid);
+bool is_fullscreen_active(Window win);
+bool itn_core_is_shutting_down(void);
+bool itn_core_is_restarting(void);
+void init_scroll(Canvas *canvas);
+Canvas *find_window_by_path(const char *path);
 
 // --- itn_canvas.c ---
 Canvas *itn_canvas_create(Window client, XWindowAttributes *attrs);
@@ -43,6 +50,9 @@ Canvas *itn_canvas_get_desktop(void);
 void itn_canvas_manage_list(Canvas *canvas, bool add);
 void itn_canvas_setup_compositing(Canvas *canvas);
 void itn_canvas_cleanup_compositing(Canvas *canvas);
+void request_client_close(Canvas *canvas);
+void iconify_canvas(Canvas *canvas);
+Canvas *create_canvas(const char *path, int x, int y, int w, int h, CanvasType type);
 
 // --- itn_manager.c ---
 Canvas *itn_manager_get_canvas(int index);
@@ -63,6 +73,7 @@ void itn_geometry_raise(Canvas *canvas);
 void itn_geometry_lower(Canvas *canvas);
 void itn_geometry_restack(void);
 void itn_geometry_apply_resize(Canvas *c, int nw, int nh);
+void compute_max_scroll(Canvas *c);
 
 // --- itn_render.c ---
 void itn_render_accumulate_damage(int x, int y, int width, int height);

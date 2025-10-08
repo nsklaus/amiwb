@@ -6,6 +6,7 @@
 #include "../config.h"
 #include "../render.h"
 #include "../events.h"
+#include "../intuition/itn_public.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,10 +14,6 @@
 #include <time.h>
 #include <X11/Xlib.h>
 
-// External dependencies
-extern void suppress_desktop_deactivate_for_ms(int ms);
-extern void clear_press_target_if_matches(Window win);
-extern void refresh_canvas(Canvas *canvas);
 
 // ============================================================================
 // Icon Movement

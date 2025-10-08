@@ -2,6 +2,7 @@
 #include "icons.h"  // For FileIcon type
 #include "config.h" // For PATH_SIZE, NAME_SIZE constants
 #include "workbench/wb_public.h"
+#include "workbench/wb_internal.h"
 #include "intuition/itn_public.h" // For itn_canvas_find_by_window to exclude our own windows
 #include <stdio.h>
 #include <stdlib.h>
@@ -632,8 +633,6 @@ void xdnd_request_selection(Display *dpy, Window requestor, Atom target, Time ti
     XConvertSelection(dpy, xdnd_ctx.XdndSelection, target, prop, requestor, timestamp);
 }
 
-// Global reference to current dragged file (set by workbench.c)
-extern FileIcon *dragged_icon;
 
 // Handle selection request (when we're the source)
 void xdnd_handle_selection_request(Display *dpy, XSelectionRequestEvent *event) {
@@ -648,8 +647,9 @@ void xdnd_handle_selection_request(Display *dpy, XSelectionRequestEvent *event) 
     // Check if this is for our XDND selection
     if (event->selection == xdnd_ctx.XdndSelection) {
         // Get file path from current drag operation
-        if (dragged_icon && dragged_icon->path) {
-            char *uri_list = xdnd_create_uri_list((const char**)&dragged_icon->path, 1);
+        FileIcon *icon = wb_drag_get_dragged_icon();
+        if (icon && icon->path) {
+            char *uri_list = xdnd_create_uri_list((const char**)&icon->path, 1);
 
             if (uri_list) {
                 if (event->target == xdnd_ctx.text_uri_list) {
@@ -661,7 +661,7 @@ void xdnd_handle_selection_request(Display *dpy, XSelectionRequestEvent *event) 
                 } else if (event->target == xdnd_ctx.text_plain) {
                     XChangeProperty(dpy, event->requestor, event->property,
                                    xdnd_ctx.text_plain, 8, PropModeReplace,
-                                   (unsigned char*)dragged_icon->path, strlen(dragged_icon->path));
+                                   (unsigned char*)icon->path, strlen(icon->path));
                     response.property = event->property;
                     // Plain path sent
                 }

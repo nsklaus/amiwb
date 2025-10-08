@@ -13,8 +13,6 @@
 #include <sys/stat.h>
 #include <X11/Xlib.h>
 
-// External dependencies
-extern void refresh_canvas(Canvas *canvas);
 
 // Helper to check if string ends with suffix
 static bool ends_with(const char *s, const char *suffix) {

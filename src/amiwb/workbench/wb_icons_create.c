@@ -16,13 +16,6 @@ static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy, int icon_widt
 static const char* find_icon_with_user_override(const char *icon_name, char *buffer, size_t buffer_size);
 static void create_icon_with_type(const char *path, Canvas *canvas, int x, int y, int type);
 
-// External references
-extern FileIcon *dragged_icon;  // From wb_drag.c
-extern void destroy_drag_window(void);  // From wb_drag.c
-extern Canvas *drag_source_canvas;  // From wb_drag.c
-extern Window saved_source_window;  // From wb_drag.c
-extern bool drag_active;  // From wb_drag.c
-
 // ============================================================================
 // Icon Creation
 // ============================================================================

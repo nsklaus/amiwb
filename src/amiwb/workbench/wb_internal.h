@@ -35,6 +35,10 @@ const char *wb_deficons_get_for_file(const char *filename, bool is_dir);
 // wb_icons_array.c - Icon Array Management
 // ============================================================================
 
+// Legacy function names (TODO: migrate to wb_icons_array_* naming)
+FileIcon **get_icon_array(void);  // Use wb_icons_array_get()
+int get_icon_count(void);         // Use wb_icons_array_count()
+
 // Get pointer to global icon array
 FileIcon **wb_icons_array_get(void);
 
@@ -52,6 +56,9 @@ FileIcon *wb_icons_array_get_selected_from_canvas(Canvas *canvas);
 
 // Get most recently added icon
 FileIcon *wb_icons_array_get_last_added(void);
+
+// Get icons for specific canvas
+FileIcon **wb_icons_for_canvas(Canvas *canvas, int *out_count);
 
 // ============================================================================
 // wb_icons_create.c - Icon Creation and Destruction
@@ -83,6 +90,10 @@ void wb_icons_remove_for_canvas(Canvas *canvas);
 // Add prime desktop icons (RAM:, DH0:, etc)
 void wb_icons_add_prime_desktop(Canvas *desktop);
 
+// Legacy function names (TODO: migrate to wb_icons_* naming)
+FileIcon *create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x, int y,
+                                     const char *path, const char *label, int file_type);
+
 // ============================================================================
 // wb_icons_ops.c - Icon Operations
 // ============================================================================
@@ -98,10 +109,15 @@ void wb_icons_set_meta(FileIcon *icon, int x, int y);
 
 // Restore iconified window from icon
 void wb_icons_restore_iconified(FileIcon *icon);
+void restore_iconified(FileIcon *icon);  // Legacy alias
 
 // ============================================================================
 // wb_fileops.c - File Operations
 // ============================================================================
+
+// Count files for progress
+void count_files_in_directory(const char *path, int *count);
+void count_files_and_bytes(const char *path, int *file_count, off_t *total_bytes);
 
 // Copy file (basic)
 int wb_fileops_copy(const char *src, const char *dst);
@@ -136,6 +152,11 @@ int wb_progress_file_operation(FileOperation op, const char *src_path,
 int wb_progress_file_operation_ex(FileOperation op, const char *src_path,
                                    const char *dst_path, const char *custom_title,
                                    void *icon_metadata);
+
+// Legacy function name (TODO: rename implementation)
+int perform_file_operation_with_progress_ex(FileOperation op, const char *src_path,
+                                             const char *dst_path, const char *custom_title,
+                                             void *icon_metadata);
 
 // ============================================================================
 // wb_drag.c - Drag and Drop
@@ -174,9 +195,17 @@ void wb_drag_cleanup_window(void);
 // Cleanup drag state (called on errors or external drops)
 void wb_drag_cleanup_state(void);
 
+// Refresh canvas display
+void refresh_canvas(Canvas *canvas);
+
 // ============================================================================
 // wb_layout.c - View Modes and Layout
 // ============================================================================
+
+// Legacy function names (TODO: migrate to wb_layout_* naming)
+void compute_content_bounds(Canvas *canvas);
+void apply_view_layout(Canvas *canvas);
+void find_free_slot(Canvas *canvas, int *out_x, int *out_y);
 
 // Apply current view mode to canvas
 void wb_layout_apply_view(Canvas *canvas);

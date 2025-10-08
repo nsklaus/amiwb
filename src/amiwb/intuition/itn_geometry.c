@@ -9,10 +9,9 @@
 #include <math.h>       // For fmax, fmin, roundf
 #include "../render.h"  // For apply_resize_and_redraw (temporary)
 
-// External references (temporary during migration)
+// Migration notes:
 // get_desktop_canvas is now itn_canvas_get_desktop
 // find_canvas is now itn_canvas_find_by_window
-extern void compute_max_scroll(Canvas *c);  // From intuition.c
 // get_right_border_width is inline in intuition.h
 
 void itn_geometry_move(Canvas *canvas, int x, int y) {

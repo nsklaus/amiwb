@@ -18,9 +18,6 @@
 #include <sys/xattr.h>
 #include <libgen.h>
 
-// Forward declaration for cross-module dependency
-int perform_file_operation_with_progress_ex(int op, const char *src, const char *dst,
-                                            const char *custom_title, void *icon_metadata);
 
 // ============================================================================
 // Helper Functions

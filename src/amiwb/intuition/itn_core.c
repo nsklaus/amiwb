@@ -4,6 +4,7 @@
 #include "../config.h"
 #include "itn_internal.h"
 #include "../render_public.h"
+#include "../render.h"
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>  // For XClassHint, XGetWMProtocols
 #include <X11/Xatom.h>
@@ -33,17 +34,12 @@ static int g_damage_error_base = 0;
 bool g_shutting_down = false;
 bool g_restarting = false;
 
-// Global variables (were in intuition.c, now defined here)
-Display *display = NULL;
-int screen = 0;
-Window root = 0;
+// Global variables
 static int width = 0, height = 0, depth = 0;  // Encapsulated - use getters
 Cursor root_cursor = 0;
 RenderContext *render_context = NULL;
-// Canvas array moved to itn_manager.c - use itn_manager_* functions
 
-// Additional globals for event handling (legacy - to be migrated)
-// active_window removed - use itn_focus_get_active() / itn_focus_set_active()
+// Event handling state
 Canvas *dragging_canvas = NULL;
 Canvas *scrolling_canvas = NULL;
 Canvas *arrow_scroll_canvas = NULL;
@@ -58,15 +54,16 @@ int initial_scroll = 0, scroll_start_pos = 0;
 bool fullscreen_active = false;
 
 Display *itn_core_get_display(void) {
-    return g_display ? g_display : display;  // Use global during migration
+    return g_display;
 }
 
 int itn_core_get_screen(void) {
-    return screen;
+    return g_display ? DefaultScreen(g_display) : 0;
 }
 
 Window itn_core_get_root(void) {
-    return root;
+    if (!g_display) return 0;
+    return RootWindow(g_display, DefaultScreen(g_display));
 }
 
 int itn_core_get_screen_width(void) {
@@ -94,6 +91,14 @@ void itn_core_set_fullscreen_active(bool active) {
     fullscreen_active = active;
 }
 
+bool itn_core_is_shutting_down(void) {
+    return g_shutting_down;
+}
+
+bool itn_core_is_restarting(void) {
+    return g_restarting;
+}
+
 bool itn_composite_is_active(void) {
     return g_compositor_active;
 }
@@ -111,11 +116,11 @@ int itn_core_get_damage_error_base(void) {
 }
 
 bool itn_core_init_compositor(void) {
-    Display *dpy = g_display ? g_display : display;  // Use display during migration
-    if (!dpy) return false;
+    if (!g_display) return false;
 
-    int scr = screen;  // Use extern during migration
-    Window root_win = root;  // Use extern during migration
+    Display *dpy = g_display;
+    int scr = DefaultScreen(dpy);
+    Window root_win = RootWindow(dpy, scr);
 
     // Check for required extensions
     int event, error;
@@ -247,11 +252,10 @@ bool itn_core_init_compositor(void) {
 
 void itn_core_shutdown_compositor(void) {
     if (!g_compositor_active) return;
+    if (!g_display) return;
 
-    Display *dpy = g_display ? g_display : display;
-    if (!dpy) return;
-
-    Window root_win = root;  // Use extern during migration
+    Display *dpy = g_display;
+    Window root_win = RootWindow(dpy, DefaultScreen(dpy));
 
     // Cleanup frame scheduler
     itn_render_cleanup_frame_scheduler();
@@ -272,22 +276,18 @@ bool itn_core_is_compositor_active(void) {
 }
 
 // ============================================================================
-// Legacy Compatibility Functions (for main.c and other files)
+// Intuition Initialization and Cleanup
 // ============================================================================
 
 // Forward declarations
 bool init_display_and_root(void);  // Defined below
 bool init_render_context(void);    // Defined below
-extern int x_error_handler(Display *dpy, XErrorEvent *error);
-extern void frame_existing_client_windows(void);
-extern void render_load_wallpapers(void);
 
 Canvas *init_intuition(void) {
     if (!init_display_and_root() || !init_render_context()) return NULL;
 
     // Create desktop canvas with proper window
     // Use create_canvas which creates the actual X11 window
-    extern Canvas *create_canvas(const char *path, int x, int y, int width, int height, CanvasType type);
     Canvas *desktop = create_canvas(getenv("HOME"), 0, 20, width, height, DESKTOP);
     if (!desktop) return NULL;
 
@@ -295,10 +295,10 @@ Canvas *init_intuition(void) {
     XClassHint desktop_class;
     desktop_class.res_name = "workbench";
     desktop_class.res_class = "AmiWB";
-    XSetClassHint(display, desktop->win, &desktop_class);
+    XSetClassHint(g_display, desktop->win, &desktop_class);
 
     // Setup Imlib2 for image loading
-    imlib_context_set_display(display);
+    imlib_context_set_display(g_display);
     imlib_context_set_visual(desktop->visual);
     imlib_context_set_colormap(desktop->colormap);
     imlib_set_cache_size(0);
@@ -349,9 +349,9 @@ void cleanup_intuition(void) {
         render_context = NULL;
     }
     // Cleanup display
-    if (display) {
-        XCloseDisplay(display);
-        display = NULL;
+    if (g_display) {
+        XCloseDisplay(g_display);
+        g_display = NULL;
     }
 }
 
@@ -368,48 +368,48 @@ void begin_restart(void) {
 // ============================================================================
 
 bool init_display_and_root(void) {
-    display = XOpenDisplay(NULL);
-    if (!display) return false;
+    g_display = XOpenDisplay(NULL);
+    if (!g_display) return false;
 
     // Set error handler
     extern int x_error_handler(Display *dpy, XErrorEvent *error);
     XSetErrorHandler(x_error_handler);
-    XSync(display, False);
+    XSync(g_display, False);
 
     // Initialize display parameters
-    screen = DefaultScreen(display);
-    width = DisplayWidth(display, screen);
-    height = DisplayHeight(display, screen);
-    root = RootWindow(display, screen);
+    int scr = DefaultScreen(g_display);
+    width = DisplayWidth(g_display, scr);
+    height = DisplayHeight(g_display, scr);
+    Window root_win = RootWindow(g_display, scr);
     depth = 32;
 
     // Set root cursor
-    root_cursor = XCreateFontCursor(display, XC_left_ptr);
-    XDefineCursor(display, root, root_cursor);
+    root_cursor = XCreateFontCursor(g_display, XC_left_ptr);
+    XDefineCursor(g_display, root_win, root_cursor);
 
     // Setup RandR for resolution changes
     int randr_error_base;
-    if (XRRQueryExtension(display, &randr_event_base, &randr_error_base)) {
-        XRRSelectInput(display, root, RRScreenChangeNotifyMask);
+    if (XRRQueryExtension(g_display, &randr_event_base, &randr_error_base)) {
+        XRRSelectInput(g_display, root_win, RRScreenChangeNotifyMask);
     } else {
         log_error("[WARNING] XRANDR extension not available; resolution changes may not be handled.");
     }
 
     // Select root window events
-    XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask | PropertyChangeMask |
+    XSelectInput(g_display, root_win, SubstructureRedirectMask | SubstructureNotifyMask | PropertyChangeMask |
                  StructureNotifyMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | KeyPressMask);
 
     // Advertise EWMH support
-    Atom net_supported = XInternAtom(display, "_NET_SUPPORTED", False);
+    Atom net_supported = XInternAtom(g_display, "_NET_SUPPORTED", False);
     Atom supported[7];
-    supported[0] = XInternAtom(display, "_NET_WM_STATE", False);
-    supported[1] = XInternAtom(display, "_NET_WM_STATE_FULLSCREEN", False);
-    supported[2] = XInternAtom(display, "_NET_WM_ALLOWED_ACTIONS", False);
-    supported[3] = XInternAtom(display, "_NET_WM_ACTION_FULLSCREEN", False);
-    supported[4] = XInternAtom(display, "_NET_ACTIVE_WINDOW", False);
-    supported[5] = XInternAtom(display, "_NET_WM_NAME", False);
-    supported[6] = XInternAtom(display, "_NET_CLIENT_LIST", False);
-    XChangeProperty(display, root, net_supported, XA_ATOM, 32, PropModeReplace,
+    supported[0] = XInternAtom(g_display, "_NET_WM_STATE", False);
+    supported[1] = XInternAtom(g_display, "_NET_WM_STATE_FULLSCREEN", False);
+    supported[2] = XInternAtom(g_display, "_NET_WM_ALLOWED_ACTIONS", False);
+    supported[3] = XInternAtom(g_display, "_NET_WM_ACTION_FULLSCREEN", False);
+    supported[4] = XInternAtom(g_display, "_NET_ACTIVE_WINDOW", False);
+    supported[5] = XInternAtom(g_display, "_NET_WM_NAME", False);
+    supported[6] = XInternAtom(g_display, "_NET_CLIENT_LIST", False);
+    XChangeProperty(g_display, root_win, net_supported, XA_ATOM, 32, PropModeReplace,
                    (unsigned char *)supported, 7);
 
     return true;
@@ -421,10 +421,10 @@ bool init_render_context(void) {
         log_error("[ERROR] malloc failed for RenderContext (size=%zu)", sizeof(RenderContext));
         return false;
     }
-    render_context->dpy = display;
+    render_context->dpy = g_display;
     XVisualInfo vinfo;
-    XMatchVisualInfo(display, screen, depth, TrueColor, &vinfo);
-    render_context->fmt = XRenderFindVisualFormat(display, vinfo.visual);
+    XMatchVisualInfo(g_display, DefaultScreen(g_display), depth, TrueColor, &vinfo);
+    render_context->fmt = XRenderFindVisualFormat(g_display, vinfo.visual);
     render_context->desk_img = None;
     render_context->wind_img = None;
     render_context->desk_picture = None;
@@ -434,9 +434,9 @@ bool init_render_context(void) {
     render_context->checker_inactive_pixmap = None;
     render_context->checker_inactive_picture = None;
     // Cache frequently used default values
-    render_context->default_screen = DefaultScreen(display);
-    render_context->default_visual = DefaultVisual(display, render_context->default_screen);
-    render_context->default_colormap = DefaultColormap(display, render_context->default_screen);
+    render_context->default_screen = DefaultScreen(g_display);
+    render_context->default_visual = DefaultVisual(g_display, render_context->default_screen);
+    render_context->default_colormap = DefaultColormap(g_display, render_context->default_screen);
     return true;
 }
 
@@ -768,7 +768,7 @@ void init_scroll(Canvas *canvas) {
 }
 
 Display *get_display(void) {
-    return display;
+    return g_display;
 }
 
 // ============================================================================
@@ -776,17 +776,17 @@ Display *get_display(void) {
 // ============================================================================
 
 bool send_close_request_to_client(Window client_window) {
-    if (!is_window_valid(display, client_window)) {
+    if (!is_window_valid(g_display, client_window)) {
         return false;
     }
 
-    Atom wm_protocols = XInternAtom(display, "WM_PROTOCOLS", False);
-    Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    Atom wm_protocols = XInternAtom(g_display, "WM_PROTOCOLS", False);
+    Atom wm_delete = XInternAtom(g_display, "WM_DELETE_WINDOW", False);
     Atom *protocols = NULL;
     int protocol_count = 0;
     bool supports_delete = false;
 
-    if (XGetWMProtocols(display, client_window, &protocols, &protocol_count)) {
+    if (XGetWMProtocols(g_display, client_window, &protocols, &protocol_count)) {
         for (int i = 0; i < protocol_count; i++) {
             if (protocols[i] == wm_delete) {
                 supports_delete = true;
@@ -804,28 +804,28 @@ bool send_close_request_to_client(Window client_window) {
         close_event.format = 32;
         close_event.data.l[0] = wm_delete;
         close_event.data.l[1] = CurrentTime;
-        XSendEvent(display, client_window, False, NoEventMask, (XEvent *)&close_event);
-        XFlush(display);
+        XSendEvent(g_display, client_window, False, NoEventMask, (XEvent *)&close_event);
+        XFlush(g_display);
         return true;
     } else {
-        XKillClient(display, client_window);
+        XKillClient(g_display, client_window);
         return true;
     }
 }
 
 void send_x_command_and_sync(void) {
-    XSync(display, False);
+    XSync(g_display, False);
 }
 
 bool is_fullscreen_active(Window win) {
-    Atom wm_state = XInternAtom(display, "_NET_WM_STATE", False);
-    Atom fullscreen = XInternAtom(display, "_NET_WM_STATE_FULLSCREEN", False);
+    Atom wm_state = XInternAtom(g_display, "_NET_WM_STATE", False);
+    Atom fullscreen = XInternAtom(g_display, "_NET_WM_STATE_FULLSCREEN", False);
     Atom type;
     int format;
     unsigned long nitems, bytes_after;
     unsigned char *prop = NULL;
 
-    if (XGetWindowProperty(display, win, wm_state, 0, 1024, False, AnyPropertyType,
+    if (XGetWindowProperty(g_display, win, wm_state, 0, 1024, False, AnyPropertyType,
             &type, &format, &nitems, &bytes_after, &prop) != Success || !prop) {
         return false;
     }
@@ -877,7 +877,7 @@ bool get_window_attrs_with_defaults(Window win, XWindowAttributes *attrs) {
     attrs->override_redirect = False;
 
     // Try to get actual attributes (safe wrapper handles window destruction race)
-    if (safe_get_window_attributes(display, win, attrs)) {
+    if (safe_get_window_attributes(g_display, win, attrs)) {
         return true;
     }
 
@@ -885,7 +885,11 @@ bool get_window_attrs_with_defaults(Window win, XWindowAttributes *attrs) {
     return false;
 }
 
-unsigned long unmanaged_safe_mask(void) {
+unsigned long unmanaged_safe_mask(XConfigureRequestEvent *event, XWindowAttributes *attrs, bool attrs_valid) {
+    // Note: Parameters currently unused, but kept for future validation
+    (void)event;
+    (void)attrs;
+    (void)attrs_valid;
     return CWX | CWY | CWWidth | CWHeight;
 }
 

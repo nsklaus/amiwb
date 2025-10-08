@@ -8,6 +8,7 @@
 #include "../render.h"
 #include "../render_public.h"
 #include "../xdnd.h"
+#include "../intuition/itn_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,9 +21,6 @@
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/shape.h>
 #include <X11/extensions/Xrender.h>
-
-// External dependencies
-extern void compute_max_scroll(Canvas *canvas);
 
 // Progress system (from wb_progress.c)
 typedef struct {
@@ -48,10 +46,6 @@ typedef struct {
     int icon_x, icon_y;
     Window target_window;
 } ProgressMessage;
-
-extern int perform_file_operation_with_progress_ex(FileOperation op, const char *src_path,
-                                                    const char *dst_path, const char *custom_title,
-                                                    ProgressMessage *icon_metadata);
 
 // ============================================================================
 // Drag State Variables
@@ -164,6 +158,113 @@ void refresh_canvas(Canvas *canvas) {
     compute_content_bounds(canvas);
     compute_max_scroll(canvas);
     redraw_canvas(canvas);
+}
+
+// ============================================================================
+// Drag Helper Functions (Static - Module Private)
+// ============================================================================
+
+// Get desktop directory path
+static void get_desktop_directory(char *buf, size_t size) {
+    const char *home = getenv("HOME");
+    snprintf(buf, size, "%s/Desktop", home ? home : ".");
+}
+
+// Calculate drop position in target canvas coordinates
+static void calculate_drop_position(Canvas *target, int *place_x, int *place_y) {
+    Display *dpy = itn_core_get_display();
+
+    // Get saved drag window screen position
+    int drag_icon_screen_x = saved_drag_win_x;
+    int drag_icon_screen_y = saved_drag_win_y;
+
+    // Account for centering offset in drag window
+    int dx = (drag_win_w - dragged_icon->width) / 2;
+    int dy = (drag_win_h - dragged_icon->height - 20) / 2;
+    drag_icon_screen_x += dx;
+    drag_icon_screen_y += dy;
+
+    // Translate screen coords to target window coords
+    int tx = 0, ty = 0;
+    Window dummy;
+    safe_translate_coordinates(dpy, target->win, DefaultRootWindow(dpy),
+                              0, 0, &tx, &ty, &dummy);
+    int local_x = drag_icon_screen_x - tx;
+    int local_y = drag_icon_screen_y - ty;
+
+    // Adjust for window borders and scrolling
+    if (target->type == WINDOW) {
+        local_x = max(0, local_x - BORDER_WIDTH_LEFT + target->scroll_x);
+        local_y = max(0, local_y - BORDER_HEIGHT_TOP + target->scroll_y);
+    }
+
+    *place_x = max(0, local_x);
+    *place_y = max(0, local_y);
+}
+
+// Restore dragged icon to original position (on failure)
+static void restore_dragged_icon_to_origin(void) {
+    if (!dragged_icon) return;
+
+    if (saved_source_window != None) {
+        dragged_icon->display_window = saved_source_window;
+    }
+    move_icon(dragged_icon, drag_orig_x, drag_orig_y);
+
+    if (drag_source_canvas) {
+        refresh_canvas(drag_source_canvas);
+    }
+}
+
+// Create icon for dropped file in target canvas
+static void create_icon_for_dropped_file(const char *dst_path, Canvas *target,
+                                         int place_x, int place_y) {
+    const char *base = strrchr(dst_path, '/');
+    const char *name_only = base ? base + 1 : dst_path;
+
+    // Determine file type
+    struct stat dst_stat;
+    int file_type = TYPE_FILE;
+    if (stat(dst_path, &dst_stat) == 0) {
+        file_type = S_ISDIR(dst_stat.st_mode) ? TYPE_DRAWER : TYPE_FILE;
+    }
+
+    // Find icon image path (.info sidecar or default)
+    const char *img_path = NULL;
+    if (ends_with(name_only, ".info")) {
+        img_path = dst_path;
+    } else {
+        char info_path[FULL_SIZE];
+        snprintf(info_path, sizeof(info_path), "%s.info", dst_path);
+        struct stat st_info;
+        if (stat(info_path, &st_info) == 0) {
+            img_path = info_path;
+        } else {
+            const char *fallback = wb_deficons_get_for_file(name_only,
+                                                            file_type == TYPE_DRAWER);
+            img_path = fallback ? fallback : dst_path;
+        }
+    }
+
+    create_icon_with_metadata(img_path, target, place_x, place_y,
+                              dst_path, name_only, file_type);
+}
+
+// Remove icon from desktop if source was desktop directory
+static void remove_desktop_icon_if_applicable(const char *src_path_abs) {
+    const char *home = getenv("HOME");
+    if (!home) return;
+
+    char desktop_dir[PATH_SIZE];
+    snprintf(desktop_dir, sizeof(desktop_dir), "%s/Desktop/", home);
+
+    if (strncmp(src_path_abs, desktop_dir, strlen(desktop_dir)) == 0) {
+        Canvas *desktop = itn_canvas_get_desktop();
+        if (desktop) {
+            remove_icon_by_path_on_canvas(src_path_abs, desktop);
+            refresh_canvas(desktop);
+        }
+    }
 }
 
 // ============================================================================
@@ -467,8 +568,6 @@ static bool handle_xdnd_drop(Canvas *canvas) {
 
 // Helper: Handle iconified window drops
 static bool handle_iconified_window_drop(Canvas *target) {
-    Display *dpy = itn_core_get_display();
-
     if (!dragged_icon || dragged_icon->type != TYPE_ICONIFIED) {
         return false;  // Not an iconified window
     }
@@ -477,23 +576,8 @@ static bool handle_iconified_window_drop(Canvas *target) {
         drag_source_canvas->type == DESKTOP) {
         // Allowed: desktop to desktop
         if (drag_active) {
-            int drag_icon_screen_x = saved_drag_win_x;
-            int drag_icon_screen_y = saved_drag_win_y;
-
-            int dx = (drag_win_w - dragged_icon->width) / 2;
-            int dy = (drag_win_h - dragged_icon->height - 20) / 2;
-            drag_icon_screen_x += dx;
-            drag_icon_screen_y += dy;
-
-            int tx = 0, ty = 0;
-            Window dummy;
-            safe_translate_coordinates(dpy, target->win, DefaultRootWindow(dpy),
-                                     0, 0, &tx, &ty, &dummy);
-            int local_x = drag_icon_screen_x - tx;
-            int local_y = drag_icon_screen_y - ty;
-
-            int place_x = max(0, local_x);
-            int place_y = max(0, local_y);
+            int place_x = 0, place_y = 0;
+            calculate_drop_position(target, &place_x, &place_y);
             move_icon(dragged_icon, place_x, place_y);
         }
 
@@ -505,11 +589,7 @@ static bool handle_iconified_window_drop(Canvas *target) {
         }
     } else {
         // Forbidden: restore original position
-        if (dragged_icon) {
-            if (saved_source_window != None) dragged_icon->display_window = saved_source_window;
-            move_icon(dragged_icon, drag_orig_x, drag_orig_y);
-        }
-        if (drag_source_canvas) refresh_canvas(drag_source_canvas);
+        restore_dragged_icon_to_origin();
     }
 
     dragged_icon = NULL;
@@ -522,8 +602,6 @@ static bool handle_iconified_window_drop(Canvas *target) {
 
 // Helper: Handle prime icon drops (System "/" or Home)
 static bool handle_prime_icon_drop(Canvas *target) {
-    Display *dpy = itn_core_get_display();
-
     if (!dragged_icon || !dragged_icon->path) {
         return false;  // No icon or path
     }
@@ -540,23 +618,8 @@ static bool handle_prime_icon_drop(Canvas *target) {
         drag_source_canvas->type == DESKTOP) {
         // Allowed: desktop to desktop
         if (drag_active) {
-            int drag_icon_screen_x = saved_drag_win_x;
-            int drag_icon_screen_y = saved_drag_win_y;
-
-            int dx = (drag_win_w - dragged_icon->width) / 2;
-            int dy = (drag_win_h - dragged_icon->height - 20) / 2;
-            drag_icon_screen_x += dx;
-            drag_icon_screen_y += dy;
-
-            int tx = 0, ty = 0;
-            Window dummy;
-            safe_translate_coordinates(dpy, target->win, DefaultRootWindow(dpy),
-                                     0, 0, &tx, &ty, &dummy);
-            int local_x = drag_icon_screen_x - tx;
-            int local_y = drag_icon_screen_y - ty;
-
-            int place_x = max(0, local_x);
-            int place_y = max(0, local_y);
+            int place_x = 0, place_y = 0;
+            calculate_drop_position(target, &place_x, &place_y);
             move_icon(dragged_icon, place_x, place_y);
         }
 
@@ -568,11 +631,7 @@ static bool handle_prime_icon_drop(Canvas *target) {
         }
     } else {
         // Forbidden: restore original position
-        if (dragged_icon) {
-            if (saved_source_window != None) dragged_icon->display_window = saved_source_window;
-            move_icon(dragged_icon, drag_orig_x, drag_orig_y);
-        }
-        if (drag_source_canvas) refresh_canvas(drag_source_canvas);
+        restore_dragged_icon_to_origin();
     }
 
     dragged_icon = NULL;
@@ -585,8 +644,6 @@ static bool handle_prime_icon_drop(Canvas *target) {
 
 // Helper: Perform cross-canvas drop (file move between windows)
 static void perform_cross_canvas_drop(Canvas *target) {
-    Display *dpy = itn_core_get_display();
-
     bool can_move_file = (dragged_icon && dragged_icon->path && *dragged_icon->path);
     bool target_is_valid_dir_window = (target && target->type == WINDOW &&
                                        target->path && is_directory(target->path));
@@ -600,8 +657,7 @@ static void perform_cross_canvas_drop(Canvas *target) {
     // Determine destination directory
     char dst_dir[PATH_SIZE];
     if (target_is_desktop) {
-        const char *home = getenv("HOME");
-        snprintf(dst_dir, sizeof(dst_dir), "%s/Desktop", home ? home : ".");
+        get_desktop_directory(dst_dir, sizeof(dst_dir));
     } else {
         snprintf(dst_dir, sizeof(dst_dir), "%s", target->path ? target->path : ".");
     }
@@ -612,9 +668,7 @@ static void perform_cross_canvas_drop(Canvas *target) {
         if (strncmp(dst_dir, dragged_icon->path, src_len) == 0 &&
             (dst_dir[src_len] == '/' || dst_dir[src_len] == '\0')) {
             log_error("[WARNING] Cannot move directory into itself");
-            if (saved_source_window != None) dragged_icon->display_window = saved_source_window;
-            move_icon(dragged_icon, drag_orig_x, drag_orig_y);
-            if (drag_source_canvas) refresh_canvas(drag_source_canvas);
+            restore_dragged_icon_to_origin();
             dragged_icon = NULL;
             drag_active = false;
             drag_source_canvas = NULL;
@@ -629,28 +683,9 @@ static void perform_cross_canvas_drop(Canvas *target) {
     snprintf(src_path_abs, sizeof(src_path_abs), "%s",
             dragged_icon->path ? dragged_icon->path : "");
 
-    // Calculate icon position
-    int drag_icon_screen_x = saved_drag_win_x;
-    int drag_icon_screen_y = saved_drag_win_y;
-
-    int dx = (drag_win_w - dragged_icon->width) / 2;
-    int dy = (drag_win_h - dragged_icon->height - 20) / 2;
-    drag_icon_screen_x += dx;
-    drag_icon_screen_y += dy;
-
-    int tx = 0, ty = 0;
-    Window dummy;
-    safe_translate_coordinates(dpy, target->win, DefaultRootWindow(dpy),
-                              0, 0, &tx, &ty, &dummy);
-    int local_x = drag_icon_screen_x - tx;
-    int local_y = drag_icon_screen_y - ty;
-
-    if (target->type == WINDOW) {
-        local_x = max(0, local_x - BORDER_WIDTH_LEFT + target->scroll_x);
-        local_y = max(0, local_y - BORDER_HEIGHT_TOP + target->scroll_y);
-    }
-    int place_x = max(0, local_x);
-    int place_y = max(0, local_y);
+    // Calculate drop position
+    int place_x = 0, place_y = 0;
+    calculate_drop_position(target, &place_x, &place_y);
 
     // Move file with extended version
     int moved = wb_fileops_move_ex(dragged_icon->path, dst_dir, dst_path,
@@ -666,7 +701,6 @@ static void perform_cross_canvas_drop(Canvas *target) {
 
         if (moved == 2) {
             // Cross-filesystem move: use progress system for copy+delete
-            // Prepare icon metadata for async operation
             ProgressMessage icon_meta = {0};
             icon_meta.create_icon = true;
             icon_meta.has_sidecar = false;
@@ -684,8 +718,7 @@ static void perform_cross_canvas_drop(Canvas *target) {
                 strncpy(icon_meta.sidecar_src, src_info, sizeof(icon_meta.sidecar_src) - 1);
                 icon_meta.sidecar_src[sizeof(icon_meta.sidecar_src) - 1] = '\0';
 
-                // Build destination .info path with bounds checking
-                // Use double FULL_SIZE to silence GCC truncation warning
+                // Build destination .info path
                 char dst_info[FULL_SIZE * 2];
                 const char *base = strrchr(dst_path, '/');
                 const char *name_only = base ? base + 1 : dst_path;
@@ -698,7 +731,6 @@ static void perform_cross_canvas_drop(Canvas *target) {
             perform_file_operation_with_progress_ex(FILE_OP_MOVE, src_path_abs,
                                                     dst_path, NULL, &icon_meta);
 
-            // Refresh source canvas
             if (drag_source_canvas) {
                 refresh_canvas(drag_source_canvas);
             }
@@ -706,45 +738,10 @@ static void perform_cross_canvas_drop(Canvas *target) {
         }
 
         // Synchronous move - create icon
-        const char *base = strrchr(dst_path, '/');
-        const char *name_only = base ? base + 1 : dst_path;
-
-        struct stat dst_stat;
-        int file_type = TYPE_FILE;
-        if (stat(dst_path, &dst_stat) == 0) {
-            file_type = S_ISDIR(dst_stat.st_mode) ? TYPE_DRAWER : TYPE_FILE;
-        }
-
-        const char *img_path = NULL;
-        if (ends_with(name_only, ".info")) {
-            img_path = dst_path;
-        } else {
-            char info_path[FULL_SIZE];
-            snprintf(info_path, sizeof(info_path), "%s.info", dst_path);
-            struct stat st_info;
-            if (stat(info_path, &st_info) == 0) {
-                img_path = info_path;
-            } else {
-                const char *fallback = wb_deficons_get_for_file(name_only,
-                                                                file_type == TYPE_DRAWER);
-                img_path = fallback ? fallback : dst_path;
-            }
-        }
-
-        create_icon_with_metadata(img_path, target, place_x, place_y,
-                                  dst_path, name_only, file_type);
+        create_icon_for_dropped_file(dst_path, target, place_x, place_y);
 
         // Remove desktop icon if moved from Desktop
-        const char *home = getenv("HOME");
-        char desktop_dir[PATH_SIZE] = {0};
-        if (home) snprintf(desktop_dir, sizeof(desktop_dir), "%s/Desktop/", home);
-        if (home && strncmp(src_path_abs, desktop_dir, strlen(desktop_dir)) == 0) {
-            Canvas *desktop = itn_canvas_get_desktop();
-            if (desktop) {
-                remove_icon_by_path_on_canvas(src_path_abs, desktop);
-                refresh_canvas(desktop);
-            }
-        }
+        remove_desktop_icon_if_applicable(src_path_abs);
 
         // Apply layout
         if (target->type == WINDOW && target->view_mode == VIEW_NAMES) {
@@ -759,19 +756,13 @@ static void perform_cross_canvas_drop(Canvas *target) {
         }
         redraw_canvas(target);
     } else {
-        // Move failed
-        if (dragged_icon) {
-            if (saved_source_window != None) dragged_icon->display_window = saved_source_window;
-            move_icon(dragged_icon, drag_orig_x, drag_orig_y);
-        }
-        if (drag_source_canvas) refresh_canvas(drag_source_canvas);
+        // Move failed - restore icon
+        restore_dragged_icon_to_origin();
     }
 }
 
 // Helper: Perform same-canvas drop or handle invalid drop
 static void perform_same_canvas_drop(Canvas *target) {
-    Display *dpy = itn_core_get_display();
-
     if (!dragged_icon) {
         return;
     }
@@ -780,33 +771,13 @@ static void perform_same_canvas_drop(Canvas *target) {
         // No drag occurred
     } else if (target == drag_source_canvas) {
         // Same-canvas drag: reposition icon
-        int drag_icon_screen_x = saved_drag_win_x;
-        int drag_icon_screen_y = saved_drag_win_y;
-
-        int dx = (drag_win_w - dragged_icon->width) / 2;
-        int dy = (drag_win_h - dragged_icon->height - 20) / 2;
-        drag_icon_screen_x += dx;
-        drag_icon_screen_y += dy;
-
-        int tx = 0, ty = 0;
-        Window dummy;
-        safe_translate_coordinates(dpy, drag_source_canvas->win, DefaultRootWindow(dpy),
-                                 0, 0, &tx, &ty, &dummy);
-        int local_x = drag_icon_screen_x - tx;
-        int local_y = drag_icon_screen_y - ty;
-
-        if (drag_source_canvas->type == WINDOW) {
-            local_x = max(0, local_x - BORDER_WIDTH_LEFT + drag_source_canvas->scroll_x);
-            local_y = max(0, local_y - BORDER_HEIGHT_TOP + drag_source_canvas->scroll_y);
-        }
-        int place_x = max(0, local_x);
-        int place_y = max(0, local_y);
+        int place_x = 0, place_y = 0;
+        calculate_drop_position(drag_source_canvas, &place_x, &place_y);
         if (saved_source_window != None) dragged_icon->display_window = saved_source_window;
         move_icon(dragged_icon, place_x, place_y);
     } else {
         // Invalid target: restore original position
-        if (saved_source_window != None) dragged_icon->display_window = saved_source_window;
-        move_icon(dragged_icon, drag_orig_x, drag_orig_y);
+        restore_dragged_icon_to_origin();
     }
 
     if (drag_source_canvas) {

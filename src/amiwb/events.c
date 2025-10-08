@@ -28,23 +28,6 @@
 #include <sys/timerfd.h>  // For timerfd_create (Phase 1)
 #include <errno.h>        // For error reporting
 
-// External variable from intuition modules for RandR events
-extern int randr_event_base;
-
-// External functions to trigger actions from menus.c
-extern void trigger_execute_action(void);
-extern void trigger_requester_action(void);
-extern void trigger_rename_action(void);
-extern void trigger_icon_info_action(void);
-extern void trigger_cleanup_action(void);
-extern void trigger_refresh_action(void);
-extern void trigger_close_action(void);
-extern void trigger_parent_action(void);
-extern void trigger_open_action(void);
-extern void trigger_copy_action(void);
-extern void trigger_delete_action(void);
-extern void trigger_select_contents_action(void);
-
 // Track the window that owns the current button interaction so motion and
 // release are routed consistently, even if X delivers them elsewhere.
 static Window g_press_target = 0;

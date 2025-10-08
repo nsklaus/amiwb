@@ -6,17 +6,13 @@
 #include "../config.h"
 #include "../render.h"
 #include "../render_public.h"
+#include "../intuition/itn_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
 // Forward declaration (now public - called from wb_drag.c)
 void apply_view_layout(Canvas *canvas);
-
-// External dependencies
-extern void refresh_canvas(Canvas *canvas);
-extern void compute_max_scroll(Canvas *canvas);
-extern FileIcon **wb_icons_for_canvas(Canvas *canvas, int *out_count);
 
 // Global state
 static bool spatial_mode = true;  // New window per directory

@@ -6,14 +6,10 @@
 #include "../render_public.h"
 #include <X11/Xlib.h>
 #include "../menus/menu_public.h"  // For check_for_app_menus
-#include "../workbench/wb_public.h"
+#include "../workbench/wb_internal.h"
 #include "../render.h"  // For redraw_canvas (temporary)
 
-// External references (temporary during migration)
-extern void check_for_app_menus(Window w);  // From menus.c
-extern FileIcon **get_icon_array(void);  // From workbench.c
-extern int get_icon_count(void);  // From workbench.c
-extern void restore_iconified(FileIcon *icon);  // From workbench.c
+// Migration notes:
 // find_canvas is now itn_canvas_find_by_window
 // get_desktop_canvas is now itn_canvas_get_desktop
 

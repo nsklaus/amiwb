@@ -7,6 +7,7 @@
 #include "wb_xattr.h"
 #include "../config.h"
 #include "../render_public.h"
+#include "../intuition/itn_internal.h"
 #include "../dialogs.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,26 +22,6 @@
 #include <sys/xattr.h>
 #include <libgen.h>
 #include <time.h>
-
-// Forward declarations from intuition
-extern Canvas *itn_canvas_find_by_window(Window win);
-extern void compute_max_scroll(Canvas *canvas);
-
-// Forward declarations from wb_layout.c
-extern void compute_content_bounds(Canvas *canvas);
-extern void apply_view_layout(Canvas *canvas);
-extern void find_free_slot(Canvas *canvas, int *out_x, int *out_y);
-
-// Forward declarations from wb_deficons.c
-extern const char *wb_deficons_get_for_file(const char *filename, bool is_dir);
-
-// Forward declarations from wb_icons_create.c
-extern FileIcon *create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x, int y,
-                                            const char *full_path, const char *name, int type);
-
-// Forward declarations from wb_fileops.c
-extern void count_files_in_directory(const char *path, int *count);
-extern void count_files_and_bytes(const char *path, int *file_count, off_t *total_bytes);
 
 // ============================================================================
 // IPC Message Structures for Progress Updates
@@ -259,7 +240,7 @@ int perform_file_operation_with_progress_ex(
     const char *src_path,
     const char *dst_path,
     const char *custom_title,
-    ProgressMessage *icon_metadata
+    void *icon_metadata
 ) {
     if (!src_path) return -1;
     if ((op == FILE_OP_COPY || op == FILE_OP_MOVE) && !dst_path) return -1;
@@ -337,15 +318,16 @@ int perform_file_operation_with_progress_ex(
 
         // Copy icon metadata if provided
         if (icon_metadata) {
-            msg.create_icon = icon_metadata->create_icon;
-            msg.has_sidecar = icon_metadata->has_sidecar;
-            msg.icon_x = icon_metadata->icon_x;
-            msg.icon_y = icon_metadata->icon_y;
-            msg.target_window = icon_metadata->target_window;
-            strncpy(msg.dest_path, icon_metadata->dest_path, PATH_SIZE - 1);
-            strncpy(msg.dest_dir, icon_metadata->dest_dir, PATH_SIZE - 1);
-            strncpy(msg.sidecar_src, icon_metadata->sidecar_src, PATH_SIZE - 1);
-            strncpy(msg.sidecar_dst, icon_metadata->sidecar_dst, PATH_SIZE - 1);
+            ProgressMessage *meta = (ProgressMessage *)icon_metadata;
+            msg.create_icon = meta->create_icon;
+            msg.has_sidecar = meta->has_sidecar;
+            msg.icon_x = meta->icon_x;
+            msg.icon_y = meta->icon_y;
+            msg.target_window = meta->target_window;
+            strncpy(msg.dest_path, meta->dest_path, PATH_SIZE - 1);
+            strncpy(msg.dest_dir, meta->dest_dir, PATH_SIZE - 1);
+            strncpy(msg.sidecar_src, meta->sidecar_src, PATH_SIZE - 1);
+            strncpy(msg.sidecar_dst, meta->sidecar_dst, PATH_SIZE - 1);
         }
 
         // Send START message - if this fails, parent won't get progress updates

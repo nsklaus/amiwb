@@ -6,14 +6,6 @@
 #include "../config.h"
 #include <X11/Xlib.h>
 
-// External functions we need
-extern void request_client_close(Canvas *canvas);
-extern void iconify_canvas(Canvas *canvas);
-extern Canvas *itn_canvas_get_desktop(void);
-extern void itn_geometry_move_resize(Canvas *canvas, int x, int y, int w, int h);
-extern void itn_geometry_lower(Canvas *canvas);
-extern void itn_focus_activate_window_behind(Canvas *canvas);
-
 // Hit test results (from itn_events.c)
 typedef enum {
     HIT_NONE,      // 0
