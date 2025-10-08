@@ -1,11 +1,13 @@
-// File: iconinfo.c
+// File: wb_iconinfo.c
 // Icon Information dialog implementation
-#include "iconinfo.h"
-#include "render.h"
-#include "config.h"
-#include "workbench/wb_public.h"
-#include "intuition/itn_internal.h"
-#include "../toolkit/button/button.h"
+#include "wb_internal.h"
+#include "wb_public.h"
+#include "../render.h"
+#include "../config.h"
+#include "../intuition/itn_internal.h"
+#include "../../toolkit/button/button.h"
+#include "../../toolkit/inputfield/inputfield.h"
+#include "../../toolkit/listview/listview.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>

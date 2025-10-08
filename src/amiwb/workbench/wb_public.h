@@ -68,6 +68,37 @@ off_t read_directory_size_result(int pipe_fd);                 // Read result fr
 // Progress monitor polling (called from event loop)
 void workbench_check_progress_monitors(void);
 
+// Icon information dialog (opaque type)
+typedef struct IconInfoDialog IconInfoDialog;
+
+// Show icon information dialog
+void show_icon_info_dialog(FileIcon *icon);
+
+// Icon info event handlers (called from events.c)
+bool iconinfo_handle_key_press(XKeyEvent *event);
+bool iconinfo_handle_button_press(XButtonEvent *event);
+bool iconinfo_handle_button_release(XButtonEvent *event);
+bool iconinfo_handle_motion(XMotionEvent *event);
+
+// Icon info query functions
+bool is_iconinfo_canvas(Canvas *canvas);
+IconInfoDialog* get_iconinfo_for_canvas(Canvas *canvas);
+
+// Icon info rendering (called from render.c)
+void render_iconinfo_content(Canvas *canvas);
+
+// Icon info cleanup
+void close_icon_info_dialog(IconInfoDialog *dialog);
+void close_icon_info_dialog_by_canvas(Canvas *canvas);
+void cleanup_all_iconinfo_dialogs(void);
+
+// Icon info initialization
+void init_iconinfo(void);
+void cleanup_iconinfo(void);
+
+// Icon info process monitoring for directory size calculation
+void iconinfo_check_size_calculations(void);
+
 // Cache invalidation for performance optimization
 void invalidate_pointer_cache(void);
 

@@ -9,7 +9,7 @@
 #include "menus/menu_public.h"
 #include "menus/menu_internal.h"  // For menu_addon_render_all
 #include "dialogs/dialog_public.h"
-#include "iconinfo.h"
+#include "dialogs/dialog_public.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>

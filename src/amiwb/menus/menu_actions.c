@@ -7,7 +7,7 @@
 #include "../workbench/wb_public.h"
 #include "../workbench/wb_internal.h"
 #include "../dialogs/dialog_public.h"
-#include "../iconinfo.h"
+#include "../dialogs/dialog_public.h"
 #include "../events.h"
 #include "../config.h"
 #include "../diskdrives.h"

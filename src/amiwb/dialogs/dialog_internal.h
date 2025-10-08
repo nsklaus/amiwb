@@ -11,6 +11,7 @@
 #include "../../toolkit/inputfield/inputfield.h"
 #include "../../toolkit/button/button.h"
 #include "../../toolkit/progressbar/progressbar.h"
+#include "../../toolkit/listview/listview.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>

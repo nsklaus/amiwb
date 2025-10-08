@@ -7,7 +7,7 @@
 #include "intuition/itn_public.h"  // Public intuition API
 #include "workbench/wb_public.h"
 #include "dialogs/dialog_public.h"
-#include "iconinfo.h"  // For iconinfo_check_size_calculations
+#include "dialogs/dialog_public.h"  // For iconinfo_check_size_calculations
 #include "render.h"  // For redraw_canvas
 #include "config.h"
 #include "amiwbrc.h"  // For config access

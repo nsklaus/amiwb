@@ -2,7 +2,7 @@
 #include "intuition/itn_internal.h"
 #include "menus/menu_public.h"
 #include "dialogs/dialog_public.h"
-#include "iconinfo.h"
+#include "dialogs/dialog_public.h"
 #include "workbench/wb_public.h"
 #include "events.h"
 // #include "compositor.h"  // Now using itn modules
