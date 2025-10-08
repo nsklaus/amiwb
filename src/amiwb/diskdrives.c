@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include "diskdrives.h"
 #include "workbench/wb_public.h"
+#include "workbench/wb_internal.h"
 #include "intuition/itn_internal.h"
 #include "render.h"
 #include "config.h"
@@ -149,8 +150,8 @@ static void add_new_drive(const char *device, const char *mount_point, const cha
     create_icon("/usr/local/share/amiwb/icons/harddisk.info", desktop, 0, 0);
     
     // Get the icon we just created
-    FileIcon **icons = get_icon_array();
-    int count = get_icon_count();
+    FileIcon **icons = wb_icons_array_get();
+    int count = wb_icons_array_count();
     if (count > 0) {
         FileIcon *icon = icons[count - 1];
         

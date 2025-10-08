@@ -5,6 +5,7 @@
 #include "menu_public.h"
 #include "../intuition/itn_public.h"
 #include "../workbench/wb_public.h"
+#include "../workbench/wb_internal.h"
 #include "../font_manager.h"
 #include "../events.h"
 
@@ -64,8 +65,8 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
 
         if (check_canvas) {
             // Check if any icon is selected in the canvas
-            FileIcon **icon_array = get_icon_array();
-            int icon_count = get_icon_count();
+            FileIcon **icon_array = wb_icons_array_get();
+            int icon_count = wb_icons_array_count();
             for (int i = 0; i < icon_count; i++) {
                 FileIcon *icon = icon_array[i];
                 if (icon && icon->selected && icon->display_window == check_canvas->win) {

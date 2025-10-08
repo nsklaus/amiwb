@@ -90,7 +90,7 @@ void set_icon_meta(FileIcon *icon, int x, int y) {
 // Iconified Window Restoration
 // ============================================================================
 
-void restore_iconified(FileIcon *icon) {
+void wb_icons_restore_iconified(FileIcon *icon) {
     if (!icon || icon->type != TYPE_ICONIFIED) {
         return;
     }

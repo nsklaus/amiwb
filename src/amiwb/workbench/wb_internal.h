@@ -153,7 +153,9 @@ int wb_progress_file_operation_ex(FileOperation op, const char *src_path,
                                    const char *dst_path, const char *custom_title,
                                    void *icon_metadata);
 
-// Legacy function name (TODO: rename implementation)
+// Legacy function names (TODO: rename implementation)
+int perform_file_operation_with_progress(FileOperation op, const char *src_path,
+                                          const char *dst_path, const char *custom_title);
 int perform_file_operation_with_progress_ex(FileOperation op, const char *src_path,
                                              const char *dst_path, const char *custom_title,
                                              void *icon_metadata);

@@ -131,12 +131,12 @@ void itn_focus_cycle_next(void) {
     if (safe_get_window_attributes(dpy, next_window->win, &attrs)) {
         if (attrs.map_state != IsViewable) {
             // Window is iconified - find and restore it
-            FileIcon **icon_array = get_icon_array();
-            int icon_count = get_icon_count();
+            FileIcon **icon_array = wb_icons_array_get();
+            int icon_count = wb_icons_array_count();
             for (int i = 0; i < icon_count; i++) {
                 FileIcon *ic = icon_array[i];
                 if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == next_window) {
-                    restore_iconified(ic);
+                    wb_icons_restore_iconified(ic);
                     return;
                 }
             }
@@ -182,12 +182,12 @@ void itn_focus_cycle_prev(void) {
     if (safe_get_window_attributes(dpy, prev_window->win, &attrs)) {
         if (attrs.map_state != IsViewable) {
             // Window is iconified - find and restore it
-            FileIcon **icon_array = get_icon_array();
-            int icon_count = get_icon_count();
+            FileIcon **icon_array = wb_icons_array_get();
+            int icon_count = wb_icons_array_count();
             for (int i = 0; i < icon_count; i++) {
                 FileIcon *ic = icon_array[i];
                 if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == prev_window) {
-                    restore_iconified(ic);
+                    wb_icons_restore_iconified(ic);
                     return;
                 }
             }
@@ -294,12 +294,12 @@ void itn_focus_activate_by_index(int index) {
             if (safe_get_window_attributes(dpy, c->win, &attrs)) {
                 if (attrs.map_state != IsViewable) {
                     // Find and restore iconified window
-                    FileIcon **icon_array = get_icon_array();
-                    int icon_count = get_icon_count();
+                    FileIcon **icon_array = wb_icons_array_get();
+                    int icon_count = wb_icons_array_count();
                     for (int j = 0; j < icon_count; j++) {
                         FileIcon *ic = icon_array[j];
                         if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == c) {
-                            restore_iconified(ic);
+                            wb_icons_restore_iconified(ic);
                             break;
                         }
                     }

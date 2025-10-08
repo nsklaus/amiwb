@@ -5,6 +5,7 @@
 #include "menu_public.h"
 #include "../intuition/itn_public.h"
 #include "../workbench/wb_public.h"
+#include "../workbench/wb_internal.h"
 #include "../dialogs.h"
 #include "../iconinfo.h"
 #include "../events.h"
@@ -53,8 +54,8 @@ static void rename_file_ok_callback(const char *new_name) {
     
     // Additional validation - check if icon is still valid
     bool icon_valid = false;
-    for (int i = 0; i < get_icon_count(); i++) {
-        if (get_icon_array()[i] == icon) {
+    for (int i = 0; i < wb_icons_array_count(); i++) {
+        if (wb_icons_array_get()[i] == icon) {
             icon_valid = true;
             break;
         }
@@ -165,8 +166,8 @@ static void execute_pending_deletes(void) {
         
         // CRITICAL: Verify icon still exists and belongs to same window
         bool icon_still_valid = false;
-        FileIcon **icon_array = get_icon_array();
-        int icon_count = get_icon_count();
+        FileIcon **icon_array = wb_icons_array_get();
+        int icon_count = wb_icons_array_count();
         for (int j = 0; j < icon_count; j++) {
             if (icon_array[j] == selected && 
                 icon_array[j]->display_window == g_pending_delete_canvas->win) {
@@ -196,8 +197,6 @@ static void execute_pending_deletes(void) {
         saved_path[sizeof(saved_path) - 1] = '\0';
         
         // Execute delete using progress-enabled function
-        extern int perform_file_operation_with_progress(int op, const char *src_path, 
-                                                       const char *dst_path, const char *custom_title);
         int result = perform_file_operation_with_progress(2, // FILE_OP_DELETE = 2
                                                          saved_path, 
                                                          NULL,  // No destination for delete
@@ -282,7 +281,7 @@ static void open_file_or_directory(FileIcon *icon) {
     } else if (icon->type == TYPE_ICONIFIED) {
         // Use the existing restore_iconified function from workbench.c
         // It properly handles window restoration and icon cleanup
-        restore_iconified(icon);
+        wb_icons_restore_iconified(icon);
     } else if (icon->type == TYPE_FILE) {
         // Use the existing open_file function from workbench.c
         open_file(icon);
@@ -309,17 +308,14 @@ void handle_menu_selection(Menu *menu, int item_index) {
         } else {
             // Activate the window directly using its Canvas pointer
             // Check if window is iconified and restore it first
-            extern FileIcon **get_icon_array(void);
-            extern int get_icon_count(void);
-            extern void restore_iconified(FileIcon *icon);
-            FileIcon **icon_array = get_icon_array();
-            int icon_count = get_icon_count();
+            FileIcon **icon_array = wb_icons_array_get();
+            int icon_count = wb_icons_array_count();
 
             bool was_iconified = false;
             for (int i = 0; i < icon_count; i++) {
                 FileIcon *ic = icon_array[i];
                 if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == target) {
-                    restore_iconified(ic);
+                    wb_icons_restore_iconified(ic);
                     was_iconified = true;
                     break;
                 }
@@ -739,8 +735,8 @@ void trigger_open_action(void) {
     }
     
     if (check_canvas) {
-        FileIcon **icon_array = get_icon_array();
-        int icon_count = get_icon_count();
+        FileIcon **icon_array = wb_icons_array_get();
+        int icon_count = wb_icons_array_count();
         for (int i = 0; i < icon_count; i++) {
             FileIcon *icon = icon_array[i];
             if (icon && icon->selected && icon->display_window == check_canvas->win) {
@@ -775,8 +771,8 @@ void trigger_copy_action(void) {
     }
     
     if (target_canvas) {
-        FileIcon **icon_array = get_icon_array();
-        int icon_count = get_icon_count();
+        FileIcon **icon_array = wb_icons_array_get();
+        int icon_count = wb_icons_array_count();
         for (int i = 0; i < icon_count; i++) {
             FileIcon *icon = icon_array[i];
             if (icon && icon->selected && icon->display_window == target_canvas->win) {
@@ -875,8 +871,8 @@ void trigger_copy_action(void) {
         
         if (target_canvas) {
             // Check for overlaps and adjust position
-            FileIcon **icon_array = get_icon_array();
-            int icon_count = get_icon_count();
+            FileIcon **icon_array = wb_icons_array_get();
+            int icon_count = wb_icons_array_count();
             bool position_occupied = true;
             int attempts = 0;
             
@@ -935,9 +931,6 @@ void trigger_copy_action(void) {
         }
         
         // Use extended file operation with icon metadata
-        extern int perform_file_operation_with_progress_ex(int op, const char *src_path, 
-                                                          const char *dst_path, const char *custom_title,
-                                                          void *icon_metadata);
         int result = perform_file_operation_with_progress_ex(0, // FILE_OP_COPY = 0
                                                             selected->path, 
                                                             copy_path, 
@@ -969,8 +962,8 @@ void trigger_extract_action(void) {
     }
     
     if (target_canvas) {
-        FileIcon **icon_array = get_icon_array();
-        int icon_count = get_icon_count();
+        FileIcon **icon_array = wb_icons_array_get();
+        int icon_count = wb_icons_array_count();
         for (int i = 0; i < icon_count; i++) {
             FileIcon *icon = icon_array[i];
             if (icon && icon->selected && icon->display_window == target_canvas->win) {
@@ -1028,8 +1021,8 @@ void trigger_eject_action(void) {
     }
     
     if (target_canvas) {
-        FileIcon **icon_array = get_icon_array();
-        int icon_count = get_icon_count();
+        FileIcon **icon_array = wb_icons_array_get();
+        int icon_count = wb_icons_array_count();
         for (int i = 0; i < icon_count; i++) {
             FileIcon *icon = icon_array[i];
             if (icon && icon->selected && icon->display_window == target_canvas->win) {
@@ -1065,8 +1058,8 @@ void trigger_delete_action(void) {
     g_pending_delete_canvas = target_canvas;
     
     // Collect ALL selected icons FROM THIS WINDOW ONLY
-    FileIcon **icon_array = get_icon_array();
-    int icon_count = get_icon_count();
+    FileIcon **icon_array = wb_icons_array_get();
+    int icon_count = wb_icons_array_count();
     for (int i = 0; i < icon_count && g_pending_delete_count < 256; i++) {
         FileIcon *icon = icon_array[i];
         // CRITICAL: Only from target canvas window!
@@ -1216,8 +1209,8 @@ void trigger_select_contents_action(void) {
     if (!target_canvas) return;
     
     // Get all icons and check if any are already selected in this canvas
-    FileIcon **icon_array = get_icon_array();
-    int icon_count = get_icon_count();
+    FileIcon **icon_array = wb_icons_array_get();
+    int icon_count = wb_icons_array_count();
     bool has_selected = false;
     
     // First pass: check if any icons are selected

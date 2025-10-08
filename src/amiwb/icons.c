@@ -110,6 +110,32 @@ static Picture create_icon_picture(Display *dpy, Pixmap pixmap, XRenderPictForma
     return picture;
 }
 
+// Create icon rendering context (visual, pixmap, image) - extracts common setup pattern
+// OWNERSHIP: Caller must free pixmap (XFreePixmap) and image (XDestroyImage) on error
+// NOTE: Image data is allocated but not initialized - caller must fill pixels before use
+// Returns 0 on success, 1 on failure
+static int create_icon_rendering_context(Display *dpy, uint16_t width, uint16_t height,
+                                          Pixmap *pixmap_out, XImage **image_out, XVisualInfo *vinfo_out) {
+    if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, vinfo_out)) {
+        log_error("[ERROR] No %d-bit TrueColor visual found for icon", ICON_RENDER_DEPTH);
+        return 1;
+    }
+
+    Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), width, height, ICON_RENDER_DEPTH);
+    if (!pixmap) return 1;
+
+    XImage *image = XCreateImage(dpy, vinfo_out->visual, ICON_RENDER_DEPTH, ZPixmap, 0,
+                                  malloc(width * height * 4), width, height, 32, 0);
+    if (!image) {
+        XFreePixmap(dpy, pixmap);
+        return 1;
+    }
+
+    *pixmap_out = pixmap;
+    *image_out = image;
+    return 0;
+}
+
 // Helper function to clean up partially loaded icon
 static void cleanup_partial_icon(Display *dpy, FileIcon *icon) {
     if (icon->normal_picture) {
@@ -266,16 +292,9 @@ static int parse_icon_header(const uint8_t *header, long size, uint16_t *width, 
 // Render OS1.3 icon (2 bitplanes, 4 colors, transparent background)
 static int render_os13_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height) {
     XVisualInfo vinfo;
-    if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
-        log_error("[ERROR] No %d-bit TrueColor visual found for icon", ICON_RENDER_DEPTH);
-        return 1;
-    }
-    Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), width, height, ICON_RENDER_DEPTH);
-    if (!pixmap) return 1;
-
-    XImage *image = XCreateImage(dpy, vinfo.visual, ICON_RENDER_DEPTH, ZPixmap, 0, malloc(width * height * 4), width, height, 32, 0);
-    if (!image) {
-        XFreePixmap(dpy, pixmap);
+    Pixmap pixmap;
+    XImage *image;
+    if (create_icon_rendering_context(dpy, width, height, &pixmap, &image, &vinfo) != 0) {
         return 1;
     }
     memset(image->data, 0, width * height * 4);
@@ -327,16 +346,9 @@ static int render_os13_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *dat
 // Colors are basic and can be refined later; keep it fast and simple.
 static int render_icon(Display *dpy, Pixmap *pixmap_out, const uint8_t *data, uint16_t width, uint16_t height, uint16_t depth, AmigaIconFormat format, long data_size) {
     XVisualInfo vinfo;
-    if (!XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
-        log_error("[ERROR] No %d-bit TrueColor visual found for icon", ICON_RENDER_DEPTH);
-        return 1;
-    }
-    Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), width, height, ICON_RENDER_DEPTH);
-    if (!pixmap) return 1;
-
-    XImage *image = XCreateImage(dpy, vinfo.visual, ICON_RENDER_DEPTH, ZPixmap, 0, malloc(width * height * 4), width, height, 32, 0);
-    if (!image) {
-        XFreePixmap(dpy, pixmap);
+    Pixmap pixmap;
+    XImage *image;
+    if (create_icon_rendering_context(dpy, width, height, &pixmap, &image, &vinfo) != 0) {
         return 1;
     }
     memset(image->data, 0, width * height * 4);
@@ -639,44 +651,41 @@ static int parse_glowicon(Display *dpy, const uint8_t *data, long size, long off
             
             // Create X11 pixmap
             XVisualInfo vinfo;
-            if (XMatchVisualInfo(dpy, DefaultScreen(dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
-                Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy), width, height, ICON_RENDER_DEPTH);
-                if (pixmap) {
-                    XImage *image = XCreateImage(dpy, vinfo.visual, ICON_RENDER_DEPTH, ZPixmap, 0, 
-                                                malloc(width * height * 4), width, height, 32, 0);
-                    if (image) {
-                        // Count pixel index usage for debugging
-                        int pixel_0_count = 0;
-                        int pixel_trans_count = 0;
-                        
-                        for (int y = 0; y < height; y++) {
-                            for (int x = 0; x < width; x++) {
-                                uint8_t pixel = pixels[y * width + x];
-                                if (pixel == 0) pixel_0_count++;
-                                if (pixel == transparent_idx) pixel_trans_count++;
-                                XPutPixel(image, x, y, palette[pixel]);
-                            }
-                        }
-                        
-                        GC gc = XCreateGC(dpy, pixmap, 0, NULL);
-                        XPutImage(dpy, pixmap, gc, image, 0, 0, 0, 0, width, height);
-                        XFreeGC(dpy, gc);
-                        XDestroyImage(image);
-                        
-                        pixmaps[state_count] = pixmap;
-                        widths[state_count] = width;
-                        heights[state_count] = height;
-                        
-                        // Debug: Check transparency for problematic icons
-                        const char *basename = strrchr(icon_path, '/');
-                        if (basename) basename++; else basename = icon_path;
-                        
-                        int debug_icon = (strstr(basename, "raamdisk.info") != NULL ||
-                                        strstr(basename, "Install.info") != NULL ||
-                                        strstr(basename, "OS3.9-Installation.info") != NULL ||
-                                        strstr(basename, "contribution.info") != NULL);
-                        
-                        if (debug_icon || state_count == 1) {
+            Pixmap pixmap;
+            XImage *image;
+            if (create_icon_rendering_context(dpy, width, height, &pixmap, &image, &vinfo) == 0) {
+                // Count pixel index usage for debugging
+                int pixel_0_count = 0;
+                int pixel_trans_count = 0;
+
+                for (int y = 0; y < height; y++) {
+                    for (int x = 0; x < width; x++) {
+                        uint8_t pixel = pixels[y * width + x];
+                        if (pixel == 0) pixel_0_count++;
+                        if (pixel == transparent_idx) pixel_trans_count++;
+                        XPutPixel(image, x, y, palette[pixel]);
+                    }
+                }
+
+                GC gc = XCreateGC(dpy, pixmap, 0, NULL);
+                XPutImage(dpy, pixmap, gc, image, 0, 0, 0, 0, width, height);
+                XFreeGC(dpy, gc);
+                XDestroyImage(image);
+
+                pixmaps[state_count] = pixmap;
+                widths[state_count] = width;
+                heights[state_count] = height;
+
+                // Debug: Check transparency for problematic icons
+                const char *basename = strrchr(icon_path, '/');
+                if (basename) basename++; else basename = icon_path;
+
+                int debug_icon = (strstr(basename, "raamdisk.info") != NULL ||
+                                strstr(basename, "Install.info") != NULL ||
+                                strstr(basename, "OS3.9-Installation.info") != NULL ||
+                                strstr(basename, "contribution.info") != NULL);
+
+                if (debug_icon || state_count == 1) {
                             int transparent_count = 0;
                             int black_count = 0;
                             int white_count = 0;
@@ -717,11 +726,7 @@ static int parse_glowicon(Display *dpy, const uint8_t *data, long size, long off
                             }
                         }
                         
-                        state_count++;
-                    } else {
-                        XFreePixmap(dpy, pixmap);
-                    }
-                }
+                state_count++;
             }
             
             free(pixels);
@@ -934,20 +939,13 @@ static int load_aicon_container(FileIcon *icon, RenderContext *ctx,
 
     // Get 32-bit TrueColor visual for alpha compositing (same as classic icons)
     XVisualInfo vinfo;
-    if (!XMatchVisualInfo(ctx->dpy, DefaultScreen(ctx->dpy), ICON_RENDER_DEPTH, TrueColor, &vinfo)) {
-        log_error("[ERROR] No %d-bit TrueColor visual for AICON %s", ICON_RENDER_DEPTH, icon->path);
+    Pixmap normal_pixmap;
+    XImage *unused_image;
+    if (create_icon_rendering_context(ctx->dpy, width, height, &normal_pixmap, &unused_image, &vinfo) != 0) {
         imlib_free_image();
         return -1;
     }
-
-    // Create X11 Pixmap with proper depth (32-bit for alpha)
-    Pixmap normal_pixmap = XCreatePixmap(ctx->dpy, DefaultRootWindow(ctx->dpy),
-                                         width, height, ICON_RENDER_DEPTH);
-    if (!normal_pixmap) {
-        log_error("[ERROR] Failed to create pixmap for AICON %s", icon->path);
-        imlib_free_image();
-        return -1;
-    }
+    XDestroyImage(unused_image);  // Imlib2 renders directly to pixmap, don't need XImage
 
     // Configure Imlib2 context
     imlib_context_set_display(ctx->dpy);

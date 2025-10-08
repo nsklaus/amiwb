@@ -79,7 +79,7 @@ void workbench_handle_button_press(XButtonEvent *event) {
                 open_file(icon);
                 icon->last_click_time = click_time;  // Icon still valid for files
             } else if (icon->type == TYPE_ICONIFIED) {
-                restore_iconified(icon);
+                wb_icons_restore_iconified(icon);
                 // Icon freed by restore, don't access
             }
             redraw_canvas(canvas);

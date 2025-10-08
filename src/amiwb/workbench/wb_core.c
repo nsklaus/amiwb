@@ -112,7 +112,7 @@ void open_directory(FileIcon *icon, Canvas *current_canvas) {
                 for (int i = 0; i < count; i++) {
                     FileIcon *ic = icons[i];
                     if (ic && ic->type == TYPE_ICONIFIED && ic->iconified_canvas == existing) {
-                        restore_iconified(ic);
+                        wb_icons_restore_iconified(ic);
                         return;
                     }
                 }

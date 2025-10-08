@@ -3,6 +3,7 @@
 #include "render.h"
 #include "intuition/itn_public.h"  // For is_restarting()
 #include "workbench/wb_public.h"
+#include "workbench/wb_internal.h"
 #include "config.h"
 #include "amiwbrc.h"  // For config access
 #include "menus/menu_public.h"
@@ -539,8 +540,8 @@ void redraw_canvas(Canvas *canvas) {
         // Render icons (now includes during interactive resize for better UX)
         // =============
         if ((canvas->type == DESKTOP || canvas->type == WINDOW) && !canvas->scanning){
-            FileIcon **icon_array = get_icon_array();
-            int icon_count = get_icon_count();
+            FileIcon **icon_array = wb_icons_array_get();
+            int icon_count = wb_icons_array_count();
 
             // Compute visible content bounds (viewport) for clipping
             int view_left = canvas->scroll_x;
