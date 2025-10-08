@@ -1,5 +1,5 @@
 #include "xdnd.h"
-#include "icons.h"  // For FileIcon type
+#include "icons/icon_public.h"  // For FileIcon type
 #include "config.h" // For PATH_SIZE, NAME_SIZE constants
 #include "workbench/wb_public.h"
 #include "workbench/wb_internal.h"

@@ -3,7 +3,7 @@
 
 #include "wb_public.h"
 #include "../config.h"
-#include "../icons.h"
+#include "../icons/icon_public.h"
 #include "../intuition/itn_public.h"
 #include "../../toolkit/progressbar/progressbar.h"
 #include <X11/Xlib.h>

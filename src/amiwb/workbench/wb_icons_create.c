@@ -4,7 +4,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "wb_internal.h"
 #include "../config.h"
-#include "../icons.h"
+#include "../icons/icon_public.h"
 #include "../render/rnd_public.h"
 #include <stdio.h>
 #include <stdlib.h>

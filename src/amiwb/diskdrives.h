@@ -4,7 +4,7 @@
 #define DISKDRIVES_H
 
 #include <stdbool.h>
-#include "icons.h"
+#include "icons/icon_public.h"
 
 #define MAX_DRIVES 32
 

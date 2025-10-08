@@ -24,7 +24,8 @@ AMIWB_SRCS = $(wildcard $(AMIWB_DIR)/*.c) \
              $(wildcard $(AMIWB_DIR)/menus/addons/*.c) \
              $(wildcard $(AMIWB_DIR)/dialogs/*.c) \
              $(wildcard $(AMIWB_DIR)/events/*.c) \
-             $(wildcard $(AMIWB_DIR)/render/*.c)
+             $(wildcard $(AMIWB_DIR)/render/*.c) \
+             $(wildcard $(AMIWB_DIR)/icons/*.c)
 TOOLKIT_SRCS = $(wildcard $(TOOLKIT_DIR)/*.c) \
                $(wildcard $(TOOLKIT_DIR)/button/*.c) \
                $(wildcard $(TOOLKIT_DIR)/inputfield/*.c) \
@@ -74,6 +75,9 @@ $(AMIWB_DIR)/events/%.o: $(AMIWB_DIR)/events/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
 
 $(AMIWB_DIR)/render/%.o: $(AMIWB_DIR)/render/%.c
+	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
+
+$(AMIWB_DIR)/icons/%.o: $(AMIWB_DIR)/icons/%.c
 	$(CC) $(COMMON_CFLAGS) $(COMMON_INCLUDES) -c $< -o $@
 
 $(TOOLKIT_DIR)/%.o: $(TOOLKIT_DIR)/%.c

@@ -8,7 +8,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
 #include "../intuition/itn_public.h"
-#include "../icons.h"
+#include "../icons/icon_public.h"
 
 // ============================================================================
 // Lifecycle Management

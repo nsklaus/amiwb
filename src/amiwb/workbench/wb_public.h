@@ -5,7 +5,7 @@
 // This replaces the old monolithic workbench.h
 
 #include "../intuition/itn_public.h"
-#include "../icons.h"
+#include "../icons/icon_public.h"
 
 #define INITIAL_ICON_CAPACITY 16
 

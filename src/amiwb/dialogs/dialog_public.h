@@ -7,7 +7,7 @@
 
 #include "../config.h"
 #include "../intuition/itn_public.h"
-#include "../icons.h"
+#include "../icons/icon_public.h"
 #include <stdbool.h>
 
 // Forward declarations (opaque types for external modules)

@@ -1,8 +1,9 @@
-// File: icons.h
-#ifndef ICONS_H
-#define ICONS_H
+// File: icon_public.h
+// Public API for icon system
+#ifndef ICON_PUBLIC_H
+#define ICON_PUBLIC_H
 
-#include "intuition/itn_public.h"
+#include "../intuition/itn_public.h"
 
 typedef enum IconType { TYPE_FILE, TYPE_DRAWER, TYPE_ICONIFIED, TYPE_DEVICE } IconType;
 
@@ -20,18 +21,16 @@ typedef struct {
     Picture current_picture;    // Current displayed picture
     Window display_window;      // Window ID of display canvas (desktop or window)
     Time last_click_time;       // Timestamp of last click for double-click detection
-    Canvas *iconified_canvas;    // Pointer to the iconified canvas (for TYPE_ICONIFIED)
+    Canvas *iconified_canvas;   // Pointer to the iconified canvas (for TYPE_ICONIFIED)
     bool render_error_logged;   // Flag to prevent repeated render error logging
 } FileIcon;
 
-// Function prototypes
-
-// Icon lifecycle management - icons.c owns complete lifecycle
+// Icon lifecycle management
 FileIcon* create_file_icon(const char* path, int x, int y, IconType type,
                            Window display_window, RenderContext* ctx);
-void destroy_file_icon(FileIcon* icon);  // Complete cleanup
+void destroy_file_icon(FileIcon* icon);
 
-// Internal helper (public for backward compatibility during migration)
+// Icon rendering (public for workbench module)
 void create_icon_images(FileIcon* icon, RenderContext* ctx);
 
 #endif
