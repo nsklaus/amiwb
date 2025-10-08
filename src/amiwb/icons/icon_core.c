@@ -38,7 +38,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
     long size;
 
     if (icon_load_file(icon_path, &data, &size)) {
-        log_error("[ERROR] icons.c:create_icon_images() - Failed to load icon file: %s", icon_path);
+        log_error("[ERROR] icon_core.c:create_icon_images() - Failed to load icon file: %s", icon_path);
         return;
     }
 
@@ -51,7 +51,7 @@ void create_icon_images(FileIcon *icon, RenderContext *ctx) {
 
     // Check for Amiga format (classic DiskObject)
     if (size < 78 || icon_read_be16(data) != 0xE310 || icon_read_be16(data + 2) != 1) {
-        log_error("[ERROR] icons.c:create_icon_images() - Invalid icon header in %s", icon_path);
+        log_error("[ERROR] icon_core.c:create_icon_images() - Invalid icon header in %s", icon_path);
         free(data);
         return;
     }

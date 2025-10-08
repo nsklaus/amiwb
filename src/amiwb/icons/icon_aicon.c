@@ -34,9 +34,6 @@ int icon_load_aicon(FileIcon *icon, RenderContext *ctx,
     const uint8_t *dir_ptr = data + sizeof(AiconHeader);
     const AiconSectionEntry *entries = (const AiconSectionEntry *)dir_ptr;
 
-    printf("[AICON] Loading %s: version=%d, sections=%d\n",
-           icon->path, hdr->version, hdr->num_sections);
-
     const uint8_t *png1_data = NULL, *png2_data = NULL;
     uint32_t png1_size = 0, png2_size = 0;
 
@@ -44,9 +41,6 @@ int icon_load_aicon(FileIcon *icon, RenderContext *ctx,
     for (int i = 0; i < hdr->num_sections; i++) {
         uint32_t offset = entries[i].offset;
         uint32_t sec_size = entries[i].size;
-
-        printf("[AICON]   Section[%d]: type=%u offset=%u size=%u\n",
-               i, entries[i].type, offset, sec_size);
 
         // Validate offset and size
         if (offset + sec_size > size) {
@@ -58,15 +52,11 @@ int icon_load_aicon(FileIcon *icon, RenderContext *ctx,
         case SECTION_PNG_NORMAL:
             png1_data = data + offset;
             png1_size = sec_size;
-            printf("[AICON]     PNG_NORMAL at offset %u, first 4 bytes: %02x %02x %02x %02x\n",
-                   offset, png1_data[0], png1_data[1], png1_data[2], png1_data[3]);
             break;
 
         case SECTION_PNG_SELECTED:
             png2_data = data + offset;
             png2_size = sec_size;
-            printf("[AICON]     PNG_SELECTED at offset %u, first 4 bytes: %02x %02x %02x %02x\n",
-                   offset, png2_data[0], png2_data[1], png2_data[2], png2_data[3]);
             break;
 
         case SECTION_METADATA:
@@ -85,17 +75,13 @@ int icon_load_aicon(FileIcon *icon, RenderContext *ctx,
     char tmp_path[256];
     snprintf(tmp_path, sizeof(tmp_path), "/tmp/amiwb_aicon_%d.png", getpid());
 
-    printf("[AICON] Writing %u bytes to temp file: %s\n", png1_size, tmp_path);
-
     FILE *tmp_file = fopen(tmp_path, "wb");
     if (!tmp_file) {
         log_error("[ERROR] Failed to create temp file for AICON");
         return -1;
     }
-    size_t written = fwrite(png1_data, 1, png1_size, tmp_file);
+    fwrite(png1_data, 1, png1_size, tmp_file);
     fclose(tmp_file);
-
-    printf("[AICON] Wrote %zu bytes, loading with Imlib2...\n", written);
 
     // Load with Imlib2
     Imlib_Image img1 = imlib_load_image(tmp_path);
@@ -110,8 +96,6 @@ int icon_load_aicon(FileIcon *icon, RenderContext *ctx,
     imlib_context_set_image(img1);
     int width = imlib_image_get_width();
     int height = imlib_image_get_height();
-
-    printf("[AICON] Imlib2 loaded image: %dx%d\n", width, height);
 
     // Get 32-bit TrueColor visual for alpha compositing (same as classic icons)
     XVisualInfo vinfo;

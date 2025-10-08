@@ -706,7 +706,7 @@ void itn_canvas_cleanup_compositing(Canvas *canvas) {
 
 // Iconify a window - hide it and create desktop icon
 void iconify_canvas(Canvas *canvas) {
-    if (!canvas || canvas->type != WINDOW) return;
+    if (!canvas || (canvas->type != WINDOW && canvas->type != DIALOG)) return;
 
     Display *dpy = itn_core_get_display();
     if (!dpy) return;

@@ -498,19 +498,7 @@ static void render_canvas_content(Canvas *canvas, RenderContext *ctx, Picture de
         return;
     }
 
-    // Render dialog content - dispatch to specialized dialog renderers
-    if (canvas->type == DIALOG) {
-        if (wb_progress_monitor_is_canvas(canvas)) {
-            wb_progress_monitor_render(canvas);
-        } else if (is_iconinfo_canvas(canvas)) {
-            render_iconinfo_content(canvas);
-        } else {
-            render_dialog_content(canvas);
-        }
-        return;
-    }
-
-    // Draw frame for WINDOW and DIALOG types (skip when fullscreen)
+    // Draw frame for WINDOW and DIALOG types BEFORE content (skip when fullscreen)
     if ((canvas->type == WINDOW || canvas->type == DIALOG) && !canvas->fullscreen) {
         XRenderColor frame_color = canvas->active ? BLUE : GRAY;
 
@@ -644,6 +632,17 @@ static void render_canvas_content(Canvas *canvas, RenderContext *ctx, Picture de
         // Draw scrollbar knobs for workbench windows
         if (canvas->type == WINDOW && canvas->client_win == None) {
             render_scrollbar_knobs(canvas, ctx, dest);
+        }
+    }
+
+    // Render dialog content AFTER frame - dispatch to specialized dialog renderers
+    if (canvas->type == DIALOG) {
+        if (wb_progress_monitor_is_canvas(canvas)) {
+            wb_progress_monitor_render(canvas);
+        } else if (is_iconinfo_canvas(canvas)) {
+            render_iconinfo_content(canvas);
+        } else {
+            render_dialog_content(canvas);
         }
     }
 }
