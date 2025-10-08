@@ -5,7 +5,10 @@
 #include "itn_internal.h"
 #include "../workbench/wb_public.h"
 #include "../menus/menu_public.h"
+#include "../menus/menu_internal.h"
 #include "../render_public.h"
+#include "../dialogs.h"
+#include "../iconinfo.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xdamage.h>
@@ -146,7 +149,6 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
     // Use global show_hidden state for new windows
     c->show_hidden = get_global_show_hidden_state();
     // Use global view mode for new windows
-    extern ViewMode get_global_view_mode(void);
     c->view_mode = get_global_view_mode();
     // Initialize damage tracking - mark entire canvas as needing initial draw
     c->needs_redraw = true;
@@ -452,11 +454,6 @@ void itn_canvas_destroy(Canvas *canvas) {
     // Clean up dialog-specific structures before destroying canvas
     if (canvas->type == DIALOG) {
         // Check if it's an iconinfo dialog and clean it up
-        extern bool is_iconinfo_canvas(Canvas *canvas);
-        extern void close_icon_info_dialog_by_canvas(Canvas *canvas);
-        extern void close_dialog_by_canvas(Canvas *canvas);
-        extern void close_progress_dialog_by_canvas(Canvas *canvas);
-
         if (is_iconinfo_canvas(canvas)) {
             close_icon_info_dialog_by_canvas(canvas);
         } else {
@@ -477,7 +474,6 @@ void itn_canvas_destroy(Canvas *canvas) {
         }
 
         // Also check nested menu (extern because it's static in menu_core.c)
-        extern Menu *nested_menu;
         if (nested_menu && nested_menu->canvas == canvas) {
             nested_menu->canvas = NULL;
         }
@@ -673,7 +669,6 @@ static int ignore_bad_damage(Display *dpy, XErrorEvent *error) {
         return 0;
     }
     // Call the default error handler for other errors
-    extern int x_error_handler(Display *dpy, XErrorEvent *error);
     return x_error_handler(dpy, error);
 }
 
@@ -717,8 +712,6 @@ void iconify_canvas(Canvas *canvas) {
     if (!dpy) return;
 
     // Check if this window owns the app menu before iconifying
-    extern Window get_app_menu_window(void);
-    extern void restore_system_menu(void);
     bool was_menu_owner = (canvas->client_win == get_app_menu_window());
 
     // Hide the window

@@ -244,7 +244,6 @@ void menu_handle_button_release(XButtonEvent *event) {
     // Conditional redraw: only if not quitting (running is true)
     Menu *menubar = get_menubar_menu();
     Canvas *menubar_canvas = get_menubar();
-    extern bool running;  // Defined in main
     if (running && menubar && menubar_canvas) {
         // Always revert menubar to logo state after a click
         if (get_show_menus_state()) toggle_menubar_state();

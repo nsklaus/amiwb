@@ -4,6 +4,7 @@
 #include "../config.h"
 #include "itn_internal.h"
 #include "../render_public.h"
+#include "../render.h"
 #include "../workbench/wb_public.h"
 #include "../menus/menu_public.h"
 #include "itn_scrollbar.h"
@@ -357,8 +358,6 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
         itn_canvas_cleanup_compositing(canvas);
 
         // Check if this client owns the app menus and restore system menu
-        extern Window get_app_menu_window(void);
-        extern void restore_system_menu(void);
         if (client_win == get_app_menu_window()) {
             // This client owns the menubar - restore system menu
             restore_system_menu();
@@ -480,7 +479,6 @@ void intuition_handle_map_notify(XMapEvent *event) {
     if (!display) return;
 
     // CRITICAL: Skip our own overlay window!
-    extern Window itn_composite_get_overlay_window(void);
     Window overlay = itn_composite_get_overlay_window();
     if (event->window == overlay) {
         return;  // Never handle our own overlay window
@@ -840,7 +838,6 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     }
 
     // Resize menubar to new screen width
-    extern Canvas *get_menubar(void);
     Canvas *menubar = get_menubar();
     if (menubar) {
         itn_geometry_move_resize(menubar, 0, 0, event->width, MENUBAR_HEIGHT);
@@ -849,7 +846,6 @@ void intuition_handle_rr_screen_change(XRRScreenChangeNotifyEvent *event) {
     }
 
     // Reload wallpapers for new screen dimensions
-    extern void render_load_wallpapers(void);
     render_load_wallpapers();
 
     // Mark entire screen as damaged

@@ -104,7 +104,6 @@ void itn_composite_setup_canvas(Canvas *canvas);
 void itn_composite_render_all(void);
 void itn_composite_render_canvas(Canvas *canvas);
 Picture itn_composite_get_canvas_picture(Canvas *canvas);
-void itn_composite_update_canvas_pixmap(Canvas *canvas);
 void itn_composite_process_damage(XDamageNotifyEvent *ev);
 void itn_composite_handle_expose(XExposeEvent *ev);
 bool itn_composite_needs_frame(void);
@@ -149,7 +148,6 @@ void itn_resize_motion(int mouse_x, int mouse_y);
 
 // Composite module - override-redirect window management
 void itn_composite_add_override(Window win, XWindowAttributes *attrs);
-bool itn_composite_remove_override(Window win);
 
 // ============================================================================
 // Utility Macros

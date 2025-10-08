@@ -21,7 +21,7 @@ static void create_icon_with_type(const char *path, Canvas *canvas, int x, int y
 // ============================================================================
 
 // Create icon with full metadata (icon_path for .info, full_path for actual file)
-FileIcon *create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x, int y,
+FileIcon *wb_icons_create_with_icon_path(const char *icon_path, Canvas *canvas, int x, int y,
                                     const char *full_path, const char *name, int type) {
     create_icon_with_type(icon_path, canvas, x, y, type);
     FileIcon *icon = wb_icons_array_get_last_added();

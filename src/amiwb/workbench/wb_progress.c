@@ -736,8 +736,6 @@ static int copy_directory_recursive_with_progress(const char *src_dir, const cha
 // ============================================================================
 
 void workbench_check_progress_dialogs(void) {
-    extern ProgressDialog* get_all_progress_dialogs(void);  // From dialogs.c
-    extern Canvas* create_progress_window(ProgressOperation op, const char *title);  // From dialogs.c
     ProgressDialog *dialog = get_all_progress_dialogs();
     time_t now = time(NULL);
     
@@ -919,18 +917,18 @@ void workbench_check_progress_dialogs(void) {
 
                             // Find a free spot for the new directory icon
                             int new_x, new_y;
-                            find_free_slot(canvas, &new_x, &new_y);
+                            wb_layout_find_free_slot(canvas, &new_x, &new_y);
                             // Found position for new icon
 
                             // Create the directory icon using the proper metadata function
                             // icon_path = def_dir.info, msg.dest_path = actual directory, dir_name = label
                             // Create icon with proper metadata
-                            FileIcon *new_icon = create_icon_with_metadata(icon_path, canvas, new_x, new_y,
+                            FileIcon *new_icon = wb_icons_create_with_icon_path(icon_path, canvas, new_x, new_y,
                                                     msg.dest_path, dir_name, TYPE_DRAWER);
 
                             if (new_icon) {
                                 // Icon created successfully - update canvas to show it
-                                compute_content_bounds(canvas);
+                                wb_layout_compute_bounds(canvas);
                                 compute_max_scroll(canvas);
                                 redraw_canvas(canvas);
                                 // Canvas updated with new icon
@@ -974,16 +972,16 @@ void workbench_check_progress_dialogs(void) {
 
                             if (icon_path) {
                                 // Create the icon at the specified position
-                                create_icon_with_metadata(icon_path, target, msg.icon_x, msg.icon_y,
+                                wb_icons_create_with_icon_path(icon_path, target, msg.icon_x, msg.icon_y,
                                                         msg.dest_path, filename, file_type);
 
                                 // Apply layout if in list view
                                 if (target->view_mode == VIEW_NAMES) {
-                                    apply_view_layout(target);
+                                    wb_layout_apply_view(target);
                                 }
 
                                 // Refresh display
-                                compute_content_bounds(target);
+                                wb_layout_compute_bounds(target);
                                 compute_max_scroll(target);
                                 redraw_canvas(target);
                             }
@@ -996,7 +994,6 @@ void workbench_check_progress_dialogs(void) {
                         close_progress_dialog(dialog);
                     } else {
                         // No window was created, just free the structure
-                        extern void remove_progress_dialog_from_list(ProgressDialog *dialog);
                         remove_progress_dialog_from_list(dialog);
                         free(dialog);
                     }
@@ -1052,7 +1049,6 @@ void workbench_check_progress_dialogs(void) {
                     close_progress_dialog(dialog);
                 } else {
                     // No window was created, just free the structure
-                    extern void remove_progress_dialog_from_list(ProgressDialog *dialog);
                     remove_progress_dialog_from_list(dialog);
                     free(dialog);
                 }

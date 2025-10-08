@@ -238,9 +238,14 @@ void itn_render_consume_timer(void);
 void itn_render_process_frame(void);
 void itn_render_log_metrics(void);
 void itn_render_record_damage_event(void);
+void itn_render_accumulate_canvas_damage(Canvas *canvas);
+void itn_render_schedule_frame(void);
+void itn_render_update_metrics(int composite_calls, uint64_t pixels, int visible);
 
 // --- Compositor ---
 void itn_composite_process_damage(XDamageNotifyEvent *event);
+bool itn_composite_remove_override(Window win);
+void itn_composite_update_canvas_pixmap(Canvas *canvas);
 
 // --- Decoration and hit testing ---
 int hit_test(Canvas *canvas, int x, int y);
@@ -302,6 +307,7 @@ bool itn_resize_is_active(void);
 void begin_shutdown(void);
 void begin_restart(void);
 bool is_restarting(void);
+void itn_core_shutdown_compositor(void);
 
 // --- GTK dialog cleanup ---
 void cleanup_gtk_dialog_frame(Canvas *canvas);

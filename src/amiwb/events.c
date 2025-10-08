@@ -12,6 +12,7 @@
 #include "config.h"
 #include "amiwbrc.h"  // For config access
 #include "xdnd.h"    // For XDND protocol support
+#include "diskdrives.h"
 #include <X11/extensions/Xrandr.h>
 #include <X11/XF86keysym.h> // media keys
 #include <X11/Xlib.h>
@@ -500,7 +501,6 @@ void handle_events(void) {
         // Check for drive changes every second
         if (now - last_drive_check >= 1) {
             last_drive_check = now;
-            extern void diskdrives_poll(void);
             diskdrives_poll();
         }
 
@@ -642,9 +642,6 @@ void handle_button_press(XButtonEvent *event) {
         bool dialog_consumed = false;
         if (canvas->type == DIALOG) {
             // Check if it's an iconinfo dialog first
-            extern bool is_iconinfo_canvas(Canvas *canvas);
-            extern bool iconinfo_handle_button_press(XButtonEvent *event);
-            
             if (is_iconinfo_canvas(canvas)) {
                 dialog_consumed = iconinfo_handle_button_press(&ev);
             } else {
@@ -704,9 +701,6 @@ void handle_button_release(XButtonEvent *event) {
             bool dialog_consumed = false;
             if (tc && tc->type == DIALOG) {
                 // Check if it's an iconinfo dialog first
-                extern bool is_iconinfo_canvas(Canvas *canvas);
-                extern bool iconinfo_handle_button_release(XButtonEvent *event);
-                
                 if (is_iconinfo_canvas(tc)) {
                     dialog_consumed = iconinfo_handle_button_release(&ev);
                 } else {
@@ -733,9 +727,6 @@ void handle_button_release(XButtonEvent *event) {
     bool dialog_consumed = false;
     if (canvas->type == DIALOG) {
         // Check if it's an iconinfo dialog first
-        extern bool is_iconinfo_canvas(Canvas *canvas);
-        extern bool iconinfo_handle_button_release(XButtonEvent *event);
-        
         if (is_iconinfo_canvas(canvas)) {
             dialog_consumed = iconinfo_handle_button_release(&ev);
         } else {
@@ -814,7 +805,6 @@ void handle_key_press(XKeyEvent *event) {
             }
             // Super+Shift+R: Restart AmiWB
             if (keysym == XK_r || keysym == XK_R) {
-                extern void handle_restart_request(void);
                 handle_restart_request();
                 return;
             }
@@ -996,7 +986,7 @@ void handle_key_press(XKeyEvent *event) {
                         }
                     }
                     if (target->type == WINDOW) {
-                        apply_view_layout(target);
+                        wb_layout_apply_view(target);
                         compute_max_scroll(target);
                     }
                     redraw_canvas(target);
@@ -1023,11 +1013,8 @@ void handle_key_press(XKeyEvent *event) {
     Canvas *active = itn_focus_get_active();
     if (active && active->type == DIALOG) {
         bool dialog_consumed = false;
-        
+
         // Check if it's an iconinfo dialog
-        extern bool is_iconinfo_canvas(Canvas *canvas);
-        extern bool iconinfo_handle_key_press(XKeyEvent *event);
-        
         if (is_iconinfo_canvas(active)) {
             dialog_consumed = iconinfo_handle_key_press(event);
         } else {
@@ -1129,7 +1116,6 @@ void handle_property_notify(XPropertyEvent *event) {
     // Handle menu state changes
     if (event->atom == amiwb_menu_states) {
         // Call menu handler to update menu states
-        extern void handle_menu_state_change(Window win);
         handle_menu_state_change(event->window);
         return;
     }
@@ -1242,10 +1228,8 @@ void handle_configure_notify(XConfigureEvent *event) {
 
 void handle_unmap_notify(XUnmapEvent *event) {
     // First check if it's an override-redirect window being unmapped
-    extern bool itn_composite_remove_override(Window win);
     if (itn_composite_remove_override(event->window)) {
         // Was an override window - schedule frame to remove it from display
-        extern void itn_render_schedule_frame(void);
         itn_render_schedule_frame();
         return;
     }

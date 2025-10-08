@@ -109,6 +109,7 @@ void close_progress_dialog_by_canvas(Canvas *canvas);
 bool is_progress_dialog(Canvas *canvas);
 ProgressDialog* get_progress_dialog_for_canvas(Canvas *canvas);
 void render_progress_dialog_content(Canvas *canvas);
+Canvas* create_progress_window(ProgressOperation op, const char *title);
 
 // Progress dialog list management
 void add_progress_dialog_to_list(ProgressDialog *dialog);

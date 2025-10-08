@@ -56,7 +56,6 @@ static int ignore_compositor_setup_errors(Display *dpy, XErrorEvent *error) {
         return 0;  // Suppress error
     }
     // Call the default error handler for unexpected errors
-    extern int x_error_handler(Display *dpy, XErrorEvent *error);
     return x_error_handler(dpy, error);
 }
 
@@ -534,7 +533,6 @@ void itn_composite_render_all(void) {
                             0, 0, 0, 0, c->x, c->y, c->width, c->height);
 
             // Update metrics - properly access the itn_render metrics
-            extern void itn_render_update_metrics(int composite_calls, uint64_t pixels, int visible);
             itn_render_update_metrics(1, (uint64_t)(c->width * c->height), visible_count);
         } else {
             log_error("[COMPOSITE] Canvas %d has no comp_picture", i);
@@ -566,7 +564,6 @@ void itn_composite_render_all(void) {
                                     ow->width, ow->height);
 
                     // Update metrics
-                    extern void itn_render_update_metrics(int composite_calls, uint64_t pixels, int visible);
                     itn_render_update_metrics(1, (uint64_t)(ow->width * ow->height),
                                              visible_count + override_count);
                 }
@@ -674,7 +671,6 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
 
     if (damaged) {
         // Record damage event for metrics
-        extern void itn_render_record_damage_event(void);
         itn_render_record_damage_event();
 
         // Update damage bounds
@@ -704,7 +700,6 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
             }
 
             // Record damage event for metrics
-            extern void itn_render_record_damage_event(void);
             itn_render_record_damage_event();
 
             // Mark as needing repaint

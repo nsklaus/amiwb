@@ -86,7 +86,7 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
                 if (stat(base_path, &st) != 0) {
                     // Orphan .info - create at 0,0
                     // Use full_path (the .info file itself), not info_path (which has .info appended again)
-                    create_icon_with_metadata(full_path, canvas, 0, 0,
+                    wb_icons_create_with_icon_path(full_path, canvas, 0, 0,
                                               full_path, entry->d_name, TYPE_FILE);
                 }
                 continue;
@@ -103,7 +103,7 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
                                     wb_deficons_get_for_file(entry->d_name, type == TYPE_DRAWER);
             
             if (icon_path) {
-                create_icon_with_metadata(icon_path, canvas, 0, 0,
+                wb_icons_create_with_icon_path(icon_path, canvas, 0, 0,
                                          full_path, entry->d_name, type);
             }
         }

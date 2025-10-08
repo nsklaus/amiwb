@@ -10,6 +10,7 @@
 #include "../iconinfo.h"
 #include "../events.h"
 #include "../config.h"
+#include "../diskdrives.h"
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
@@ -230,9 +231,9 @@ static void execute_pending_deletes(void) {
     // Update display once
     if (delete_count > 0 && g_pending_delete_canvas) {
         if (need_layout_update) {
-            apply_view_layout(g_pending_delete_canvas);
+            wb_layout_apply_view(g_pending_delete_canvas);
         }
-        compute_content_bounds(g_pending_delete_canvas);
+        wb_layout_compute_bounds(g_pending_delete_canvas);
         compute_max_scroll(g_pending_delete_canvas);
         redraw_canvas(g_pending_delete_canvas);
         // Let compositor handle updates through events
@@ -273,7 +274,7 @@ static void open_file_or_directory(FileIcon *icon) {
             Canvas *new_window = create_canvas(icon->path, 100, 100, 640, 480, WINDOW);
             if (new_window) {
                 refresh_canvas_from_directory(new_window, icon->path);
-                apply_view_layout(new_window);
+                wb_layout_apply_view(new_window);
                 compute_max_scroll(new_window);
                 redraw_canvas(new_window);
             }
@@ -434,7 +435,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
                     }
                     // Layout only applies to workbench windows, not desktop
                     if (target->type == WINDOW) {
-                        apply_view_layout(target);
+                        wb_layout_apply_view(target);
                         compute_max_scroll(target);
                     }
                     redraw_canvas(target);
@@ -708,7 +709,7 @@ void trigger_parent_action(void) {
                     640, 480, WINDOW);
                 if (parent_window) {
                     refresh_canvas_from_directory(parent_window, parent_path);
-                    apply_view_layout(parent_window);
+                    wb_layout_apply_view(parent_window);
                     compute_max_scroll(parent_window);
                     redraw_canvas(parent_window);
                 }
@@ -1035,7 +1036,6 @@ void trigger_eject_action(void) {
     // Only eject if it's a TYPE_DEVICE icon
     if (selected && selected->type == TYPE_DEVICE) {
         // Import eject_drive function from diskdrives.h
-        extern void eject_drive(FileIcon *icon);
         eject_drive(selected);
     }
 }
@@ -1277,7 +1277,6 @@ void handle_quit_request(void) {
 
     // Menus/workbench use canvases; keep render/Display alive until after compositor shut down
     // First, stop compositing (uses the Display)
-    extern void itn_core_shutdown_compositor(void);
     itn_core_shutdown_compositor();
     // Then tear down UI modules
     cleanup_menus();
@@ -1292,7 +1291,6 @@ void handle_suspend_request(void) {
 }
 
 void handle_restart_request(void) {
-    extern void restart_amiwb(void);
     restart_amiwb();
 }
 

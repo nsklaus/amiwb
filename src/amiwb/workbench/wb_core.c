@@ -48,7 +48,6 @@ void cleanup_workbench(void) {
     wb_initialized = false;
 
     // Ensure drag resources are released
-    extern void workbench_cleanup_drag_state(void);
     workbench_cleanup_drag_state();
 
     // Destroy all icons
@@ -224,14 +223,14 @@ void workbench_create_new_drawer(Canvas *target_canvas) {
 
     // Find free position
     int new_x, new_y;
-    find_free_slot(target_canvas, &new_x, &new_y);
+    wb_layout_find_free_slot(target_canvas, &new_x, &new_y);
 
     // Build full path
     char new_dir_full[FULL_SIZE];
     snprintf(new_dir_full, sizeof(new_dir_full), "%s/%s", target_path, new_dir_name);
 
     // Create icon
-    FileIcon *new_icon = create_icon_with_metadata(icon_path, target_canvas,
+    FileIcon *new_icon = wb_icons_create_with_icon_path(icon_path, target_canvas,
                                                     new_x, new_y, new_dir_full,
                                                     new_dir_name, TYPE_DRAWER);
     if (!new_icon) {
@@ -240,7 +239,7 @@ void workbench_create_new_drawer(Canvas *target_canvas) {
     }
 
     // Update display
-    compute_content_bounds(target_canvas);
+    wb_layout_compute_bounds(target_canvas);
     compute_max_scroll(target_canvas);
     redraw_canvas(target_canvas);
 }

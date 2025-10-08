@@ -35,10 +35,6 @@ const char *wb_deficons_get_for_file(const char *filename, bool is_dir);
 // wb_icons_array.c - Icon Array Management
 // ============================================================================
 
-// Legacy function names (TODO: migrate to wb_icons_array_* naming)
-FileIcon **get_icon_array(void);  // Use wb_icons_array_get()
-int get_icon_count(void);         // Use wb_icons_array_count()
-
 // Get pointer to global icon array
 FileIcon **wb_icons_array_get(void);
 
@@ -71,9 +67,9 @@ FileIcon *wb_icons_create(const char *path, const char *label, int type);
 FileIcon *wb_icons_create_with_type(const char *path, const char *label,
                                      int type, const char *deficon_path);
 
-// Icon creation with full metadata
-FileIcon *wb_icons_create_with_metadata(const char *path, const char *label,
-                                         int type, int x, int y, Canvas *canvas);
+// Icon creation with explicit icon file (.info) and metadata
+FileIcon *wb_icons_create_with_icon_path(const char *icon_path, Canvas *canvas, int x, int y,
+                                          const char *path, const char *label, int type);
 
 // Destroy icon and free resources
 void wb_icons_destroy(FileIcon *icon);
@@ -90,10 +86,6 @@ void wb_icons_remove_for_canvas(Canvas *canvas);
 // Add prime desktop icons (RAM:, DH0:, etc)
 void wb_icons_add_prime_desktop(Canvas *desktop);
 
-// Legacy function names (TODO: migrate to wb_icons_* naming)
-FileIcon *create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x, int y,
-                                     const char *path, const char *label, int file_type);
-
 // ============================================================================
 // wb_icons_ops.c - Icon Operations
 // ============================================================================
@@ -109,7 +101,6 @@ void wb_icons_set_meta(FileIcon *icon, int x, int y);
 
 // Restore iconified window from icon
 void wb_icons_restore_iconified(FileIcon *icon);
-void restore_iconified(FileIcon *icon);  // Legacy alias
 
 // ============================================================================
 // wb_fileops.c - File Operations
@@ -203,11 +194,6 @@ void refresh_canvas(Canvas *canvas);
 // ============================================================================
 // wb_layout.c - View Modes and Layout
 // ============================================================================
-
-// Legacy function names (TODO: migrate to wb_layout_* naming)
-void compute_content_bounds(Canvas *canvas);
-void apply_view_layout(Canvas *canvas);
-void find_free_slot(Canvas *canvas, int *out_x, int *out_y);
 
 // Apply current view mode to canvas
 void wb_layout_apply_view(Canvas *canvas);

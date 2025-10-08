@@ -106,7 +106,6 @@ void wb_icons_restore_iconified(FileIcon *icon) {
     XSync(dpy, False);
     
     // Get fresh composite pixmap after mapping
-    extern void itn_composite_update_canvas_pixmap(Canvas *canvas);
     itn_composite_update_canvas_pixmap(canvas);
     
     // Prevent trailing click from deactivating

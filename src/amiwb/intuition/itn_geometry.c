@@ -305,7 +305,6 @@ void intuition_enter_fullscreen(Canvas *c) {
     }
 
     // Hide menubar while fullscreen is active
-    extern void menubar_apply_fullscreen(bool fullscreen);
     menubar_apply_fullscreen(true);
 
     // Force immediate update
@@ -358,7 +357,6 @@ void intuition_exit_fullscreen(Canvas *c) {
 
     // Show menubar if no fullscreen windows remain
     if (!fullscreen_active) {
-        extern void menubar_apply_fullscreen(bool fullscreen);
         menubar_apply_fullscreen(false);
     }
 

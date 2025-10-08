@@ -12,7 +12,7 @@
 #include <strings.h>
 
 // Forward declaration (now public - called from wb_drag.c)
-void apply_view_layout(Canvas *canvas);
+void wb_layout_apply_view(Canvas *canvas);
 
 // Global state
 static bool spatial_mode = true;  // New window per directory
@@ -99,7 +99,7 @@ void set_global_view_mode(ViewMode mode) {
 // Content Bounds Calculation
 // ============================================================================
 
-void compute_content_bounds(Canvas *canvas) {
+void wb_layout_compute_bounds(Canvas *canvas) {
     if (!canvas) return;
     
     FileIcon **icon_array = wb_icons_array_get();
@@ -254,7 +254,7 @@ void icon_cleanup(Canvas *canvas) {
         free(list);
     }
     
-    apply_view_layout(canvas);
+    wb_layout_apply_view(canvas);
     compute_max_scroll(canvas);
     redraw_canvas(canvas);
 }
@@ -264,12 +264,12 @@ void icon_cleanup(Canvas *canvas) {
 // ============================================================================
 
 // Apply view layout (exported for wb_drag.c)
-void apply_view_layout(Canvas *canvas) {
+void wb_layout_apply_view(Canvas *canvas) {
     if (!canvas) return;
     
     // Desktop remains icon grid
     if (canvas->type != WINDOW) {
-        compute_content_bounds(canvas);
+        wb_layout_compute_bounds(canvas);
         return;
     }
     
@@ -278,7 +278,7 @@ void apply_view_layout(Canvas *canvas) {
         int count = 0;
         FileIcon **list = wb_icons_for_canvas(canvas, &count);
         if (!list || count == 0) {
-            compute_content_bounds(canvas);
+            wb_layout_compute_bounds(canvas);
             return;
         }
         
@@ -312,7 +312,7 @@ void apply_view_layout(Canvas *canvas) {
         canvas->content_height = y + 10;
     } else {
         // Icon grid mode: keep positions, recompute bounds
-        compute_content_bounds(canvas);
+        wb_layout_compute_bounds(canvas);
     }
 }
 
@@ -330,7 +330,7 @@ void set_canvas_view_mode(Canvas *canvas, ViewMode m) {
     // Always cleanup icons when switching modes to ensure proper positioning
     icon_cleanup(canvas);
 
-    apply_view_layout(canvas);
+    wb_layout_apply_view(canvas);
     redraw_canvas(canvas);
 }
 
@@ -338,7 +338,7 @@ void set_canvas_view_mode(Canvas *canvas, ViewMode m) {
 // Find Free Slot
 // ============================================================================
 
-void find_free_slot(Canvas *canvas, int *out_x, int *out_y) {
+void wb_layout_find_free_slot(Canvas *canvas, int *out_x, int *out_y) {
     if (!canvas || !out_x || !out_y) return;
     
     int step_x = 110;

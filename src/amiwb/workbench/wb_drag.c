@@ -155,7 +155,7 @@ static void remove_icon_by_path_on_canvas(const char *abs_path, Canvas *canvas) 
 // Refresh canvas helper (exported for wb_icons_ops.c, wb_layout.c)
 void refresh_canvas(Canvas *canvas) {
     if (!canvas) return;
-    compute_content_bounds(canvas);
+    wb_layout_compute_bounds(canvas);
     compute_max_scroll(canvas);
     redraw_canvas(canvas);
 }
@@ -246,7 +246,7 @@ static void create_icon_for_dropped_file(const char *dst_path, Canvas *target,
         }
     }
 
-    create_icon_with_metadata(img_path, target, place_x, place_y,
+    wb_icons_create_with_icon_path(img_path, target, place_x, place_y,
                               dst_path, name_only, file_type);
 }
 
@@ -745,9 +745,9 @@ static void perform_cross_canvas_drop(Canvas *target) {
 
         // Apply layout
         if (target->type == WINDOW && target->view_mode == VIEW_NAMES) {
-            apply_view_layout(target);
+            wb_layout_apply_view(target);
         } else if (target->type == WINDOW && target->view_mode == VIEW_ICONS) {
-            compute_content_bounds(target);
+            wb_layout_compute_bounds(target);
         }
         compute_max_scroll(target);
 
@@ -781,7 +781,7 @@ static void perform_same_canvas_drop(Canvas *target) {
     }
 
     if (drag_source_canvas) {
-        compute_content_bounds(drag_source_canvas);
+        wb_layout_compute_bounds(drag_source_canvas);
         compute_max_scroll(drag_source_canvas);
         redraw_canvas(drag_source_canvas);
     }

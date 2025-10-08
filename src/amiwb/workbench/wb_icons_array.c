@@ -204,16 +204,6 @@ void wb_icons_array_cleanup(void) {
 // Public API Compatibility Wrappers (for external modules)
 // ============================================================================
 
-// Get icon count (old public API name)
-int get_icon_count(void) {
-    return wb_icons_array_count();
-}
-
-// Get icon array (old public API name)
-FileIcon **get_icon_array(void) {
-    return wb_icons_array_get();
-}
-
 // Get selected icon from canvas (old public API name)
 FileIcon *get_selected_icon_from_canvas(Canvas *canvas) {
     return wb_icons_array_get_selected_from_canvas(canvas);

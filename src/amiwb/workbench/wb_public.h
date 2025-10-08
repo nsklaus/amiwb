@@ -15,8 +15,8 @@ void cleanup_workbench(void);                               // Free icons and wo
 void clear_canvas_icons(Canvas *canvas);                    // Remove all icons for a canvas
 void create_icon(const char *path, Canvas *canvas, int x, int y); // Create an icon at x,y
 void create_icon_with_type(const char *path, Canvas *canvas, int x, int y, int type); // Create icon with explicit type
-FileIcon* create_icon_with_metadata(const char *icon_path, Canvas *canvas, int x, int y,
-                                   const char *full_path, const char *name, int type); // Create icon with proper metadata
+FileIcon* wb_icons_create_with_icon_path(const char *icon_path, Canvas *canvas, int x, int y,
+                                          const char *full_path, const char *name, int type); // Create icon with explicit .info path and metadata
 const char *definfo_for_file(const char *name, bool is_dir); // Get def_icon path for file extension
 void destroy_icon(FileIcon *icon);                          // Free icon resources and pictures
 FileIcon *find_icon(Window win, int x, int y);              // Hit-test an icon by position
@@ -36,13 +36,13 @@ void workbench_cleanup_drag_state(void);                    // Clean up drag sta
 void icon_cleanup(Canvas *canvas);
 
 // Compute content bounds from icons on canvas
-void compute_content_bounds(Canvas *canvas);
+void wb_layout_compute_bounds(Canvas *canvas);
 
 // Remove any icon associated with an iconified canvas (e.g., on destroy)
 void remove_icon_for_canvas(Canvas *canvas);
 
 // View mode/layout helpers
-void apply_view_layout(Canvas *canvas);                 // Layout per canvas->view_mode
+void wb_layout_apply_view(Canvas *canvas);              // Layout per canvas->view_mode
 void set_canvas_view_mode(Canvas *canvas, ViewMode m);  // Set mode, relayout, and redraw
 
 // Directory refresh: scan dir and rebuild icons, then redraw
@@ -51,7 +51,6 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath);
 // File operations
 void open_file(FileIcon *icon);                 // Open file with xdg-open
 FileIcon* create_iconified_icon(Canvas *c);     // Create icon for iconified window
-void restore_iconified(FileIcon *icon);         // Restore iconified window
 void workbench_open_directory(const char *path); // Open directory in new workbench window
 void workbench_create_new_drawer(Canvas *target_canvas); // Create new drawer with icon (no re-layout)
 

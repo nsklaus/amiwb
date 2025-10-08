@@ -9,6 +9,8 @@
 #include "render.h"
 #include "config.h"
 #include "amiwbrc.h"  // For config loading
+#include "diskdrives.h"
+#include "xdnd.h"
 #include <X11/Xlib.h>
 #include <stdio.h> // For fprintf
 #include <stdlib.h> // getenv
@@ -70,7 +72,6 @@ void restart_amiwb(void) {
     
     // Perform minimal cleanup - we're about to exec
     begin_shutdown();
-    extern void itn_core_shutdown_compositor(void);
     itn_core_shutdown_compositor();
     cleanup_render();     // Clean up Xft fonts BEFORE closing display
     cleanup_intuition();  // This closes the X display
@@ -213,18 +214,15 @@ int main(int argc, char *argv[]) {
     init_workbench();
 
     // Initialize XDND support
-    extern void xdnd_init(Display *dpy);
     xdnd_init(itn_core_get_display());
 
     // Initialize disk drives detection
-    extern void diskdrives_init(void);
     diskdrives_init();
     
     // Initialize events
     init_events();
 
     // Start compositor - MANDATORY, no fallback!
-    extern bool itn_core_init_compositor(void);
     if (!itn_core_init_compositor()) {
         fprintf(stderr, "FATAL: Compositor initialization failed.\n");
         fprintf(stderr, "Hardware acceleration is MANDATORY - no fallback, no compromise.\n");
@@ -243,16 +241,13 @@ int main(int argc, char *argv[]) {
     // Enter shutdown mode to suppress benign X errors
     begin_shutdown();
     // Stop compositor before closing the Display in cleanup_intuition()
-    extern void itn_core_shutdown_compositor(void);
     itn_core_shutdown_compositor();
     // Then tear down UI modules
     cleanup_menus();
     cleanup_dialogs();
     cleanup_iconinfo();
-    extern void diskdrives_cleanup(void);
     diskdrives_cleanup();
     cleanup_workbench();
-    extern void xdnd_shutdown(Display *dpy);
     xdnd_shutdown(itn_core_get_display());
     // Clean up render resources BEFORE closing Display (Xft fonts need display)
     cleanup_render();

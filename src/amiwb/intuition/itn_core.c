@@ -5,6 +5,7 @@
 #include "itn_internal.h"
 #include "../render_public.h"
 #include "../render.h"
+#include "../menus/menu_public.h"
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>  // For XClassHint, XGetWMProtocols
 #include <X11/Xatom.h>
@@ -372,7 +373,6 @@ bool init_display_and_root(void) {
     if (!g_display) return false;
 
     // Set error handler
-    extern int x_error_handler(Display *dpy, XErrorEvent *error);
     XSetErrorHandler(x_error_handler);
     XSync(g_display, False);
 
@@ -470,7 +470,6 @@ void iconify_all_windows(void) {
     for (int i = 0; i < count; i++) {
         Canvas *c = itn_manager_get_canvas(i);
         if (c && c->type == WINDOW && c != itn_canvas_get_desktop()) {
-            extern void iconify_canvas(Canvas *canvas);
             iconify_canvas(c);
         }
     }
@@ -502,7 +501,6 @@ static volatile int g_validation_error = 0;
 // Expected X11 race: window destroyed between validation and operation - unavoidable, must silence
 // Only suppresses errors for g_validating_window to avoid hiding unrelated bugs
 static int ignore_bad_window_on_get_attrs(Display *dpy, XErrorEvent *error) {
-    extern void log_error(const char *format, ...);
 
     // CRITICAL: Only suppress if error is for the EXACT window we're validating
     // X11 errors are asynchronous - we may receive errors from previous operations
@@ -552,7 +550,6 @@ static int ignore_bad_window_on_get_attrs(Display *dpy, XErrorEvent *error) {
     }
 
     // Call the default error handler for other errors
-    extern int x_error_handler(Display *dpy, XErrorEvent *error);
     return x_error_handler(dpy, error);
 }
 
@@ -652,7 +649,6 @@ static int ignore_bad_match_on_focus(Display *dpy, XErrorEvent *error) {
         return 0;
     }
     // Call the default error handler for other errors
-    extern int x_error_handler(Display *dpy, XErrorEvent *error);
     return x_error_handler(dpy, error);
 }
 
@@ -849,7 +845,6 @@ void calculate_frame_size_from_client_size(int client_width, int client_height,
 }
 
 void menubar_apply_fullscreen(bool fullscreen) {
-    extern Canvas *get_menubar(void);
     Canvas *menubar = get_menubar();
     if (!menubar) return;
 

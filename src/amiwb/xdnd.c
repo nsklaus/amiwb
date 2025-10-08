@@ -133,7 +133,6 @@ bool xdnd_is_aware(Display *dpy, Window win) {
 
 // Find XDND-aware window at given coordinates
 Window xdnd_find_target(Display *dpy, int root_x, int root_y) {
-    extern bool is_window_valid(Display *dpy, Window win);
 
     Window root = DefaultRootWindow(dpy);
     Window parent = root;
