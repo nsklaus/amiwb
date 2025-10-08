@@ -235,7 +235,7 @@ static int copy_directory_recursive_with_progress(const char *src_dir, const cha
 // Generic File Operation with Progress
 // ============================================================================
 
-int perform_file_operation_with_progress_ex(
+int wb_progress_perform_operation_ex(
     FileOperation op,
     const char *src_path,
     const char *dst_path,
@@ -459,13 +459,13 @@ int perform_file_operation_with_progress_ex(
 }
 
 // Wrapper for backward compatibility
-int perform_file_operation_with_progress(
+int wb_progress_perform_operation(
     FileOperation op,
     const char *src_path,
     const char *dst_path,
     const char *custom_title
 ) {
-    return perform_file_operation_with_progress_ex(op, src_path, dst_path, custom_title, NULL);
+    return wb_progress_perform_operation_ex(op, src_path, dst_path, custom_title, NULL);
 }
 
 // ============================================================================

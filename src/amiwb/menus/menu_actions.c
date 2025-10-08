@@ -198,7 +198,7 @@ static void execute_pending_deletes(void) {
         saved_path[sizeof(saved_path) - 1] = '\0';
         
         // Execute delete using progress-enabled function
-        int result = perform_file_operation_with_progress(2, // FILE_OP_DELETE = 2
+        int result = wb_progress_perform_operation(2, // FILE_OP_DELETE = 2
                                                          saved_path, 
                                                          NULL,  // No destination for delete
                                                          "Deleting Files...");
@@ -932,7 +932,7 @@ void trigger_copy_action(void) {
         }
         
         // Use extended file operation with icon metadata
-        int result = perform_file_operation_with_progress_ex(0, // FILE_OP_COPY = 0
+        int result = wb_progress_perform_operation_ex(0, // FILE_OP_COPY = 0
                                                             selected->path, 
                                                             copy_path, 
                                                             "Copying Files...",

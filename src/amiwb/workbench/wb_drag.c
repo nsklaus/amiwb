@@ -728,7 +728,7 @@ static void perform_cross_canvas_drop(Canvas *target) {
             }
 
             // Perform cross-filesystem move with progress
-            perform_file_operation_with_progress_ex(FILE_OP_MOVE, src_path_abs,
+            wb_progress_perform_operation_ex(FILE_OP_MOVE, src_path_abs,
                                                     dst_path, NULL, &icon_meta);
 
             if (drag_source_canvas) {
