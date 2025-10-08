@@ -3,7 +3,7 @@
 // Handles dialog list management, creation, destruction, and lookup
 
 #include "dialog_internal.h"
-#include "../render.h"
+#include "../render/rnd_public.h"
 #include "../intuition/itn_internal.h"
 #include <stdio.h>
 #include <stdlib.h>

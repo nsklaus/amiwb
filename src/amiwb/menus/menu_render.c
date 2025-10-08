@@ -5,7 +5,7 @@
 #include "menu_public.h"
 #include "../font_manager.h"
 #include "../config.h"
-#include "../render.h"
+#include "../render/rnd_public.h"
 
 // ============================================================================
 // Rendering Helpers for Addons

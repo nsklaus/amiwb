@@ -7,7 +7,6 @@
 #include "../workbench/wb_internal.h"
 #include "../menus/menu_public.h"
 #include "../menus/menu_internal.h"
-#include "../render_public.h"
 #include "../dialogs/dialog_public.h"
 #include "../dialogs/dialog_public.h"
 #include <X11/Xlib.h>

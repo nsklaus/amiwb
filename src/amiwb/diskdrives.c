@@ -12,7 +12,7 @@
 #include "workbench/wb_public.h"
 #include "workbench/wb_internal.h"
 #include "intuition/itn_internal.h"
-#include "render.h"
+#include "render/rnd_public.h"
 #include "config.h"
 
 static DriveManager drive_manager = {0};

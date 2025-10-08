@@ -5,7 +5,7 @@
 #include "wb_internal.h"
 #include "wb_public.h"
 #include "../config.h"
-#include "../render_public.h"
+#include "../render/rnd_public.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -136,5 +136,3 @@ void clear_canvas_icons(Canvas *canvas) {
         }
     }
 }
-
-// refresh_canvas is provided by render.c (extern declaration above)

@@ -3,7 +3,7 @@
 // Tracks background child processes and optionally shows progress UI
 
 #include "wb_internal.h"
-#include "../render_public.h"
+#include "../render/rnd_public.h"
 #include "../intuition/itn_internal.h"
 #include "../font_manager.h"
 #include "../../toolkit/progressbar/progressbar.h"

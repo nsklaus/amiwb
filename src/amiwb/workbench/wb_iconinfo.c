@@ -2,7 +2,7 @@
 // Icon Information dialog implementation
 #include "wb_internal.h"
 #include "wb_public.h"
-#include "../render.h"
+#include "../render/rnd_public.h"
 #include "../config.h"
 #include "../intuition/itn_internal.h"
 #include "../../toolkit/button/button.h"

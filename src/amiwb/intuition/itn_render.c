@@ -3,7 +3,7 @@
 
 #include "../config.h"
 #include "itn_internal.h"
-#include "../render.h"  // For redraw_canvas
+#include "../render/rnd_public.h"  // For redraw_canvas
 #include "../amiwbrc.h"  // For config access
 #include <X11/Xlib.h>
 #include <time.h>

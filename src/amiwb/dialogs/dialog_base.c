@@ -3,7 +3,7 @@
 // Single source of truth for common visual elements
 
 #include "dialog_internal.h"
-#include "../render.h"
+#include "../render/rnd_public.h"
 #include "../intuition/itn_internal.h"
 #include <stdio.h>
 #include <stdlib.h>

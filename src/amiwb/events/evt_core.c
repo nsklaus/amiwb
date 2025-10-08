@@ -8,7 +8,7 @@
 #include "../intuition/itn_public.h"
 #include "../workbench/wb_public.h"
 #include "../dialogs/dialog_public.h"
-#include "../render.h"
+#include "../render/rnd_public.h"
 #include "../config.h"
 #include "../amiwbrc.h"
 #include "../xdnd.h"

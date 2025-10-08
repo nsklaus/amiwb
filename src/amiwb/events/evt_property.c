@@ -5,7 +5,7 @@
 #include "evt_internal.h"
 #include "../workbench/wb_public.h"
 #include "../menus/menu_public.h"
-#include "../render.h"  // For redraw_canvas()
+#include "../render/rnd_public.h"  // For redraw_canvas()
 #include "../config.h"  // For PATH_SIZE
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>

@@ -6,7 +6,7 @@
 #include "wb_queue.h"
 #include "wb_xattr.h"
 #include "../config.h"
-#include "../render_public.h"
+#include "../render/rnd_public.h"
 #include "../intuition/itn_internal.h"
 #include <stdio.h>
 #include <stdlib.h>

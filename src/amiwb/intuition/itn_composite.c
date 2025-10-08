@@ -4,7 +4,7 @@
 
 #include "../config.h"
 #include "itn_internal.h"
-#include "../render_public.h"
+#include "../render/rnd_public.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/Xcomposite.h>

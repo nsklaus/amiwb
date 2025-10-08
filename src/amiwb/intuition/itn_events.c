@@ -3,8 +3,7 @@
 
 #include "../config.h"
 #include "itn_internal.h"
-#include "../render_public.h"
-#include "../render.h"
+#include "../render/rnd_public.h"
 #include "../workbench/wb_public.h"
 #include "../menus/menu_public.h"
 #include "itn_scrollbar.h"

@@ -5,8 +5,7 @@
 #include "wb_internal.h"
 #include "wb_public.h"
 #include "../config.h"
-#include "../render.h"
-#include "../render_public.h"
+#include "../render/rnd_public.h"
 #include "../xdnd.h"
 #include "../intuition/itn_internal.h"
 #include <stdio.h>

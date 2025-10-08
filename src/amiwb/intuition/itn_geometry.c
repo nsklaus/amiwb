@@ -3,11 +3,10 @@
 
 #include "../config.h"
 #include "itn_internal.h"
-#include "../render_public.h"
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>  // For XA_ATOM
 #include <math.h>       // For fmax, fmin, roundf
-#include "../render.h"  // For apply_resize_and_redraw (temporary)
+#include "../render/rnd_public.h"  // For apply_resize_and_redraw (temporary)
 
 // Migration notes:
 // get_desktop_canvas is now itn_canvas_get_desktop

@@ -7,7 +7,7 @@
 #include "../workbench/wb_public.h"
 #include "../dialogs/dialog_public.h"
 #include "../amiwbrc.h"  // For get_config()
-#include "../render.h"   // For redraw_canvas()
+#include "../render/rnd_public.h"   // For redraw_canvas()
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>

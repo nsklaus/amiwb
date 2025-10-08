@@ -3,11 +3,10 @@
 
 #include "../config.h"
 #include "itn_internal.h"
-#include "../render_public.h"
 #include <X11/Xlib.h>
 #include "../menus/menu_public.h"  // For check_for_app_menus
 #include "../workbench/wb_internal.h"
-#include "../render.h"  // For redraw_canvas (temporary)
+#include "../render/rnd_public.h"  // For redraw_canvas (temporary)
 
 // Migration notes:
 // find_canvas is now itn_canvas_find_by_window

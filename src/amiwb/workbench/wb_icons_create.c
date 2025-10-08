@@ -5,7 +5,7 @@
 #include "wb_internal.h"
 #include "../config.h"
 #include "../icons.h"
-#include "../render.h"
+#include "../render/rnd_public.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

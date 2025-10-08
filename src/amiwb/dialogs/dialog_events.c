@@ -3,7 +3,7 @@
 // Dispatches X11 events to appropriate dialog handlers
 
 #include "dialog_internal.h"
-#include "../render.h"
+#include "../render/rnd_public.h"
 #include "../intuition/itn_internal.h"
 #include <X11/keysym.h>
 

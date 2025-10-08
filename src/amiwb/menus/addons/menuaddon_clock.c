@@ -3,7 +3,7 @@
 
 #include "../menu_internal.h"
 #include "../../font_manager.h"
-#include "../../render.h"
+#include "../../render/rnd_public.h"
 #include "../../config.h"
 #include <time.h>
 #include <string.h>

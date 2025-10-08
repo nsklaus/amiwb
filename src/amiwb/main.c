@@ -6,7 +6,7 @@
 #include "workbench/wb_public.h"
 #include "events/evt_public.h"
 // #include "compositor.h"  // Now using itn modules
-#include "render.h"
+#include "render/rnd_public.h"
 #include "config.h"
 #include "amiwbrc.h"  // For config loading
 #include "diskdrives.h"

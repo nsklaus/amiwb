@@ -5,7 +5,7 @@
 #define MENU_INTERNAL_H
 
 #include "menu_public.h"
-#include "../render.h"
+#include "../render/rnd_public.h"
 
 // ============================================================================
 // Global State (defined in menu_core.c, used by other modules)
