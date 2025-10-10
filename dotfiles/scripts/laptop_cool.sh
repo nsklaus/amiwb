@@ -86,8 +86,12 @@
   echo "✓ wifi set to power saving"
 
   # PCI POWER MANAGEMENT
+#  for pci in /sys/bus/pci/devices/*/power/control; do
+#      echo auto | sudo tee $pci > /dev/null 2>&1
+#  done
+
   for pci in /sys/bus/pci/devices/*/power/control; do
-      echo auto | sudo tee $pci > /dev/null 2>&1
+      timeout 1 bash -c "echo auto 2>/dev/null | sudo tee $pci >/dev/null 2>&1" || true
   done
   echo "✓ PCI power management enabled"
 

@@ -213,112 +213,24 @@ void handle_events(void) {
                         // Found canvas
                     }
                 }
-                if (canvas) {
-                    
-                    // ALWAYS force transient dialogs to correct position on EVERY MapNotify
-                    // Simple, brutal, effective - no negotiation with GTK
-                    if (canvas->is_transient) {
-                        // Center dialog on screen
-                        int screen_width = DisplayWidth(itn_core_get_display(), DefaultScreen(itn_core_get_display()));
-                        int screen_height = DisplayHeight(itn_core_get_display(), DefaultScreen(itn_core_get_display()));
-                        int frame_x = (screen_width - canvas->width) / 2;
-                        int frame_y = (screen_height - canvas->height) / 2;
-                        if (frame_y < MENUBAR_HEIGHT) frame_y = MENUBAR_HEIGHT;
-                        
-                        // Get ACTUAL position of frame window - not the lies in canvas
-                        int real_x = 0, real_y = 0;
-                        Window child;
-                        safe_translate_coordinates(itn_core_get_display(), canvas->win, 
-                                            DefaultRootWindow(itn_core_get_display()),
-                                            0, 0, &real_x, &real_y, &child);
-                        
-                        // Position mismatch detected - silent per logging rules
-                        
-                        // ALWAYS force move - don't trust canvas position
-                        XMoveWindow(itn_core_get_display(), canvas->win, frame_x, frame_y);
-                        XSync(itn_core_get_display(), False);
-                        
-                        canvas->x = frame_x;
-                        canvas->y = frame_y;
-                        
-                        // Force client to correct position within frame (only if this IS the client)
-                        if (map_event->window == canvas->client_win) {
-                            XMoveWindow(itn_core_get_display(), map_event->window, BORDER_WIDTH_LEFT, BORDER_HEIGHT_TOP);
-                            XSync(itn_core_get_display(), False);
-                        }
-                        
-                        // Debug: What window are we actually verifying?
-                        // Verifying window mapping
-                        
-                        // Only verify if it's really the client window
-                        if (map_event->window == canvas->client_win) {
-                            // Client should be at correct position
-                        } else {
-                            // Window mismatch, skipping
-                        }
-                        
-                        // Verify it actually moved
-                        safe_translate_coordinates(itn_core_get_display(), canvas->win, 
-                                            DefaultRootWindow(itn_core_get_display()),
-                                            0, 0, &real_x, &real_y, &child);
-                        if (real_x != frame_x || real_y != frame_y) {
-                            log_error("[ERROR] Move FAILED! Still at %d,%d instead of %d,%d",
-                                   real_x, real_y, frame_x, frame_y);
-                        }
-                    }
-                    
-                    // Reset unmap counter if it was previously hidden
-                    if (canvas->is_transient && canvas->consecutive_unmaps > 0) {
-                        canvas->consecutive_unmaps = 0;
-                        
-                        // Re-show frame if it was hidden
-                        if (canvas->win != None) {
-                            XWindowAttributes frame_attrs;
-                            if (safe_get_window_attributes(itn_core_get_display(), canvas->win, &frame_attrs) &&
-                                frame_attrs.map_state == IsUnmapped) {
-                                
-                                // Map the window first
-                                XMapWindow(itn_core_get_display(), canvas->win);
-                                XSync(itn_core_get_display(), False);
-                                
-                                // Calculate center position
-                                int screen_width = DisplayWidth(itn_core_get_display(), DefaultScreen(itn_core_get_display()));
-                                int screen_height = DisplayHeight(itn_core_get_display(), DefaultScreen(itn_core_get_display()));
-                                int center_x = (screen_width - canvas->width) / 2;
-                                int center_y = (screen_height - canvas->height) / 2;
-                                if (center_y < MENUBAR_HEIGHT) center_y = MENUBAR_HEIGHT;
-                                
-                                // Move to center
-                                XMoveWindow(itn_core_get_display(), canvas->win, center_x, center_y);
-                                XSync(itn_core_get_display(), False);
-                                
-                                // VERIFY it moved - if not, the client is the culprit
-                                int actual_x = 0, actual_y = 0;
-                                Window child;
-                                safe_translate_coordinates(itn_core_get_display(), canvas->win,
-                                                    DefaultRootWindow(itn_core_get_display()),
-                                                    0, 0, &actual_x, &actual_y, &child);
-                                
-                                if (actual_x != center_x || actual_y != center_y) {
-                                    // Client is at wrong position
-                                    log_error("[WARNING] Client at %d,%d instead of %d,%d",
-                                           actual_x, actual_y, center_x, center_y);
-                                }
-                                
-                                // Update canvas with verified position
-                                canvas->x = center_x;
-                                canvas->y = center_y;
-                            }
-                        }
-                    }
-                    
-                    // Always raise and activate transient dialogs when they map
-                    if (canvas->is_transient && canvas->win != None) {
-                        XRaiseWindow(itn_core_get_display(), canvas->win);
-                        // Safe focus with validation and BadMatch error handling
-                        safe_set_input_focus(itn_core_get_display(), map_event->window, RevertToParent, CurrentTime);
-                        itn_focus_set_active(canvas);
-                    }
+                if (canvas && canvas->is_transient) {
+                    // Transient window remapping - show the frame again
+                    Display *dpy = itn_core_get_display();
+
+                    // Show the frame if it was hidden
+                    XMapRaised(dpy, canvas->win);
+
+                    // Restore compositor visibility
+                    canvas->comp_visible = true;
+                    canvas->comp_mapped = true;
+
+                    // Raise and activate
+                    XRaiseWindow(dpy, canvas->win);
+                    safe_set_input_focus(dpy, map_event->window, RevertToParent, CurrentTime);
+                    itn_focus_set_active(canvas);
+
+                    // Schedule frame to show it
+                    itn_render_schedule_frame();
                 }
                 intuition_handle_map_notify(map_event);
                 break;

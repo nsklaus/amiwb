@@ -250,6 +250,8 @@ void itn_composite_setup_canvas(Canvas *canvas) {
 
 
     // Get the composite pixmap for this window
+    // For client windows, we need to composite the FRAME (which includes client via subwindows)
+    // The frame window's pixmap includes all children when rendered with IncludeInferiors
     canvas->comp_pixmap = XCompositeNameWindowPixmap(dpy, canvas->win);
     if (!canvas->comp_pixmap) {
         log_error("[COMPOSITE] Failed to get named pixmap for window 0x%lx", canvas->win);
@@ -260,12 +262,11 @@ void itn_composite_setup_canvas(Canvas *canvas) {
     int win_depth = canvas->depth ? canvas->depth : itn_core_get_screen_depth();
     canvas->comp_picture = create_picture_from_pixmap(dpy, canvas->comp_pixmap, win_depth);
 
-    // Create damage tracking for this window
+    // Create damage tracking - use CLIENT window if present, otherwise frame
+    // Damage from client window changes is what we care about for content updates
     if (!canvas->comp_damage) {
-        // Use RawRectangles - most reliable for immediate damage processing
-        // GPU-accelerated clients (Kitty, etc.) will generate many events at high FPS
-        // This is expected behavior, not a bug - we need every frame notification
-        canvas->comp_damage = XDamageCreate(dpy, canvas->win, XDamageReportRawRectangles);
+        Window damage_target = canvas->client_win ? canvas->client_win : canvas->win;
+        canvas->comp_damage = XDamageCreate(dpy, damage_target, XDamageReportRawRectangles);
     }
 
     // Mark as needing repaint
@@ -496,9 +497,17 @@ void itn_composite_render_all(void) {
         Canvas *c = visible[i];
 
         // If this canvas needs repainting, ensure its window content is current
-        // This handles button state changes and other visual updates
         if (c->comp_needs_repaint) {
-            redraw_canvas(c);
+            // For client windows, we need BOTH frame decorations AND client content
+            if (c->client_win) {
+                // Redraw frame decorations (borders, title bar, scrollbars)
+                redraw_canvas(c);
+                // THEN get fresh client content from compositor
+                itn_composite_update_canvas_pixmap(c);
+            } else {
+                // Frame-only window (menu, desktop) - just redraw decorations
+                redraw_canvas(c);
+            }
         }
 
         // Ensure canvas has compositing data - create if missing

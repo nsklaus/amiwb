@@ -98,6 +98,7 @@ typedef struct Canvas {
     Window transient_for;
     bool close_request_sent;
     int consecutive_unmaps;
+    bool ever_mapped;  // Track if transient was ever shown (prevents early destruction)
     bool cleanup_scheduled;
     bool disable_scrollbars;
 

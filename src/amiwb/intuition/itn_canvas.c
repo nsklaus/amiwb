@@ -355,6 +355,7 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
     canvas->transient_for = None;
     canvas->close_request_sent = false;
     canvas->consecutive_unmaps = 0;
+    canvas->ever_mapped = false;  // Track if transient was ever shown (prevents early destruction)
     canvas->cleanup_scheduled = false;
     canvas->disable_scrollbars = false;
     // Initialize compositor state
@@ -662,10 +663,14 @@ void itn_canvas_setup_compositing(Canvas *canvas) {
     canvas->comp_damage_bounds = (XRectangle){0, 0, canvas->width, canvas->height};
 }
 
-// Temporary error handler to suppress BadDamage errors
+// Temporary error handler to suppress BadDamage and BadWindow errors
 static int ignore_bad_damage(Display *dpy, XErrorEvent *error) {
     if (error->error_code == 152) {  // BadDamage error code
         // Silently ignore BadDamage errors during cleanup
+        return 0;
+    }
+    if (error->error_code == 3) {  // BadWindow error code
+        // Silently ignore BadWindow - window already destroyed by X11
         return 0;
     }
     // Call the default error handler for other errors
@@ -827,6 +832,17 @@ Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
         XGrabButton(dpy, Button1, AnyModifier, client,
                    False, ButtonPressMask, GrabModeSync, GrabModeAsync,
                    None, None);
+
+        // Check if this is a transient window (dialog)
+        Window transient_for = None;
+        if (XGetTransientForHint(dpy, client, &transient_for)) {
+            // This is a dialog window
+            frame->is_transient = true;
+            frame->transient_for = transient_for;
+        } else {
+            frame->is_transient = false;
+            frame->transient_for = None;
+        }
 
         // Get window title from class hint (application name)
         // Use res_class (app class like "Firefox", "Kitty") as primary source

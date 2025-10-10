@@ -350,10 +350,9 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
         // Save client window before clearing it
         Window client_win = canvas->client_win;
 
-        // Client destroyed itself - clean up properly
-        canvas->client_win = None;  // Mark client as gone
-
         // Clean up compositor damage tracking BEFORE destroying window
+        // NOTE: Do NOT set canvas->client_win = None here!
+        // itn_canvas_destroy() needs it to know there's a client window to clean up
         itn_canvas_cleanup_compositing(canvas);
 
         // Check if this client owns the app menus and restore system menu

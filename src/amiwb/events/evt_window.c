@@ -68,38 +68,30 @@ void handle_unmap_notify(XUnmapEvent *event) {
 
     Canvas *canvas = itn_canvas_find_by_client(event->window);
     if (canvas) {
-
-        // For transient windows, track unmaps
-        // GTK file picker dialogs unmap themselves multiple times when finishing
+        // For transient windows, just hide the frame - don't destroy
+        // The client window stays alive, we keep the frame ready for quick reshow
         if (canvas->is_transient) {
-            canvas->consecutive_unmaps++;
+            Display *dpy = itn_core_get_display();
 
-            // Check if this is a GTK dialog and handle after 3 unmaps
-            if (canvas->consecutive_unmaps >= 3 && !canvas->cleanup_scheduled) {
-                canvas->cleanup_scheduled = true;
+            // Hide the frame window
+            XUnmapWindow(dpy, canvas->win);
 
-                // Save parent before hiding
-                Window parent_win = canvas->transient_for;
+            // Mark as hidden for compositor
+            canvas->comp_visible = false;
+            canvas->comp_mapped = false;
 
-                // Just hide our frame, don't destroy anything
-                // GTK dialogs will send DestroyNotify when they're really done
-                safe_unmap_window(itn_core_get_display(), canvas->win);
-
-                // Restore focus to parent window when dialog is hidden
-                if (parent_win != None) {
-                    Canvas *parent_canvas = itn_canvas_find_by_client(parent_win);
-                    if (parent_canvas) {
-                        itn_focus_set_active(parent_canvas);
-                        // Safe focus with validation and BadMatch error handling
-                        safe_set_input_focus(itn_core_get_display(), parent_win, RevertToParent, CurrentTime);
-                    }
+            // Restore focus to parent window
+            if (canvas->transient_for != None) {
+                Canvas *parent_canvas = itn_canvas_find_by_client(canvas->transient_for);
+                if (parent_canvas) {
+                    itn_focus_set_active(parent_canvas);
+                    safe_set_input_focus(dpy, canvas->transient_for, RevertToParent, CurrentTime);
                 }
-
-                // Reset the counter so it can be shown again
-                canvas->consecutive_unmaps = 0;
-                canvas->cleanup_scheduled = false;
-                return;
             }
+
+            // Schedule frame to remove from display
+            itn_render_schedule_frame();
+            return;
         }
     }
 }
