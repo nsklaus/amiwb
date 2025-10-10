@@ -65,3 +65,19 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Development and IDE files
+.vscode/
+build/
+tools/
+compile_commands.json
+
+# Development documentation
+BUILD.md
+errors.md
+
+# Build system files
+CMakeLists.txt
+
+# Development binaries
+hobbler

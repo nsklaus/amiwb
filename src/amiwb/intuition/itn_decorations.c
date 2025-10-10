@@ -3,7 +3,9 @@
 
 #include "../config.h"
 #include "itn_internal.h"
+#include "../render/rnd_public.h"  // For get_font()
 #include <X11/Xlib.h>
+#include <X11/Xft/Xft.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -17,6 +19,26 @@ static int get_right_border_width(Canvas *canvas) {
     }
     // Client windows and dialogs have narrow right border
     return BORDER_WIDTH_RIGHT_CLIENT;  // 8px for client windows
+}
+
+// Helper to recalculate and cache title width (called when title changes)
+// PERFORMANCE: This is expensive, so we cache the result to avoid recalculating on every render
+static void update_title_width_cache(Canvas *canvas) {
+    if (!canvas) return;
+
+    Display *dpy = itn_core_get_display();
+    XftFont *font = get_font();
+    if (dpy && font) {
+        // Determine which title is displayed: title_change takes precedence over title_base
+        const char *display_title = canvas->title_change ? canvas->title_change : canvas->title_base;
+        if (!display_title) display_title = "Untitled";
+
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(dpy, font, (FcChar8 *)display_title, strlen(display_title), &extents);
+        canvas->title_width = extents.xOff;
+    } else {
+        canvas->title_width = 0;
+    }
 }
 
 void itn_decorations_draw_frame(Canvas *canvas) {
@@ -42,12 +64,33 @@ void itn_decorations_update_title(Canvas *canvas, const char *title) {
     }
     canvas->title_change = title ? strdup(title) : NULL;
 
+    // Recalculate title width cache (expensive operation, only done when title changes)
+    update_title_width_cache(canvas);
+
     // Redraw titlebar if window has frame
     if (canvas->type != DESKTOP) {
         // Damage just the titlebar area
         DAMAGE_RECT(canvas->x, canvas->y, canvas->width, BORDER_HEIGHT_TOP);
         SCHEDULE_FRAME();
     }
+}
+
+// Public API to recalculate title width (called from canvas creation)
+void itn_decorations_recalc_title_width(Canvas *canvas) {
+    update_title_width_cache(canvas);
+}
+
+// Update title visibility based on available space (Module Encapsulation - AWP compliant)
+void itn_decorations_update_visibility(Canvas *canvas) {
+    if (!canvas) return;
+
+    // Calculate available space for title
+    // Title starts at x=50, right buttons start at x=(width-91)
+    // Available space: (width-91) - 50 = width - 141
+    int title_space = canvas->width - 141;
+
+    // Update visibility based on cached title width
+    canvas->show_title = (canvas->title_width <= title_space);
 }
 
 int itn_decorations_handle_click(Canvas *canvas, int x, int y) {

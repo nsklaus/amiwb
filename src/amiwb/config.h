@@ -32,6 +32,10 @@
 #define MIN_WINDOW_WIDTH 100    // Minimum window width in pixels
 #define MIN_WINDOW_HEIGHT 50    // Minimum window height in pixels
 
+// Default minimum size for workbench windows (file manager windows)
+#define DEFAULT_MIN_WIDTH 120   // Default minimum width for workbench windows
+#define DEFAULT_MIN_HEIGHT 140  // Default minimum height for workbench windows
+
 // Buffer sizes for paths and filenames
 // These are reasonable sizes that cover 99.9% of real-world usage
 // while being memory-efficient for a lightweight desktop

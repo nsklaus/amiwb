@@ -127,8 +127,16 @@ void itn_geometry_apply_resize(Canvas *c, int nw, int nh) {
     // Damage old area
     DAMAGE_RECT(c->x, c->y, c->width, c->height);
 
+    // Track if width changed (for title visibility update)
+    bool width_changed = (c->width != nw);
+
     c->width = nw;
     c->height = nh;
+
+    // Update title visibility if width changed (AWP - module encapsulation)
+    if (width_changed && (c->type == WINDOW || c->type == DIALOG)) {
+        itn_decorations_update_visibility(c);
+    }
 
     // Skip expensive buffer recreation during interactive resize
     if (!c->resizing_interactive) {

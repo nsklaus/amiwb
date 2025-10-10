@@ -98,18 +98,34 @@ void itn_resize_continue(int x, int y) {
             break;
     }
 
-    // Enforce minimum size
-    if (new_width < 100) {
+    // Enforce size constraints from Canvas (respects client's WM_NORMAL_HINTS)
+    // Minimum width constraint
+    if (new_width < resize_target->min_width) {
         if (resize_corner == 13 || resize_corner == 11 || resize_corner == 12) {  // NW, SW, W
-            new_x = resize_orig_x + resize_orig_width - 100;
+            new_x = resize_orig_x + resize_orig_width - resize_target->min_width;
         }
-        new_width = 100;
+        new_width = resize_target->min_width;
     }
-    if (new_height < 50) {
-        if (resize_corner == 13 || resize_corner == 6 || resize_corner == 7) {  // NW, N, NE
-            new_y = resize_orig_y + resize_orig_height - 50;
+    // Maximum width constraint
+    if (new_width > resize_target->max_width) {
+        if (resize_corner == 13 || resize_corner == 11 || resize_corner == 12) {  // NW, SW, W
+            new_x = resize_orig_x + resize_orig_width - resize_target->max_width;
         }
-        new_height = 50;
+        new_width = resize_target->max_width;
+    }
+    // Minimum height constraint
+    if (new_height < resize_target->min_height) {
+        if (resize_corner == 13 || resize_corner == 6 || resize_corner == 7) {  // NW, N, NE
+            new_y = resize_orig_y + resize_orig_height - resize_target->min_height;
+        }
+        new_height = resize_target->min_height;
+    }
+    // Maximum height constraint
+    if (new_height > resize_target->max_height) {
+        if (resize_corner == 13 || resize_corner == 6 || resize_corner == 7) {  // NW, N, NE
+            new_y = resize_orig_y + resize_orig_height - resize_target->max_height;
+        }
+        new_height = resize_target->max_height;
     }
 
     // Apply new geometry

@@ -133,6 +133,8 @@ void itn_focus_activate_by_index(int index);
 // --- itn_decorations.c ---
 void itn_decorations_draw_frame(Canvas *canvas);
 void itn_decorations_update_title(Canvas *canvas, const char *title);
+void itn_decorations_recalc_title_width(Canvas *canvas);  // Recalculate cached title width (performance optimization)
+void itn_decorations_update_visibility(Canvas *canvas);   // Update title visibility (Module Encapsulation - AWP)
 int itn_decorations_handle_click(Canvas *canvas, int x, int y);
 void itn_decorations_get_content_area(Canvas *canvas, int *x, int *y, int *w, int *h);
 void itn_decorations_calculate_frame_size(int client_w, int client_h, int *frame_w, int *frame_h);

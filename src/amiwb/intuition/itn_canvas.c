@@ -354,10 +354,8 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
     canvas->is_transient = false;
     canvas->transient_for = None;
     canvas->close_request_sent = false;
-    canvas->consecutive_unmaps = 0;
-    canvas->ever_mapped = false;  // Track if transient was ever shown (prevents early destruction)
-    canvas->cleanup_scheduled = false;
     canvas->disable_scrollbars = false;
+    canvas->show_title = true;  // Start visible, will auto-hide if window too narrow
     // Initialize compositor state
     canvas->comp_opacity = 1.0;
     canvas->comp_visible = true;  // Visible by default, can be toggled (e.g., menubar during fullscreen)
@@ -372,8 +370,8 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
     Display *dpy = itn_core_get_display();
     int screen_width = DisplayWidth(dpy, DefaultScreen(dpy));
     int screen_height = DisplayHeight(dpy, DefaultScreen(dpy));
-    canvas->min_width = 150;  // Default minimum
-    canvas->min_height = 150;
+    canvas->min_width = DEFAULT_MIN_WIDTH;
+    canvas->min_height = DEFAULT_MIN_HEIGHT;
     canvas->max_width = screen_width;  // Workbench windows can use full width
     canvas->max_height = screen_height - MENUBAR_HEIGHT;  // But limited by menubar
     canvas->resize_x_allowed = true;
@@ -391,6 +389,11 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
 
     // Create XftDraw and ensure all render surfaces are properly initialized
     render_recreate_canvas_surfaces(canvas);
+
+    // Calculate initial title width for workbench windows (client windows do it after WM_CLASS is read)
+    if (canvas->title_base) {
+        itn_decorations_recalc_title_width(canvas);
+    }
 
     init_scroll(canvas);
 
@@ -862,6 +865,36 @@ Canvas *frame_client_window(Window client, XWindowAttributes *attrs) {
         // Final fallback
         if (!frame->title_base) {
             frame->title_base = strdup("NoNameApp");
+        }
+
+        // Calculate title width cache now that title_base is set
+        itn_decorations_recalc_title_width(frame);
+
+        // Read WM_NORMAL_HINTS to respect client's size constraints
+        XSizeHints hints;
+        long supplied_hints;
+        if (XGetWMNormalHints(dpy, client, &hints, &supplied_hints)) {
+            // Update minimum size if client specified it
+            if (hints.flags & PMinSize) {
+                // Client specifies CONTENT size, add frame decorations
+                frame->min_width = hints.min_width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT_CLIENT;
+                frame->min_height = hints.min_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+            }
+            // Update maximum size if client specified it
+            if (hints.flags & PMaxSize) {
+                frame->max_width = hints.max_width + BORDER_WIDTH_LEFT + BORDER_WIDTH_RIGHT_CLIENT;
+                frame->max_height = hints.max_height + BORDER_HEIGHT_TOP + BORDER_HEIGHT_BOTTOM;
+            }
+            // Check if client allows resizing
+            if (hints.flags & PMinSize && hints.flags & PMaxSize) {
+                // If min == max, resizing is not allowed in that dimension
+                if (hints.min_width == hints.max_width) {
+                    frame->resize_x_allowed = false;
+                }
+                if (hints.min_height == hints.max_height) {
+                    frame->resize_y_allowed = false;
+                }
+            }
         }
     }
 

@@ -57,6 +57,7 @@ typedef struct Canvas {
     char *path;
     char *title_base;
     char *title_change;
+    int title_width;  // Cached width in pixels (expensive to recalculate on every render)
     int x, y;
     int width, height;
     int buffer_width, buffer_height;
@@ -97,10 +98,8 @@ typedef struct Canvas {
     bool is_transient;
     Window transient_for;
     bool close_request_sent;
-    int consecutive_unmaps;
-    bool ever_mapped;  // Track if transient was ever shown (prevents early destruction)
-    bool cleanup_scheduled;
     bool disable_scrollbars;
+    bool show_title;  // Dynamic visibility based on available space (prevents collision with buttons)
 
     // Text rendering
     XftDraw *xft_draw;
