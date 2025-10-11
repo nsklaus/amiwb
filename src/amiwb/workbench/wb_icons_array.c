@@ -34,6 +34,22 @@ static void manage_icons_remove(FileIcon *icon_to_remove) {
             memmove(&icon_array[i], &icon_array[i + 1],
                    (icon_count - i - 1) * sizeof(FileIcon *));
             icon_count--;
+
+            // Shrink array if usage drops below 25% and we're above initial capacity
+            // This prevents unbounded memory growth in long-running sessions
+            if (icon_count < icon_array_size / 4 && icon_array_size > INITIAL_ICON_CAPACITY) {
+                int new_size = icon_array_size / 2;
+                FileIcon **new_array = realloc(icon_array, new_size * sizeof(FileIcon *));
+                if (new_array) {
+                    icon_array = new_array;
+                    icon_array_size = new_size;
+                } else {
+                    log_error("[WARNING] Failed to shrink icon array from %d to %d - keeping oversized array",
+                              icon_array_size, new_size);
+                    // Graceful degradation: keep oversized array, no crash
+                }
+            }
+
             break;
         }
     }

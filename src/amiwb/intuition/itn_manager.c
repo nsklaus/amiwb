@@ -7,6 +7,12 @@
 #include <stdbool.h>
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+#define INITIAL_CANVAS_CAPACITY 8
+
+// ============================================================================
 // Module-Private State
 // ============================================================================
 
@@ -48,7 +54,7 @@ bool itn_manager_add(Canvas *canvas) {
 
     // Grow array if needed
     if (g_canvas_count >= g_canvas_array_size) {
-        int new_size = g_canvas_array_size == 0 ? 8 : g_canvas_array_size * 2;
+        int new_size = g_canvas_array_size == 0 ? INITIAL_CANVAS_CAPACITY : g_canvas_array_size * 2;
         Canvas **new_array = realloc(g_canvas_array, new_size * sizeof(Canvas *));
         if (!new_array) {
             log_error("[ERROR] Failed to grow canvas array to %d entries", new_size);
@@ -77,6 +83,22 @@ void itn_manager_remove(Canvas *canvas) {
             }
             g_canvas_count--;
             g_canvas_array[g_canvas_count] = NULL;
+
+            // Shrink array if usage drops below 25% and we're above initial size
+            // This prevents unbounded memory growth in long-running sessions
+            if (g_canvas_count < g_canvas_array_size / 4 && g_canvas_array_size > INITIAL_CANVAS_CAPACITY) {
+                int new_size = g_canvas_array_size / 2;
+                Canvas **new_array = realloc(g_canvas_array, new_size * sizeof(Canvas *));
+                if (new_array) {
+                    g_canvas_array = new_array;
+                    g_canvas_array_size = new_size;
+                } else {
+                    log_error("[WARNING] Failed to shrink canvas array from %d to %d - keeping oversized array",
+                              g_canvas_array_size, new_size);
+                    // Graceful degradation: keep oversized array, no crash
+                }
+            }
+
             return;
         }
     }
