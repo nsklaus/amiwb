@@ -477,9 +477,10 @@ void itn_canvas_destroy(Canvas *canvas) {
             active->canvas = NULL;
         }
 
-        // Also check nested menu (extern because it's static in menu_core.c)
-        if (nested_menu && nested_menu->canvas == canvas) {
-            nested_menu->canvas = NULL;
+        // Also check nested menu
+        Menu *nested = menu_core_get_nested_menu();
+        if (nested && nested->canvas == canvas) {
+            nested->canvas = NULL;
         }
     }
 

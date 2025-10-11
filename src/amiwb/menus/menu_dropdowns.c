@@ -23,33 +23,35 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
     }
 
     // Close any nested submenu from a previous active dropdown
-    if (nested_menu && nested_menu->canvas) {
+    Menu *nested = menu_core_get_nested_menu();
+    if (nested && nested->canvas) {
         RenderContext *ctx = get_render_context();
-        if (ctx && nested_menu->canvas->win != None) {
-            clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-            safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
+        if (ctx && nested->canvas->win != None) {
+            clear_press_target_if_matches(nested->canvas->win);  // Clear before destroy
+            safe_unmap_window(ctx->dpy, nested->canvas->win);
         }
-        itn_canvas_destroy(nested_menu->canvas);
-        nested_menu->canvas = NULL;  // Prevent double-free
-        nested_menu = NULL;
+        itn_canvas_destroy(nested->canvas);
+        nested->canvas = NULL;  // Prevent double-free
+        menu_core_set_nested_menu(NULL);
     }
-    active_menu = menu->submenus[index];
+    menu_core_set_active_menu(menu->submenus[index]);
+    Menu *active = get_active_menu();
 
     // Destroy any existing canvas from previous menu display to prevent leak
-    if (active_menu->canvas) {
+    if (active->canvas) {
         RenderContext *ctx = get_render_context();
-        if (ctx && active_menu->canvas->win != None) {
-            safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+        if (ctx && active->canvas->win != None) {
+            safe_unmap_window(ctx->dpy, active->canvas->win);
         }
-        itn_canvas_destroy(active_menu->canvas);
-        active_menu->canvas = NULL;
+        itn_canvas_destroy(active->canvas);
+        active->canvas = NULL;
     }
 
     Menu *menubar = get_menubar_menu();
 
     // Update enabled states for Icons menu based on current selection
     // Only do this for system menus, not app menus
-    if (!app_menu_active && menu == menubar && index == 2) {  // Icons menu
+    if (!is_app_menu_active() && menu == menubar && index == 2) {  // Icons menu
         bool has_selected_icon = false;
         bool can_delete = false;
         FileIcon *selected = NULL;
@@ -90,20 +92,20 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
         }
 
         // Update the enabled states
-        if (active_menu->enabled) {
-            active_menu->enabled[0] = has_selected_icon;  // Open - works for all icon types
-            active_menu->enabled[1] = can_modify;         // Copy - restricted
-            active_menu->enabled[2] = can_modify;         // Rename - restricted
-            active_menu->enabled[3] = has_selected_icon;  // Extract - works for archives
-            active_menu->enabled[4] = has_selected_icon;  // Eject - works for devices
-            active_menu->enabled[5] = has_selected_icon;  // Information - works for all
-            active_menu->enabled[6] = can_delete;         // Delete - restricted
+        if (active->enabled) {
+            active->enabled[0] = has_selected_icon;  // Open - works for all icon types
+            active->enabled[1] = can_modify;         // Copy - restricted
+            active->enabled[2] = can_modify;         // Rename - restricted
+            active->enabled[3] = has_selected_icon;  // Extract - works for archives
+            active->enabled[4] = has_selected_icon;  // Eject - works for devices
+            active->enabled[5] = has_selected_icon;  // Information - works for all
+            active->enabled[6] = can_delete;         // Delete - restricted
         }
     }
 
     // Update enabled states for Windows menu based on active window
     // Only do this for system menus, not app menus
-    if (!app_menu_active && menu == menubar && index == 1) {  // Windows menu
+    if (!is_app_menu_active() && menu == menubar && index == 1) {  // Windows menu
         Canvas *aw = itn_focus_get_active();
         bool has_active_window = (aw && aw->type == WINDOW);
         bool is_workbench_window = (aw && aw->type == WINDOW && aw->client_win == None);
@@ -120,26 +122,26 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
         }
 
         // Update the enabled states based on window type
-        if (active_menu->enabled) {
+        if (active->enabled) {
             // Desktop-focused or workbench window operations
-            active_menu->enabled[0] = is_workbench_window || desktop_focused;  // New Drawer - workbench or desktop
-            active_menu->enabled[1] = can_go_parent;                          // Open Parent - only for workbench with parent path
-            active_menu->enabled[2] = has_active_window;                      // Close - only if there's a window
-            active_menu->enabled[3] = is_workbench_window || desktop_focused;  // Select Contents - workbench or desktop
-            active_menu->enabled[4] = is_workbench_window || desktop_focused;  // Clean Up - workbench or desktop
-            active_menu->enabled[5] = is_workbench_window || desktop_focused;  // Refresh - workbench or desktop
-            active_menu->enabled[6] = is_workbench_window || desktop_focused;  // View Modes - workbench or desktop
+            active->enabled[0] = is_workbench_window || desktop_focused;  // New Drawer - workbench or desktop
+            active->enabled[1] = can_go_parent;                          // Open Parent - only for workbench with parent path
+            active->enabled[2] = has_active_window;                      // Close - only if there's a window
+            active->enabled[3] = is_workbench_window || desktop_focused;  // Select Contents - workbench or desktop
+            active->enabled[4] = is_workbench_window || desktop_focused;  // Clean Up - workbench or desktop
+            active->enabled[5] = is_workbench_window || desktop_focused;  // Refresh - workbench or desktop
+            active->enabled[6] = is_workbench_window || desktop_focused;  // View Modes - workbench or desktop
         }
     }
 
-    int submenu_width = get_submenu_width(active_menu);
-    active_menu->canvas = create_canvas(NULL, x, y, submenu_width,
-        active_menu->item_count * MENU_ITEM_HEIGHT + 8, MENU);  // Added 8 pixels: 4 for top offset, 4 for bottom padding
-    if (!active_menu->canvas) { return; }
-    active_menu->canvas->bg_color =
+    int submenu_width = get_submenu_width(active);
+    active->canvas = create_canvas(NULL, x, y, submenu_width,
+        active->item_count * MENU_ITEM_HEIGHT + 8, MENU);  // Added 8 pixels: 4 for top offset, 4 for bottom padding
+    if (!active->canvas) { return; }
+    active->canvas->bg_color =
         (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
 
-    active_menu->selected_item = -1;
-    XMapRaised(get_render_context()->dpy, active_menu->canvas->win);
-    redraw_canvas(active_menu->canvas);
+    active->selected_item = -1;
+    XMapRaised(get_render_context()->dpy, active->canvas->win);
+    redraw_canvas(active->canvas);
 }

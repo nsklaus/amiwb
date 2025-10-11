@@ -96,7 +96,7 @@ void menu_addon_render_all(RenderContext *ctx, Canvas *menubar, int *x, int y) {
     if (!ctx || !menubar) return;
 
     // Only render addons in logo mode
-    if (show_menus) return;
+    if (get_show_menus_state()) return;
 
     // Collect enabled addons by position zone
     MenuAddon *left[32] = {0};

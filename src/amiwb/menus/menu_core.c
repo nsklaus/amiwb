@@ -31,27 +31,27 @@ static char* safe_strdup(const char *str) {
 // Global State
 // ============================================================================
 
-// Menu state - global so both menubar and popups share state
+// Menu state - properly encapsulated (AWP principle)
 static XftColor text_color;
-Menu *menubar = NULL;           // Global menubar
-Menu *active_menu = NULL;       // Current dropdown menu (top-level)
-Menu *nested_menu = NULL;       // Currently open nested submenu
-bool show_menus = false;        // State: false for logo, true for menus
+static Menu *menubar = NULL;           // Global menubar
+static Menu *active_menu = NULL;       // Current dropdown menu (top-level)
+static Menu *nested_menu = NULL;       // Currently open nested submenu
+static bool show_menus = false;        // State: false for logo, true for menus
 
 // Mode-specific arrays
-char **logo_items = NULL;
-int logo_item_count = 1;
-char **full_menu_items = NULL;
-int full_menu_item_count = 0;
-Menu **full_submenus = NULL;
+static char **logo_items = NULL;
+static int logo_item_count = 1;
+static char **full_menu_items = NULL;
+static int full_menu_item_count = 0;
+static Menu **full_submenus = NULL;
 
 // Menu substitution system - save system menus when app menus active
-char *system_logo_item = NULL;      // Original "AmiWB" logo
-char **system_menu_items = NULL;    // System menu items backup
-Menu **system_submenus = NULL;      // System submenus backup
-int system_menu_item_count = 0;     // System menu count backup
-bool app_menu_active = false;       // True when app menus are shown
-Window current_app_window = None;   // Window that owns current app menus
+static char *system_logo_item = NULL;      // Original "AmiWB" logo
+static char **system_menu_items = NULL;    // System menu items backup
+static Menu **system_submenus = NULL;      // System submenus backup
+static int system_menu_item_count = 0;     // System menu count backup
+static bool app_menu_active = false;       // True when app menus are shown
+static Window current_app_window = None;   // Window that owns current app menus
 
 // ============================================================================
 // Helper Functions
@@ -774,6 +774,18 @@ void cleanup_menus(void) {
     free(logo_items);
     logo_items = NULL;
     logo_item_count = 0;
+
+    // Free system menu backup (app menu substitution system)
+    if (system_logo_item) {
+        free(system_logo_item);
+        system_logo_item = NULL;
+    }
+    // system_menu_items and system_submenus point to menubar arrays (already freed above)
+    system_menu_items = NULL;
+    system_submenus = NULL;
+    system_menu_item_count = 0;
+    app_menu_active = false;
+    current_app_window = None;
 }
 
 // ============================================================================
@@ -809,4 +821,100 @@ bool is_app_menu_active(void) {
 
 Window get_app_menu_window(void) {
     return current_app_window;
+}
+
+// ============================================================================
+// Additional State Accessors (AWP Encapsulation)
+// ============================================================================
+
+// Nested menu access
+Menu *menu_core_get_nested_menu(void) {
+    return nested_menu;
+}
+
+void menu_core_set_nested_menu(Menu *menu) {
+    nested_menu = menu;
+}
+
+void menu_core_set_active_menu(Menu *menu) {
+    active_menu = menu;
+}
+
+// Logo mode arrays (read-only - managed internally during init)
+char **menu_core_get_logo_items(void) {
+    return logo_items;
+}
+
+int menu_core_get_logo_item_count(void) {
+    return logo_item_count;
+}
+
+// Full menu arrays (read-only - managed internally during init)
+char **menu_core_get_full_menu_items(void) {
+    return full_menu_items;
+}
+
+Menu **menu_core_get_full_submenus(void) {
+    return full_submenus;
+}
+
+int menu_core_get_full_menu_item_count(void) {
+    return full_menu_item_count;
+}
+
+// System menu backup (read-only - managed internally during substitution)
+char *menu_core_get_system_logo_item(void) {
+    return system_logo_item;
+}
+
+char **menu_core_get_system_menu_items(void) {
+    return system_menu_items;
+}
+
+Menu **menu_core_get_system_submenus(void) {
+    return system_submenus;
+}
+
+int menu_core_get_system_menu_item_count(void) {
+    return system_menu_item_count;
+}
+
+// App menu state setters
+void menu_core_set_app_menu_active(bool active) {
+    app_menu_active = active;
+}
+
+void menu_core_set_app_menu_window(Window win) {
+    current_app_window = win;
+}
+
+// Show menus toggle
+void menu_core_toggle_show_menus(void) {
+    show_menus = !show_menus;
+}
+
+// Menu substitution helpers (for app menu system)
+void menu_core_save_system_menus(void) {
+    if (!system_menu_items && !app_menu_active) {
+        if (logo_items && logo_items[0]) {
+            system_logo_item = strdup(logo_items[0]);
+        }
+        system_menu_items = full_menu_items;
+        system_submenus = full_submenus;
+        system_menu_item_count = full_menu_item_count;
+    }
+}
+
+void menu_core_switch_to_app_menus(char **menu_items, Menu **submenus, int count) {
+    full_menu_items = menu_items;
+    full_submenus = submenus;
+    full_menu_item_count = count;
+}
+
+void menu_core_restore_system_menus(void) {
+    if (system_menu_items) {
+        full_menu_items = system_menu_items;
+        full_submenus = system_submenus;
+        full_menu_item_count = system_menu_item_count;
+    }
 }

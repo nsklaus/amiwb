@@ -85,38 +85,32 @@ void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus
     }
 
     // Save system menus on first app menu activation
-    if (!system_menu_items && !app_menu_active) {
-        system_logo_item = strdup(logo_items[0]);
-        system_menu_items = full_menu_items;
-        system_submenus = full_submenus;
-        system_menu_item_count = full_menu_item_count;
-        // Saved system menus
+    if (!menu_core_get_system_menu_items() && !is_app_menu_active()) {
+        menu_core_save_system_menus();
     }
 
     // Switch logo to app name
-    free(logo_items[0]);
-    logo_items[0] = strdup(app_name);
+    char **logo = menu_core_get_logo_items();
+    free(logo[0]);
+    logo[0] = strdup(app_name);
 
-    // Switch full menu arrays to app menus
-    full_menu_items = menu_items;
-    full_submenus = submenus;
-    full_menu_item_count = item_count;
+    // Switch full menu arrays to app menus (updates internal state)
+    menu_core_switch_to_app_menus(menu_items, submenus, item_count);
 
     // CRITICAL: Always update menubar data to match current mode
     // This ensures toggle_menubar_state() has valid data
-    if (show_menus) {
-        // Currently showing menus - update to app menus immediately
-        menubar->items = full_menu_items;
-        menubar->submenus = full_submenus;
-        menubar->item_count = full_menu_item_count;
+    if (get_show_menus_state()) {
+        // Currently showing menus - update menubar to app menus immediately
+        menubar->items = menu_items;
+        menubar->submenus = submenus;
+        menubar->item_count = item_count;
     } else {
-        // Currently showing logo - keep logo visible but ensure full_menu_items is ready
-        // Logo items stay visible; full_menu_items are ready for next toggle
+        // Currently showing logo - keep logo visible but full_menu_items are ready for next toggle
     }
 
     // Mark app menu as active
-    app_menu_active = true;
-    current_app_window = app_window;
+    menu_core_set_app_menu_active(true);
+    menu_core_set_app_menu_window(app_window);
 
     // Redraw menubar with new content
     redraw_canvas(menubar_canvas);
@@ -124,7 +118,7 @@ void switch_to_app_menu(const char *app_name, char **menu_items, Menu **submenus
 
 // Menu substitution: restore system menus
 void restore_system_menu(void) {
-    if (!app_menu_active || !system_menu_items) {
+    if (!is_app_menu_active() || !menu_core_get_system_menu_items()) {
         return;  // Already showing system menus or not initialized
     }
 
@@ -137,29 +131,28 @@ void restore_system_menu(void) {
     }
 
     // Restore logo
-    free(logo_items[0]);
-    logo_items[0] = strdup(system_logo_item);
+    char **logo = menu_core_get_logo_items();
+    char *system_logo = menu_core_get_system_logo_item();
+    free(logo[0]);
+    logo[0] = strdup(system_logo);
 
-    // Restore full menu arrays
-    full_menu_items = system_menu_items;
-    full_submenus = system_submenus;
-    full_menu_item_count = system_menu_item_count;
+    // Restore full menu arrays (updates internal state)
+    menu_core_restore_system_menus();
 
     // CRITICAL: Always update menubar data to match current mode
     // This ensures toggle_menubar_state() has valid data
-    if (show_menus) {
-        // Currently showing menus - update to system menus immediately
-        menubar->items = full_menu_items;
-        menubar->submenus = full_submenus;
-        menubar->item_count = full_menu_item_count;
+    if (get_show_menus_state()) {
+        // Currently showing menus - update menubar to system menus immediately
+        menubar->items = menu_core_get_full_menu_items();
+        menubar->submenus = menu_core_get_full_submenus();
+        menubar->item_count = menu_core_get_full_menu_item_count();
     } else {
-        // Currently showing logo - keep logo visible but ensure full_menu_items is ready
-        // Logo items stay visible; full_menu_items are ready for next toggle
+        // Currently showing logo - keep logo visible but full_menu_items are ready for next toggle
     }
 
     // Mark system menu as active
-    app_menu_active = false;
-    current_app_window = None;
+    menu_core_set_app_menu_active(false);
+    menu_core_set_app_menu_window(None);
 
     // Redraw menubar
     redraw_canvas(menubar_canvas);
@@ -171,7 +164,8 @@ void restore_system_menu(void) {
 
 // Update menu states when app changes them
 void handle_menu_state_change(Window win) {
-    if (!win || !current_app_window || win != current_app_window) return;
+    Window app_win = get_app_menu_window();
+    if (!win || !app_win || win != app_win) return;
 
     // Update the menu states from the property
     update_app_menu_states(win);

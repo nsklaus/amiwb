@@ -313,7 +313,7 @@ void parse_and_switch_app_menus(const char *app_name, const char *menu_data, Win
 
 // Update menu item states from app window property
 void update_app_menu_states(Window app_window) {
-    if (!app_window || !app_menu_active || !full_submenus) return;
+    if (!app_window || !is_app_menu_active() || !menu_core_get_full_submenus()) return;
 
     Display *dpy = itn_core_get_display();
     if (!dpy) return;
@@ -345,8 +345,10 @@ void update_app_menu_states(Window app_window) {
             int menu_idx, item_idx, enabled;
             if (sscanf(state_str, "%d,%d,%d", &menu_idx, &item_idx, &enabled) == 3) {
                 // Update the menu item state
-                if (menu_idx >= 0 && menu_idx < full_menu_item_count) {
-                    Menu *submenu = full_submenus[menu_idx];
+                int count = menu_core_get_full_menu_item_count();
+                Menu **subs = menu_core_get_full_submenus();
+                if (menu_idx >= 0 && menu_idx < count) {
+                    Menu *submenu = subs[menu_idx];
                     if (submenu && item_idx >= 0 && item_idx < submenu->item_count) {
                         submenu->enabled[item_idx] = (enabled != 0);
                     }

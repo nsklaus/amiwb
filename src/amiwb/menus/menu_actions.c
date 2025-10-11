@@ -329,75 +329,80 @@ void handle_menu_selection(Menu *menu, int item_index) {
         }
         
         // Close the menu
-        if (active_menu && active_menu->canvas) {
+        Menu *active = get_active_menu();
+        if (active && active->canvas) {
             RenderContext *ctx = get_render_context();
             if (ctx) {
                 XSync(ctx->dpy, False);
-                if (active_menu->canvas->win != None) {
-                    clear_press_target_if_matches(active_menu->canvas->win);
-                    safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+                if (active->canvas->win != None) {
+                    clear_press_target_if_matches(active->canvas->win);
+                    safe_unmap_window(ctx->dpy, active->canvas->win);
                     XSync(ctx->dpy, False);
                 }
-                itn_canvas_destroy(active_menu->canvas);
-                active_menu->canvas = NULL;  // Prevent double-free
+                itn_canvas_destroy(active->canvas);
+                active->canvas = NULL;  // Prevent double-free
 
                 // Free the temporary window menu
-                if (active_menu->items) {
-                    for (int i = 0; i < active_menu->item_count; i++) {
-                        if (active_menu->items[i]) free(active_menu->items[i]);
+                if (active->items) {
+                    for (int i = 0; i < active->item_count; i++) {
+                        if (active->items[i]) free(active->items[i]);
                     }
-                    free(active_menu->items);
+                    free(active->items);
                 }
-                if (active_menu->shortcuts) {
-                    for (int i = 0; i < active_menu->item_count; i++) {
-                        if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+                if (active->shortcuts) {
+                    for (int i = 0; i < active->item_count; i++) {
+                        if (active->shortcuts[i]) free(active->shortcuts[i]);
                     }
-                    free(active_menu->shortcuts);
+                    free(active->shortcuts);
                 }
-                if (active_menu->enabled) free(active_menu->enabled);
-                free(active_menu);
-                
-                active_menu = NULL;
+                if (active->enabled) free(active->enabled);
+                free(active);
+
+                menu_core_set_active_menu(NULL);
             }
         }
         return;
     }
     
     // Handle app menu selections
-    if (app_menu_active && current_app_window != None) {
-        // For nested submenus, we need to send additional info
-        if (menu->parent_menu && menu->parent_menu->parent_menu) {
-            // This is a nested submenu - send parent menu index in data.l[2]
-            Display *dpy = itn_core_get_display();
-            if (dpy) {
-                XEvent event;
-                memset(&event, 0, sizeof(event));
-                event.type = ClientMessage;
-                event.xclient.window = current_app_window;
-                event.xclient.message_type = XInternAtom(dpy, "_AMIWB_MENU_SELECT", False);
-                event.xclient.format = 32;
-                event.xclient.data.l[0] = menu->parent_index;  // Parent item index (e.g., 2 for "Syntax")
-                event.xclient.data.l[1] = item_index;  // Which item in submenu
-                event.xclient.data.l[2] = menu->parent_menu->parent_index;  // Parent menu index (e.g., 3 for "View")
-                event.xclient.data.l[3] = 1;  // Flag: this is a submenu selection
+    if (is_app_menu_active()) {
+        Window app_win = get_app_menu_window();
+        if (app_win != None) {
+            // For nested submenus, we need to send additional info
+            if (menu->parent_menu && menu->parent_menu->parent_menu) {
+                // This is a nested submenu - send parent menu index in data.l[2]
+                Display *dpy = itn_core_get_display();
+                if (dpy) {
+                    XEvent event;
+                    memset(&event, 0, sizeof(event));
+                    event.type = ClientMessage;
+                    event.xclient.window = app_win;
+                    event.xclient.message_type = XInternAtom(dpy, "_AMIWB_MENU_SELECT", False);
+                    event.xclient.format = 32;
+                    event.xclient.data.l[0] = menu->parent_index;  // Parent item index (e.g., 2 for "Syntax")
+                    event.xclient.data.l[1] = item_index;  // Which item in submenu
+                    event.xclient.data.l[2] = menu->parent_menu->parent_index;  // Parent menu index (e.g., 3 for "View")
+                    event.xclient.data.l[3] = 1;  // Flag: this is a submenu selection
 
-                XSendEvent(dpy, current_app_window, False, NoEventMask, &event);
-                XFlush(dpy);
+                    XSendEvent(dpy, app_win, False, NoEventMask, &event);
+                    XFlush(dpy);
+                }
+            } else {
+                // Regular top-level menu selection
+                send_menu_selection_to_app(app_win, menu->parent_index, item_index);
             }
-        } else {
-            // Regular top-level menu selection
-            send_menu_selection_to_app(current_app_window, menu->parent_index, item_index);
+
+            // Close menus after selection
+            if (get_show_menus_state()) {
+                toggle_menubar_state();
+            }
+            return;
         }
-        
-        // Close menus after selection
-        if (get_show_menus_state()) {
-            toggle_menubar_state();
-        }
-        return;
     }
     
     // If this is a nested submenu under Windows, handle here
-    if (menu->parent_menu && menu->parent_menu->parent_menu == menubar && 
+    Menu *menubar = get_menubar_menu();
+    if (menu->parent_menu && menu->parent_menu->parent_menu == menubar &&
         menu->parent_menu->parent_index == 1) {
         // Determine which child: by parent_index in Windows submenu
         if (menu->parent_index == 6) { // View Modes (now at index 6)
@@ -528,32 +533,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
                 launch_with_hook("editpad");
             } else if (strcmp(item, "XCalc") == 0) {
                 launch_with_hook("xcalc");
-            } 
-
-            /*
-            else if (strcmp(item, "PavuControl") == 0) {
-                //system("pavucontrol &");
-
-            } 
-            
-            else if (strcmp(item, "Sublime Text") == 0) {
-                system("subl &");
-
-            } 
-
-            else if (strcmp(item, "Brave Browser") == 0) {
-                //printf("launching brave\n");
-                //system("brave-browser --password-store=basic &");
-            } 
-            
-
-            else if (strcmp(item, "Sublime Text") == 0) {
-                system("subl &");   
-
-            } 
-	    */
-
-	    else if (strcmp(item, "Shell") == 0) {
+            } else if (strcmp(item, "Shell") == 0) {
                 launch_with_hook("kitty"); 
 
             } else if (strcmp(item, "Debug Console") == 0) {

@@ -8,29 +8,43 @@
 #include "../render/rnd_public.h"
 
 // ============================================================================
-// Global State (defined in menu_core.c, used by other modules)
+// Menu State Access (AWP Encapsulation - defined in menu_core.c)
 // ============================================================================
 
-// Menu state
-extern Menu *menubar;           // Global menubar
-extern Menu *active_menu;       // Current dropdown menu (top-level)
-extern Menu *nested_menu;       // Currently open nested submenu
-extern bool show_menus;         // State: false for logo, true for menus
+// Core menu state accessors
+Menu *get_menubar_menu(void);                   // Get menubar menu structure
+Menu *get_active_menu(void);                    // Get current dropdown menu
+void menu_core_set_active_menu(Menu *menu);     // Set active dropdown menu
+Menu *menu_core_get_nested_menu(void);          // Get nested submenu
+void menu_core_set_nested_menu(Menu *menu);     // Set nested submenu
+bool get_show_menus_state(void);                // Get menu visibility state
+void menu_core_toggle_show_menus(void);         // Toggle between logo and menu mode
 
-// Logo mode vs menu mode arrays
-extern char **logo_items;       // Logo mode items (just "AmiWB" or app name)
-extern int logo_item_count;     // Always 1
-extern char **full_menu_items;  // Full menu items (Workbench, Windows, Icons, Tools, etc.)
-extern Menu **full_submenus;    // Full submenus array
-extern int full_menu_item_count;// Number of full menu items
+// Logo mode arrays (read-only)
+char **menu_core_get_logo_items(void);          // Get logo mode items array
+int menu_core_get_logo_item_count(void);        // Get logo item count
 
-// System menu backup (for app menu substitution)
-extern char *system_logo_item;      // Original "AmiWB" logo
-extern char **system_menu_items;    // System menu items backup
-extern Menu **system_submenus;      // System submenus backup
-extern int system_menu_item_count;  // System menu count backup
-extern bool app_menu_active;        // True when app menus are shown
-extern Window current_app_window;   // Window that owns current app menus
+// Full menu arrays (read-only)
+char **menu_core_get_full_menu_items(void);     // Get full menu items array
+Menu **menu_core_get_full_submenus(void);       // Get full submenus array
+int menu_core_get_full_menu_item_count(void);   // Get full menu item count
+
+// System menu backup (read-only - managed internally)
+char *menu_core_get_system_logo_item(void);     // Get system logo item
+char **menu_core_get_system_menu_items(void);   // Get system menu items backup
+Menu **menu_core_get_system_submenus(void);     // Get system submenus backup
+int menu_core_get_system_menu_item_count(void); // Get system menu count backup
+
+// App menu state
+bool is_app_menu_active(void);                  // Check if app menus are active
+void menu_core_set_app_menu_active(bool active);// Set app menu active state
+Window get_app_menu_window(void);               // Get app menu window
+void menu_core_set_app_menu_window(Window win); // Set app menu window
+
+// Menu substitution helpers (app menu switching)
+void menu_core_save_system_menus(void);                                          // Save system menus for restore
+void menu_core_switch_to_app_menus(char **items, Menu **subs, int count);       // Switch to app menu arrays
+void menu_core_restore_system_menus(void);                                       // Restore system menu arrays
 
 // ============================================================================
 // Internal Helper Functions

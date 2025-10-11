@@ -19,18 +19,18 @@ void toggle_menubar_state(void) {
     Menu *menubar = get_menubar_menu();
     if (!menubar) return;
 
-    show_menus = !show_menus;
-    if (show_menus) {
+    menu_core_toggle_show_menus();
+    if (get_show_menus_state()) {
         // Switching to menu mode
-        menubar->items = full_menu_items;
-        menubar->item_count = full_menu_item_count;
-        menubar->submenus = full_submenus;
+        menubar->items = menu_core_get_full_menu_items();
+        menubar->item_count = menu_core_get_full_menu_item_count();
+        menubar->submenus = menu_core_get_full_submenus();
     } else {
         // Switching to logo mode - close ALL dropdowns first
         close_all_menus();
 
-        menubar->items = logo_items;
-        menubar->item_count = logo_item_count;
+        menubar->items = menu_core_get_logo_items();
+        menubar->item_count = menu_core_get_logo_item_count();
         menubar->submenus = NULL;
         menubar->selected_item = -1;
     }

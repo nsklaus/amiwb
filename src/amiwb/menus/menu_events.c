@@ -15,7 +15,7 @@
 // Handle motion on menubar (for hover highlighting)
 // Update hover selection across top-level items as the mouse moves.
 void menu_handle_menubar_motion(XMotionEvent *event) {
-    if (!show_menus) return;
+    if (!get_show_menus_state()) return;
 
     RenderContext *ctx = get_render_context();
     Menu *menubar = get_menubar_menu();
@@ -38,25 +38,27 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
     }
     if (menubar->selected_item != prev_selected) {
         // Safe menu cleanup with validation
-        if (active_menu && active_menu->canvas) {
+        Menu *active = get_active_menu();
+        if (active && active->canvas) {
             XSync(ctx->dpy, False);  // Ensure pending operations complete
-            if (active_menu->canvas->win != None) {
-                safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+            if (active->canvas->win != None) {
+                safe_unmap_window(ctx->dpy, active->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap to complete
             }
-            itn_canvas_destroy(active_menu->canvas);
-            // Note: itn_canvas_destroy() already sets active_menu->canvas = NULL
-            active_menu = NULL;
+            itn_canvas_destroy(active->canvas);
+            // Note: itn_canvas_destroy() already sets active->canvas = NULL
+            menu_core_set_active_menu(NULL);
         }
-        if (nested_menu && nested_menu->canvas) {
+        Menu *nested = menu_core_get_nested_menu();
+        if (nested && nested->canvas) {
             XSync(ctx->dpy, False);  // Ensure pending operations complete
-            if (nested_menu->canvas->win != None) {
-                safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
+            if (nested->canvas->win != None) {
+                safe_unmap_window(ctx->dpy, nested->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap to complete
             }
-            itn_canvas_destroy(nested_menu->canvas);
-            // Note: itn_canvas_destroy() already sets nested_menu->canvas = NULL
-            nested_menu = NULL;
+            itn_canvas_destroy(nested->canvas);
+            // Note: itn_canvas_destroy() already sets nested->canvas = NULL
+            menu_core_set_nested_menu(NULL);
         }
         if (menubar->selected_item != -1 &&
                 menubar->submenus[menubar->selected_item]) {
@@ -81,16 +83,17 @@ void menu_handle_menubar_motion(XMotionEvent *event) {
 // Close the currently open nested submenu, if any.
 void close_nested_if_any(void) {
     RenderContext *ctx = get_render_context();
-    if (nested_menu && nested_menu->canvas) {
+    Menu *nested = menu_core_get_nested_menu();
+    if (nested && nested->canvas) {
         XSync(ctx->dpy, False);  // Complete pending operations
-        if (ctx && nested_menu->canvas->win != None) {
-            clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-            safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
+        if (ctx && nested->canvas->win != None) {
+            clear_press_target_if_matches(nested->canvas->win);  // Clear before destroy
+            safe_unmap_window(ctx->dpy, nested->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
-        itn_canvas_destroy(nested_menu->canvas);
-        nested_menu->canvas = NULL;  // Prevent double-free
-        nested_menu = NULL;
+        itn_canvas_destroy(nested->canvas);
+        nested->canvas = NULL;  // Prevent double-free
+        menu_core_set_nested_menu(NULL);
     }
 }
 
@@ -100,44 +103,46 @@ void close_all_menus(void) {
     if (!ctx) return;
 
     // Close nested menu if open
-    if (nested_menu && nested_menu->canvas) {
-        if (nested_menu->canvas->win != None) {
-            safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
+    Menu *nested = menu_core_get_nested_menu();
+    if (nested && nested->canvas) {
+        if (nested->canvas->win != None) {
+            safe_unmap_window(ctx->dpy, nested->canvas->win);
             XSync(ctx->dpy, False);
         }
-        itn_canvas_destroy(nested_menu->canvas);
-        nested_menu->canvas = NULL;
-        nested_menu = NULL;  // Clear pointer to prevent stale reference
+        itn_canvas_destroy(nested->canvas);
+        nested->canvas = NULL;
+        menu_core_set_nested_menu(NULL);  // Clear pointer to prevent stale reference
     }
 
     // Close active menu if open
-    if (active_menu && active_menu->canvas) {
-        if (active_menu->canvas->win != None) {
-            safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+    Menu *active = get_active_menu();
+    if (active && active->canvas) {
+        if (active->canvas->win != None) {
+            safe_unmap_window(ctx->dpy, active->canvas->win);
             XSync(ctx->dpy, False);
         }
-        itn_canvas_destroy(active_menu->canvas);
-        active_menu->canvas = NULL;  // Prevent double-free
+        itn_canvas_destroy(active->canvas);
+        active->canvas = NULL;  // Prevent double-free
 
         // If it's a window list (parent_index == -1), free the temporary menu
-        if (active_menu->parent_index == -1) {
-            if (active_menu->items) {
-                for (int i = 0; i < active_menu->item_count; i++) {
-                    if (active_menu->items[i]) free(active_menu->items[i]);
+        if (active->parent_index == -1) {
+            if (active->items) {
+                for (int i = 0; i < active->item_count; i++) {
+                    if (active->items[i]) free(active->items[i]);
                 }
-                free(active_menu->items);
+                free(active->items);
             }
-            if (active_menu->shortcuts) {
-                for (int i = 0; i < active_menu->item_count; i++) {
-                    if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+            if (active->shortcuts) {
+                for (int i = 0; i < active->item_count; i++) {
+                    if (active->shortcuts[i]) free(active->shortcuts[i]);
                 }
-                free(active_menu->shortcuts);
+                free(active->shortcuts);
             }
-            if (active_menu->enabled) free(active_menu->enabled);
-            if (active_menu->window_refs) free(active_menu->window_refs);
-            free(active_menu);
+            if (active->enabled) free(active->enabled);
+            if (active->window_refs) free(active->window_refs);
+            free(active);
         }
-        active_menu = NULL;
+        menu_core_set_active_menu(NULL);
     }
 
     // Revert menubar to logo state if needed
@@ -155,33 +160,34 @@ void close_window_list_if_open(void) {
     if (!ctx) return;
 
     // Check if active menu is the window list (parent_index == -1)
-    if (active_menu && active_menu->parent_index == -1) {
-        if (active_menu->canvas) {
+    Menu *active = get_active_menu();
+    if (active && active->parent_index == -1) {
+        if (active->canvas) {
             XSync(ctx->dpy, False);
-            if (active_menu->canvas->win != None) {
-                clear_press_target_if_matches(active_menu->canvas->win);
-                safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+            if (active->canvas->win != None) {
+                clear_press_target_if_matches(active->canvas->win);
+                safe_unmap_window(ctx->dpy, active->canvas->win);
                 XSync(ctx->dpy, False);
             }
-            itn_canvas_destroy(active_menu->canvas);
-            active_menu->canvas = NULL;  // Prevent double-free
+            itn_canvas_destroy(active->canvas);
+            active->canvas = NULL;  // Prevent double-free
         }
         // Free the menu structure and its items
-        if (active_menu->items) {
-            for (int i = 0; i < active_menu->item_count; i++) {
-                if (active_menu->items[i]) free(active_menu->items[i]);
+        if (active->items) {
+            for (int i = 0; i < active->item_count; i++) {
+                if (active->items[i]) free(active->items[i]);
             }
-            free(active_menu->items);
+            free(active->items);
         }
-        if (active_menu->shortcuts) {
-            for (int i = 0; i < active_menu->item_count; i++) {
-                if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+        if (active->shortcuts) {
+            for (int i = 0; i < active->item_count; i++) {
+                if (active->shortcuts[i]) free(active->shortcuts[i]);
             }
-            free(active_menu->shortcuts);
+            free(active->shortcuts);
         }
-        if (active_menu->enabled) free(active_menu->enabled);
-        free(active_menu);
-        active_menu = NULL;
+        if (active->enabled) free(active->enabled);
+        free(active);
+        menu_core_set_active_menu(NULL);
     }
 }
 
@@ -203,9 +209,11 @@ void menu_handle_button_release(XButtonEvent *event) {
     // Only LMB (Button1) executes menu items - ignore MMB, RMB, and scroll wheel
     if (event->button != Button1) return;
 
+    Menu *active = get_active_menu();
+    Menu *nested = menu_core_get_nested_menu();
     Menu *target_menu = NULL;
-    if (active_menu && active_menu->canvas && event->window == active_menu->canvas->win) target_menu = active_menu;
-    else if (nested_menu && nested_menu->canvas && event->window == nested_menu->canvas->win) target_menu = nested_menu;
+    if (active && active->canvas && event->window == active->canvas->win) target_menu = active;
+    else if (nested && nested->canvas && event->window == nested->canvas->win) target_menu = nested;
     else return;
 
     int item = event->y / MENU_ITEM_HEIGHT;
@@ -218,27 +226,29 @@ void menu_handle_button_release(XButtonEvent *event) {
     }
 
     // Close dropped-down menus after selection with safe validation
-    if (nested_menu && nested_menu->canvas) {
+    nested = menu_core_get_nested_menu();  // Re-fetch in case it changed
+    if (nested && nested->canvas) {
         XSync(ctx->dpy, False);  // Complete pending operations
-        if (nested_menu->canvas->win != None) {
-            clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-            safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
+        if (nested->canvas->win != None) {
+            clear_press_target_if_matches(nested->canvas->win);  // Clear before destroy
+            safe_unmap_window(ctx->dpy, nested->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
-        itn_canvas_destroy(nested_menu->canvas);
-        nested_menu->canvas = NULL;  // Prevent double-free
-        nested_menu = NULL;
+        itn_canvas_destroy(nested->canvas);
+        nested->canvas = NULL;  // Prevent double-free
+        menu_core_set_nested_menu(NULL);
     }
-    if (active_menu && active_menu->canvas) {
+    active = get_active_menu();  // Re-fetch in case it changed
+    if (active && active->canvas) {
         XSync(ctx->dpy, False);  // Complete pending operations
-        if (active_menu->canvas->win != None) {
-            clear_press_target_if_matches(active_menu->canvas->win);  // Clear before destroy
-            safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+        if (active->canvas->win != None) {
+            clear_press_target_if_matches(active->canvas->win);  // Clear before destroy
+            safe_unmap_window(ctx->dpy, active->canvas->win);
             XSync(ctx->dpy, False);  // Wait for unmap
         }
-        itn_canvas_destroy(active_menu->canvas);
-        active_menu->canvas = NULL;  // Prevent double-free
-        active_menu = NULL;
+        itn_canvas_destroy(active->canvas);
+        active->canvas = NULL;  // Prevent double-free
+        menu_core_set_active_menu(NULL);
     }
 
     // Conditional redraw: only if not quitting (event loop still running)
@@ -264,73 +274,75 @@ void menu_handle_menubar_press(XButtonEvent *event) {
     // Handle right-click - always toggle menubar state and close any dropdown
     if (event->button == Button3) {
         // Close window list menu if open
-        if (active_menu && active_menu->parent_index == -1) {
+        Menu *active = get_active_menu();
+        if (active && active->parent_index == -1) {
             // This is the window list menu
             XSync(ctx->dpy, False);
-            if (active_menu->canvas->win != None) {
-                clear_press_target_if_matches(active_menu->canvas->win);
-                safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+            if (active->canvas->win != None) {
+                clear_press_target_if_matches(active->canvas->win);
+                safe_unmap_window(ctx->dpy, active->canvas->win);
                 XSync(ctx->dpy, False);
             }
-            itn_canvas_destroy(active_menu->canvas);
-            active_menu->canvas = NULL;  // Prevent double-free
+            itn_canvas_destroy(active->canvas);
+            active->canvas = NULL;  // Prevent double-free
 
             // Free the temporary window menu
-            if (active_menu->items) {
-                for (int i = 0; i < active_menu->item_count; i++) {
-                    if (active_menu->items[i]) free(active_menu->items[i]);
+            if (active->items) {
+                for (int i = 0; i < active->item_count; i++) {
+                    if (active->items[i]) free(active->items[i]);
                 }
-                free(active_menu->items);
+                free(active->items);
             }
-            if (active_menu->shortcuts) {
-                for (int i = 0; i < active_menu->item_count; i++) {
-                    if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+            if (active->shortcuts) {
+                for (int i = 0; i < active->item_count; i++) {
+                    if (active->shortcuts[i]) free(active->shortcuts[i]);
                 }
-                free(active_menu->shortcuts);
+                free(active->shortcuts);
             }
-            if (active_menu->enabled) free(active_menu->enabled);
-            if (active_menu->window_refs) free(active_menu->window_refs);
-            free(active_menu);
-            active_menu = NULL;
+            if (active->enabled) free(active->enabled);
+            if (active->window_refs) free(active->window_refs);
+            free(active);
+            menu_core_set_active_menu(NULL);
         }
         toggle_menubar_state();
     } else if (event->button == Button1) {
         // Check if we're in logo mode and clicking on the right button area
-        if (!show_menus) {
+        if (!get_show_menus_state()) {
             int screen_width = DisplayWidth(ctx->dpy, DefaultScreen(ctx->dpy));
             // Button is drawn at width-28 and is 26 pixels wide (from render.c)
             int button_start = screen_width - 30;  // Give a bit more area for easier clicking
 
             if (event->x >= button_start) {
                 // Check if window list is already open
-                if (active_menu && active_menu->parent_index == -1) {
+                Menu *active = get_active_menu();
+                if (active && active->parent_index == -1) {
                     // Window list is open - close it
                     XSync(ctx->dpy, False);
-                    if (active_menu->canvas->win != None) {
-                        clear_press_target_if_matches(active_menu->canvas->win);
-                        safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+                    if (active->canvas->win != None) {
+                        clear_press_target_if_matches(active->canvas->win);
+                        safe_unmap_window(ctx->dpy, active->canvas->win);
                         XSync(ctx->dpy, False);
                     }
-                    itn_canvas_destroy(active_menu->canvas);
-                    active_menu->canvas = NULL;  // Prevent double-free
+                    itn_canvas_destroy(active->canvas);
+                    active->canvas = NULL;  // Prevent double-free
 
                     // Free the temporary window menu
-                    if (active_menu->items) {
-                        for (int i = 0; i < active_menu->item_count; i++) {
-                            if (active_menu->items[i]) free(active_menu->items[i]);
+                    if (active->items) {
+                        for (int i = 0; i < active->item_count; i++) {
+                            if (active->items[i]) free(active->items[i]);
                         }
-                        free(active_menu->items);
+                        free(active->items);
                     }
-                    if (active_menu->shortcuts) {
-                        for (int i = 0; i < active_menu->item_count; i++) {
-                            if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+                    if (active->shortcuts) {
+                        for (int i = 0; i < active->item_count; i++) {
+                            if (active->shortcuts[i]) free(active->shortcuts[i]);
                         }
-                        free(active_menu->shortcuts);
+                        free(active->shortcuts);
                     }
-                    if (active_menu->enabled) free(active_menu->enabled);
-                    if (active_menu->window_refs) free(active_menu->window_refs);
-                    free(active_menu);
-                    active_menu = NULL;
+                    if (active->enabled) free(active->enabled);
+                    if (active->window_refs) free(active->window_refs);
+                    free(active);
+                    menu_core_set_active_menu(NULL);
                 } else {
                     // Show window list below the button (menubar height)
                     // x position will be calculated to align with screen edge
@@ -338,33 +350,34 @@ void menu_handle_menubar_press(XButtonEvent *event) {
                 }
             } else {
                 // Click outside button area - close window list if open
-                if (active_menu && active_menu->parent_index == -1) {
+                Menu *active = get_active_menu();
+                if (active && active->parent_index == -1) {
                     XSync(ctx->dpy, False);
-                    if (active_menu->canvas->win != None) {
-                        clear_press_target_if_matches(active_menu->canvas->win);
-                        safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+                    if (active->canvas->win != None) {
+                        clear_press_target_if_matches(active->canvas->win);
+                        safe_unmap_window(ctx->dpy, active->canvas->win);
                         XSync(ctx->dpy, False);
                     }
-                    itn_canvas_destroy(active_menu->canvas);
-                    active_menu->canvas = NULL;  // Prevent double-free
+                    itn_canvas_destroy(active->canvas);
+                    active->canvas = NULL;  // Prevent double-free
 
                     // Free the temporary window menu
-                    if (active_menu->items) {
-                        for (int i = 0; i < active_menu->item_count; i++) {
-                            if (active_menu->items[i]) free(active_menu->items[i]);
+                    if (active->items) {
+                        for (int i = 0; i < active->item_count; i++) {
+                            if (active->items[i]) free(active->items[i]);
                         }
-                        free(active_menu->items);
+                        free(active->items);
                     }
-                    if (active_menu->shortcuts) {
-                        for (int i = 0; i < active_menu->item_count; i++) {
-                            if (active_menu->shortcuts[i]) free(active_menu->shortcuts[i]);
+                    if (active->shortcuts) {
+                        for (int i = 0; i < active->item_count; i++) {
+                            if (active->shortcuts[i]) free(active->shortcuts[i]);
                         }
-                        free(active_menu->shortcuts);
+                        free(active->shortcuts);
                     }
-                    if (active_menu->enabled) free(active_menu->enabled);
-                    if (active_menu->window_refs) free(active_menu->window_refs);
-                    free(active_menu);
-                    active_menu = NULL;
+                    if (active->enabled) free(active->enabled);
+                    if (active->window_refs) free(active->window_refs);
+                    free(active);
+                    menu_core_set_active_menu(NULL);
                 }
             }
         }
@@ -377,71 +390,74 @@ void menu_handle_menubar_press(XButtonEvent *event) {
 
 // If the highlighted item in the dropdown has a submenu, open it.
 void maybe_open_nested_for_selection(void) {
-    if (!active_menu) return;
+    Menu *active = get_active_menu();
+    if (!active) return;
     // Only open nested if the selected item has a submenu
-    if (!active_menu->submenus) return;
-    int sel = active_menu->selected_item;
-    if (sel < 0 || sel >= active_menu->item_count) return;
-    Menu *child = active_menu->submenus[sel];
+    if (!active->submenus) return;
+    int sel = active->selected_item;
+    if (sel < 0 || sel >= active->item_count) return;
+    Menu *child = active->submenus[sel];
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
     if (child) {
         // If already open for the same selection, do nothing
-        if (nested_menu && nested_menu == child) return;
+        Menu *nested = menu_core_get_nested_menu();
+        if (nested && nested == child) return;
         // Close previous nested if any
-        if (nested_menu && nested_menu->canvas) {
+        if (nested && nested->canvas) {
             XSync(ctx->dpy, False);  // Complete pending operations
-            if (nested_menu->canvas->win != None) {
-                clear_press_target_if_matches(nested_menu->canvas->win);  // Clear before destroy
-                safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
+            if (nested->canvas->win != None) {
+                clear_press_target_if_matches(nested->canvas->win);  // Clear before destroy
+                safe_unmap_window(ctx->dpy, nested->canvas->win);
                 XSync(ctx->dpy, False);  // Wait for unmap
             }
-            itn_canvas_destroy(nested_menu->canvas);
-            nested_menu->canvas = NULL;  // Prevent double-free
-            nested_menu = NULL;
+            itn_canvas_destroy(nested->canvas);
+            nested->canvas = NULL;  // Prevent double-free
+            menu_core_set_nested_menu(NULL);
         }
         // Open new nested at the right edge of active_menu, aligned to item
         int submenu_width = get_submenu_width(child);
-        int nx = active_menu->canvas->x + active_menu->canvas->width;
-        int ny = active_menu->canvas->y + sel * MENU_ITEM_HEIGHT;
-        nested_menu = child;
+        int nx = active->canvas->x + active->canvas->width;
+        int ny = active->canvas->y + sel * MENU_ITEM_HEIGHT;
+        menu_core_set_nested_menu(child);
+        nested = child;  // Update local reference
 
         // Destroy any existing canvas from previous display to prevent leak
-        if (nested_menu->canvas) {
-            if (nested_menu->canvas->win != None) {
-                safe_unmap_window(ctx->dpy, nested_menu->canvas->win);
+        if (nested->canvas) {
+            if (nested->canvas->win != None) {
+                safe_unmap_window(ctx->dpy, nested->canvas->win);
                 XSync(ctx->dpy, False);
             }
-            itn_canvas_destroy(nested_menu->canvas);
-            nested_menu->canvas = NULL;
+            itn_canvas_destroy(nested->canvas);
+            nested->canvas = NULL;
         }
 
-        nested_menu->canvas = create_canvas(NULL, nx, ny, submenu_width,
-            nested_menu->item_count * MENU_ITEM_HEIGHT + 8, MENU);
-        if (nested_menu->canvas) {
-            nested_menu->canvas->bg_color = (XRenderColor){0xFFFF,0xFFFF,0xFFFF,0xFFFF};
-            nested_menu->selected_item = -1;
+        nested->canvas = create_canvas(NULL, nx, ny, submenu_width,
+            nested->item_count * MENU_ITEM_HEIGHT + 8, MENU);
+        if (nested->canvas) {
+            nested->canvas->bg_color = (XRenderColor){0xFFFF,0xFFFF,0xFFFF,0xFFFF};
+            nested->selected_item = -1;
 
             // Update enabled states and checkmarks for View Modes submenu
-            if (nested_menu->parent_menu && nested_menu->parent_menu->parent_index == 1 &&
-                nested_menu->parent_index == 6) { // View Modes submenu
-                Canvas *active = itn_focus_get_active();
-                bool desktop_focused = (!active || active->type == DESKTOP);
+            if (nested->parent_menu && nested->parent_menu->parent_index == 1 &&
+                nested->parent_index == 6) { // View Modes submenu
+                Canvas *active_canvas = itn_focus_get_active();
+                bool desktop_focused = (!active_canvas || active_canvas->type == DESKTOP);
 
                 // Enable/disable items based on context
-                if (nested_menu->enabled) {
-                    nested_menu->enabled[0] = true;  // Icons - always enabled
-                    nested_menu->enabled[1] = !desktop_focused;  // Names - disabled for desktop
-                    nested_menu->enabled[2] = true;  // Hidden - always enabled
-                    nested_menu->enabled[3] = true;  // Spatial - always enabled
+                if (nested->enabled) {
+                    nested->enabled[0] = true;  // Icons - always enabled
+                    nested->enabled[1] = !desktop_focused;  // Names - disabled for desktop
+                    nested->enabled[2] = true;  // Hidden - always enabled
+                    nested->enabled[3] = true;  // Spatial - always enabled
                 }
 
                 // Update checkmarks to reflect current state
                 update_view_modes_checkmarks();
             }
 
-            XMapRaised(ctx->dpy, nested_menu->canvas->win);
-            redraw_canvas(nested_menu->canvas);
+            XMapRaised(ctx->dpy, nested->canvas->win);
+            redraw_canvas(nested->canvas);
         }
     } else {
         // No child for this item; close nested if open
@@ -455,41 +471,43 @@ void menu_handle_motion_notify(XMotionEvent *event) {
     RenderContext *ctx = get_render_context();
     if (!ctx) return;
 
-    if (active_menu && active_menu->canvas && event->window == active_menu->canvas->win) {
-        int prev_selected = active_menu->selected_item;
+    Menu *active = get_active_menu();
+    if (active && active->canvas && event->window == active->canvas->win) {
+        int prev_selected = active->selected_item;
         int new_item = event->y / MENU_ITEM_HEIGHT;
-        if (new_item < 0 || new_item >= active_menu->item_count) {
-            active_menu->selected_item = -1;
+        if (new_item < 0 || new_item >= active->item_count) {
+            active->selected_item = -1;
         } else {
             // Don't highlight disabled items
-            if (active_menu->enabled && !active_menu->enabled[new_item]) {
-                active_menu->selected_item = -1;  // No selection for disabled items
+            if (active->enabled && !active->enabled[new_item]) {
+                active->selected_item = -1;  // No selection for disabled items
             } else {
-                active_menu->selected_item = new_item;
+                active->selected_item = new_item;
             }
         }
-        if (active_menu->selected_item != prev_selected) {
-            redraw_canvas(active_menu->canvas);
+        if (active->selected_item != prev_selected) {
+            redraw_canvas(active->canvas);
             maybe_open_nested_for_selection();
         }
         return;
     }
 
-    if (nested_menu && nested_menu->canvas && event->window == nested_menu->canvas->win) {
-        int prev_selected = nested_menu->selected_item;
+    Menu *nested = menu_core_get_nested_menu();
+    if (nested && nested->canvas && event->window == nested->canvas->win) {
+        int prev_selected = nested->selected_item;
         int new_item = event->y / MENU_ITEM_HEIGHT;
-        if (new_item < 0 || new_item >= nested_menu->item_count) {
-            nested_menu->selected_item = -1;
+        if (new_item < 0 || new_item >= nested->item_count) {
+            nested->selected_item = -1;
         } else {
             // Don't highlight disabled items
-            if (nested_menu->enabled && !nested_menu->enabled[new_item]) {
-                nested_menu->selected_item = -1;  // No selection for disabled items
+            if (nested->enabled && !nested->enabled[new_item]) {
+                nested->selected_item = -1;  // No selection for disabled items
             } else {
-                nested_menu->selected_item = new_item;
+                nested->selected_item = new_item;
             }
         }
-        if (nested_menu->selected_item != prev_selected) {
-            redraw_canvas(nested_menu->canvas);
+        if (nested->selected_item != prev_selected) {
+            redraw_canvas(nested->canvas);
         }
         return;
     }

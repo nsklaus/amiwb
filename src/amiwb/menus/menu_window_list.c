@@ -20,16 +20,17 @@ void show_window_list_menu(int x, int y) {
     if (!ctx) return;
 
     // Close any existing dropdown
-    if (active_menu && active_menu->canvas) {
+    Menu *active = get_active_menu();
+    if (active && active->canvas) {
         XSync(ctx->dpy, False);
-        if (active_menu->canvas->win != None) {
-            clear_press_target_if_matches(active_menu->canvas->win);
-            safe_unmap_window(ctx->dpy, active_menu->canvas->win);
+        if (active->canvas->win != None) {
+            clear_press_target_if_matches(active->canvas->win);
+            safe_unmap_window(ctx->dpy, active->canvas->win);
             XSync(ctx->dpy, False);
         }
-        itn_canvas_destroy(active_menu->canvas);
-        active_menu->canvas = NULL;  // Prevent double-free
-        active_menu = NULL;
+        itn_canvas_destroy(active->canvas);
+        active->canvas = NULL;  // Prevent double-free
+        menu_core_set_active_menu(NULL);
     }
 
     // Get current window list
@@ -143,7 +144,7 @@ void show_window_list_menu(int x, int y) {
     window_menu->canvas = create_canvas(NULL, x, y, menu_width, menu_height, MENU);
     if (window_menu->canvas) {
         window_menu->canvas->bg_color = (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
-        active_menu = window_menu;
+        menu_core_set_active_menu(window_menu);
         window_menu->selected_item = -1;
         XMapRaised(ctx->dpy, window_menu->canvas->win);
         redraw_canvas(window_menu->canvas);
