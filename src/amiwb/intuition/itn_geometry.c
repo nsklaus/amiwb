@@ -267,7 +267,9 @@ void update_scroll_from_mouse_drag(Canvas *canvas, bool is_vertical, int initial
         canvas->scroll_x = new_scroll;
     }
 
-    // Trigger redraw
+    // CRITICAL FIX: Must redraw canvas buffer to update scrollbar knob position and scrolled content
+    // DAMAGE_CANVAS/SCHEDULE_FRAME only tell compositor to composite - they don't redraw the buffer!
+    redraw_canvas(canvas);
     DAMAGE_CANVAS(canvas);
     SCHEDULE_FRAME();
 }
