@@ -231,6 +231,11 @@ void workbench_handle_button_press(XButtonEvent *event) {
     } else {
         // Empty space click - prepare for potential multiselection
 
+        // ONLY left mouse button (Button1) triggers multiselection
+        if (event->button != Button1) {
+            return;
+        }
+
         // ONLY allow multiselection on desktop and workbench windows (not client windows)
         if (canvas->type != DESKTOP && (canvas->type != WINDOW || canvas->client_win != None)) {
             return;  // Client windows and other types: no multiselection
