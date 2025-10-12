@@ -28,7 +28,7 @@ it could fit on a floppy disk. it's around 25k lines of code total,
 it handles clients (linux apps) and have its own file manager and app launcher.
 in other words: it's a desktop ..
 
-it have "on-demand" and "contiuous" render modes as options:
+it have "on-demand" and "continuous" render modes as options:
 - in on-demand mode the desktop will render as little as possbile 
 (at idle, it's like 1 or 2 FPS, but the desktop is still extremely reactive, 
 with average rendering frame time of 0.05ms, as soon as you just blink the FPS

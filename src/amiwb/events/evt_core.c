@@ -310,6 +310,21 @@ void handle_events(void) {
             last_time_check = now;
             update_menubar_time();      // Will only redraw if minute changed
             menu_addon_update_all();    // Update CPU, memory, fans, etc.
+
+            // Redraw menubar to display addon changes in real-time (logo mode only)
+            // Without this, CPU/RAM/fans show stale data for up to 59 seconds
+            Canvas *menubar_canvas = get_menubar();
+            if (menubar_canvas && !get_show_menus_state()) {
+                Menu *active = get_active_menu();
+
+                // Allow update if: no active menu, OR canvas destroyed, OR not window list
+                if (!active || active->canvas == NULL || active->parent_index != -1) {
+                    redraw_canvas(menubar_canvas);
+                    menubar_canvas->comp_needs_repaint = true;
+                    itn_render_accumulate_canvas_damage(menubar_canvas);
+                    itn_render_schedule_frame();
+                }
+            }
         }
 
         // Check for drive changes every second
