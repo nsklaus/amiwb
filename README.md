@@ -31,24 +31,25 @@ in other words: it's a desktop ..
 it have "on-demand" and "conituous" render modes as options:
 - in on-demand mode the desktop will render as little as possbile 
 (at idle, it's like 1 or 2 FPS, but the desktop is still extremely reactive, 
-with rendering frame time of 0.1ms , as soon as you just blink the FPS are 
-climbing back up to reach up to target fps if need be).
+with average rendering frame time of 0.05ms, as soon as you just blink the FPS
+are climbing back up to reach up to target fps if need be).
 - in continuous mode it always render at the target fps, like 60 or 120fps.
 
-on general usage, for me: 20-40 windows opened, browser with 20 tabs or such,
-terminal with 3-8 tabs, the desktop usualy take 0-5% cpu time (with 0-2% being
-the majority.. simply said: it's >1% most of the time, roughly speaking).
+on general usage, for me: 10-20 windows opened, browser with 20 tabs or such,
+terminal with 3-8 tabs, the desktop itself usualy take between 0 and >1% cpu time.
 the filemanager 'workbench' can display very large directories instantly.
-i have a dir with 2000 books (epubs, very small files), workbench display that 
+i have a dir with 2000 books (epubs, small files), workbench display that 
 instantly with all the icons (def_icons), and i can scroll through them without
 any slowdowns or stuttering, coughing, sneezing or whatever. it just flows.
-workbench can show in "Icons" or "Names" modes and its windows can be made
+workbench can show files in "Icons" or "Names" modes and its windows can be made
 "spatial" or "lister".
-( spatial is: open a new window each time you open a dir
+( spatial is: open a new window each time you open a dir.
 lister is: reuse the same window, keep it, all the time )
 icons being used can be customised very easily. 
 you can make it all mwb, or all glowicons, for example.
 amiwb scans `/usr/local/share/amiwb/icons/def_icons/` at start.
+files like "def_zip.info" or "def_mp3.info" are automatically picked up and
+will be used as default icon for the filetype.
 and it looks for iconify icons in  `/usr/local/share/amiwb/icons/`
 or in ~/.config/amiwb/icons/ and def_icons/
 look too at file `~/.config/amiwb/amiwbrc` for settings..
