@@ -3,6 +3,7 @@
 
 #include "itn_scrollbar.h"
 #include "itn_internal.h"
+#include "../render/rnd_public.h"
 #include "../config.h"
 #include <X11/Xlib.h>
 #include <sys/time.h>
@@ -181,6 +182,7 @@ bool itn_scrollbar_handle_button_press(Canvas *canvas, XButtonEvent *event) {
             if (canvas->scroll_y > 0) {
                 canvas->scroll_y = max(0, canvas->scroll_y - SCROLL_STEP);
             }
+            redraw_canvas(canvas);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
             return true;
@@ -197,6 +199,7 @@ bool itn_scrollbar_handle_button_press(Canvas *canvas, XButtonEvent *event) {
             if (canvas->scroll_y < canvas->max_scroll_y) {
                 canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + SCROLL_STEP);
             }
+            redraw_canvas(canvas);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
             return true;
@@ -217,6 +220,7 @@ bool itn_scrollbar_handle_button_press(Canvas *canvas, XButtonEvent *event) {
             if (canvas->scroll_x > 0) {
                 canvas->scroll_x = max(0, canvas->scroll_x - SCROLL_STEP);
             }
+            redraw_canvas(canvas);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
             return true;
@@ -233,6 +237,7 @@ bool itn_scrollbar_handle_button_press(Canvas *canvas, XButtonEvent *event) {
             if (canvas->scroll_x < canvas->max_scroll_x) {
                 canvas->scroll_x = min(canvas->max_scroll_x, canvas->scroll_x + SCROLL_STEP);
             }
+            redraw_canvas(canvas);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
             return true;
@@ -261,64 +266,64 @@ bool itn_scrollbar_handle_button_release(Canvas *canvas, XButtonEvent *event) {
     // Clear arrow armed states and perform final scroll if still on button
     if (canvas->v_arrow_up_armed) {
         canvas->v_arrow_up_armed = false;
-        DAMAGE_CANVAS(canvas);
         // Check if still on button
         if (event->x >= canvas->width - BORDER_WIDTH_RIGHT && event->x < canvas->width &&
             event->y >= canvas->height - BORDER_HEIGHT_BOTTOM - 42 &&
             event->y < canvas->height - BORDER_HEIGHT_BOTTOM - 22) {
             if (canvas->scroll_y > 0) {
                 canvas->scroll_y = max(0, canvas->scroll_y - SCROLL_STEP);
-                DAMAGE_CANVAS(canvas);
             }
         }
+        redraw_canvas(canvas);
+        DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
         consumed = true;
     }
 
     if (canvas->v_arrow_down_armed) {
         canvas->v_arrow_down_armed = false;
-        DAMAGE_CANVAS(canvas);
         // Check if still on button
         if (event->x >= canvas->width - BORDER_WIDTH_RIGHT && event->x < canvas->width &&
             event->y >= canvas->height - BORDER_HEIGHT_BOTTOM - 21 &&
             event->y < canvas->height - BORDER_HEIGHT_BOTTOM) {
             if (canvas->scroll_y < canvas->max_scroll_y) {
                 canvas->scroll_y = min(canvas->max_scroll_y, canvas->scroll_y + SCROLL_STEP);
-                DAMAGE_CANVAS(canvas);
             }
         }
+        redraw_canvas(canvas);
+        DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
         consumed = true;
     }
 
     if (canvas->h_arrow_left_armed) {
         canvas->h_arrow_left_armed = false;
-        DAMAGE_CANVAS(canvas);
         // Check if still on button
         if (event->y >= canvas->height - BORDER_HEIGHT_BOTTOM && event->y < canvas->height &&
             event->x >= canvas->width - BORDER_WIDTH_RIGHT - 42 &&
             event->x < canvas->width - BORDER_WIDTH_RIGHT - 22) {
             if (canvas->scroll_x > 0) {
                 canvas->scroll_x = max(0, canvas->scroll_x - SCROLL_STEP);
-                DAMAGE_CANVAS(canvas);
             }
         }
+        redraw_canvas(canvas);
+        DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
         consumed = true;
     }
 
     if (canvas->h_arrow_right_armed) {
         canvas->h_arrow_right_armed = false;
-        DAMAGE_CANVAS(canvas);
         // Check if still on button
         if (event->y >= canvas->height - BORDER_HEIGHT_BOTTOM && event->y < canvas->height &&
             event->x >= canvas->width - BORDER_WIDTH_RIGHT - 22 &&
             event->x < canvas->width - BORDER_WIDTH_RIGHT) {
             if (canvas->scroll_x < canvas->max_scroll_x) {
                 canvas->scroll_x = min(canvas->max_scroll_x, canvas->scroll_x + SCROLL_STEP);
-                DAMAGE_CANVAS(canvas);
             }
         }
+        redraw_canvas(canvas);
+        DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
         consumed = true;
     }

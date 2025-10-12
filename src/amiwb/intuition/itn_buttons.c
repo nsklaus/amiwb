@@ -3,6 +3,7 @@
 
 #include "itn_buttons.h"
 #include "itn_internal.h"
+#include "../render/rnd_public.h"
 #include "../config.h"
 #include <X11/Xlib.h>
 
@@ -40,24 +41,28 @@ bool itn_buttons_handle_press(Canvas *canvas, XButtonEvent *event) {
     switch (hit) {
         case HIT_CLOSE:
             canvas->close_armed = true;
+            redraw_canvas(canvas);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
             return true;
 
         case HIT_ICONIFY:
             canvas->iconify_armed = true;
+            redraw_canvas(canvas);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
             return true;
 
         case HIT_MAXIMIZE:
             canvas->maximize_armed = true;
+            redraw_canvas(canvas);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
             return true;
 
         case HIT_LOWER:
             canvas->lower_armed = true;
+            redraw_canvas(canvas);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
             return true;
@@ -71,6 +76,7 @@ bool itn_buttons_handle_press(Canvas *canvas, XButtonEvent *event) {
         case HIT_RESIZE_E:
         case HIT_RESIZE_W:
             canvas->resize_armed = true;
+            redraw_canvas(canvas);
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
             // Start resize operation with the specific corner/edge
@@ -95,6 +101,7 @@ bool itn_buttons_handle_release(Canvas *canvas, XButtonEvent *event) {
     // Handle resize button release
     if (canvas->resize_armed) {
         canvas->resize_armed = false;
+        redraw_canvas(canvas);
         DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
         handled = true;
@@ -104,6 +111,7 @@ bool itn_buttons_handle_release(Canvas *canvas, XButtonEvent *event) {
     // Handle close button release
     if (canvas->close_armed) {
         canvas->close_armed = false;
+        redraw_canvas(canvas);
         DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
         if (hit == HIT_CLOSE) {
@@ -115,6 +123,7 @@ bool itn_buttons_handle_release(Canvas *canvas, XButtonEvent *event) {
     // Handle iconify button release
     if (canvas->iconify_armed) {
         canvas->iconify_armed = false;
+        redraw_canvas(canvas);
         DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
         if (hit == HIT_ICONIFY) {
@@ -126,6 +135,7 @@ bool itn_buttons_handle_release(Canvas *canvas, XButtonEvent *event) {
     // Handle maximize button release
     if (canvas->maximize_armed) {
         canvas->maximize_armed = false;
+        redraw_canvas(canvas);
         DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
         if (hit == HIT_MAXIMIZE) {
@@ -157,6 +167,7 @@ bool itn_buttons_handle_release(Canvas *canvas, XButtonEvent *event) {
     // Handle lower button release
     if (canvas->lower_armed) {
         canvas->lower_armed = false;
+        redraw_canvas(canvas);
         DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
         if (hit == HIT_LOWER) {
