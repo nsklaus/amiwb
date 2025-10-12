@@ -7,9 +7,11 @@ for those that had an amiga equipped with a gfx and a 060 cpu card,
 you know what i'm talking about.
 it's more like draco motion/a4k 'amiga' rather than a500/cd32 'amiga'.
 the former was professionnal grade workstation using softwares like:
-tvpaint, lightwave, movie-shop, samplitude,...
+tv-paint, adpro, art-effect, lightwave, imagine, movie-shop, samplitude, ...
 the later was more like a home gaming system. 
 look at screenshots dir.
+
+### status: the base environment is complete. 
 
 dependencies:
 ```
@@ -31,7 +33,7 @@ OR
 $ startx ~/.xinitrc_amiwb -- :2
 ```
 
-### status: the base environment is complete.
+### details, in practice:
 what is amiwb ? it's a full compositing, stacking wm,
 the compiled binary (that contains the whole desktop) is less than 1Mb, 
 it could fit on a floppy disk. it's around 25k lines of code total, 
@@ -62,7 +64,15 @@ files like "def_zip.info" or "def_mp3.info" are automatically picked up and
 will be used as default icon for the filetype.
 and it looks for iconify icons in  `/usr/local/share/amiwb/icons/`
 or in ~/.config/amiwb/icons/ and def_icons/
-look too at file `~/.config/amiwb/amiwbrc` for settings..
+settings are in file `~/.config/amiwb/amiwbrc`.
+
+shortcuts, all uses the "super" key. 
+example: 
+- `super+shift+R` hot-restarts amiwb
+- `super+e` calls the "execute command" dialog
+- `super+p` opens parent window in file manager
+- `super+r` calls rename dialog for the selected icon 
+- `super+shift+Q` quits amiwb
 
 ### the desktop elements:
 
@@ -94,7 +104,8 @@ look too at file `~/.config/amiwb/amiwbrc` for settings..
 
 - auto mount external drives as device icons on the desktop 
 - background pictures for desktop and windows, both can do optional tiling  
-- it handles: fullscreen for apps, and X resolutions changes and resizes accordingly
+- it handles: fullscreen for apps,
+- auto resize and adapt itself upon X resolutions changes
 
 - file operations:
     copy, move, dnd (with progress dialog and preserve extended attributes for comments)  
