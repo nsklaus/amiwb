@@ -63,16 +63,17 @@ amiwb scans `/usr/local/share/amiwb/icons/def_icons/` at start.
 files like "def_zip.info" or "def_mp3.info" are automatically picked up and
 will be used as default icon for the filetype.
 and it looks for iconify icons in  `/usr/local/share/amiwb/icons/`
-or in ~/.config/amiwb/icons/ and def_icons/
-settings are in file `~/.config/amiwb/amiwbrc`.
+or in `~/.config/amiwb/icons/` and `def_icons/`.
+general settings are in file `~/.config/amiwb/amiwbrc`.
 
-shortcuts, all uses the "super" key. 
+shortcuts, all use the "super" key. 
 example: 
 - `super+shift+R` hot-restarts amiwb
-- `super+e` calls the "execute command" dialog
-- `super+p` opens parent window in file manager
-- `super+r` calls rename dialog for the selected icon 
+- `super+E` calls the "execute command" dialog
+- `super+P` opens parent window in file manager
+- `super+R` calls rename dialog for the selected icon 
 - `super+shift+Q` quits amiwb
+..
 
 ### the desktop elements:
 
