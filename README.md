@@ -5,7 +5,7 @@ as a workstation.
 
 for those that had an amiga equipped with a gfx and a 060 cpu card, 
 you know what i'm talking about.
-it's more like draco motion/a4k 'amiga' rather than a500/cd32 'amiga'.
+it's more like draco/a4k 'amiga' rather than a500/cd32 'amiga'.
 the former was professionnal grade workstation using softwares like:
 tv-paint, adpro, art-effect, lightwave, imagine, movie-shop, samplitude, ...
 the later was more like a home gaming system. 
@@ -54,9 +54,10 @@ i have a dir with 2000 books (epubs, small files), workbench display that
 instantly with all the icons (def_icons), and i can scroll through them without
 any slowdowns or stuttering, coughing, sneezing or whatever. it just flows.
 workbench can show files in "Icons" or "Names" modes and its windows can be made
-"spatial" or "lister".
-( spatial is: open a new window each time you open a dir.
-lister is: reuse the same window, keep it, all the time ).
+"spatial" or "lister".  
+( spatial is: open a new window each time you open a dir.  
+lister is: reuse the same window, keep it, all the time ).  
+
 icons being used can be customised very easily. 
 you can make it all mwb, or all glowicons, for example.
 amiwb scans `/usr/local/share/amiwb/icons/def_icons/` at start.
@@ -83,6 +84,7 @@ example:
     app menus substitutions works (for amiwb apps).
     additional custom menus parsed from file, toolsdaemon style. 
     show optional menu addons (cpu, mem, sensors) 
+    LMB click on the menubar button on the far right gives a window list.
 
 - window decorations:
     sliders, arrows, close, resize, iconify, lower and maximize buttons work. 

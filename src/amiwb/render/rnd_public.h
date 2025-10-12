@@ -49,4 +49,10 @@ void render_destroy_canvas_surfaces(Canvas *canvas);  // Destroy pixmap and Pict
 
 void render_load_wallpapers(void);    // Load or reload wallpapers into cache
 
+// ============================================================================
+// Selection Rectangle Utility
+// ============================================================================
+
+void rnd_draw_selection_rect(Display *dpy, Drawable d, Visual *visual, int x1, int y1, int x2, int y2);
+
 #endif // RND_PUBLIC_H

@@ -17,6 +17,13 @@
 #define WHITE (XRenderColor){0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}
 #define BLUE (XRenderColor){0x4858, 0x6F6F, 0xB0B0, 0xFFFF}
 #define GRAY (XRenderColor){0xa0a0, 0xa2a2, 0xa0a0, 0xffff}
+#define SELECT (XRenderColor){0x9999, 0xcccc, 0xffff, 0xFFFF}
+
+// Selection rectangle appearance (multiselection)
+#define SELECTION_RECT_FILL_COLOR SELECT         // Fill color
+#define SELECTION_RECT_OUTLINE_COLOR BLACK       // Outline color
+#define SELECTION_RECT_ALPHA_FILL 30             // Fill opacity (0-100, lower = more transparent)
+#define SELECTION_RECT_ALPHA_OUTLINE 70          // Outline opacity (0-100, lower = more transparent)
 
 // font colors for desktop and windows icons
 #define DESKFONTCOL WHITE

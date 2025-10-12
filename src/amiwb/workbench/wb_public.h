@@ -125,4 +125,7 @@ void end_drag_icon(Canvas *canvas);
 // Directory operations (from wb_core.c)
 void open_directory(FileIcon *icon, Canvas *current_canvas);
 
+// Multiselection rectangle rendering (from wb_events.c)
+void wb_draw_multiselection_rect(Canvas *canvas, Drawable d, Visual *visual);
+
 #endif // WB_PUBLIC_H

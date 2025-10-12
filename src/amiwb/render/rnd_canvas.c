@@ -491,6 +491,9 @@ static void render_canvas_content(Canvas *canvas, RenderContext *ctx, Picture de
             render_icons_grid_view(canvas, icon_array, icon_count,
                                   view_left, view_right, view_top, view_bottom);
         }
+
+        // Draw multiselection rectangle if active (after icons so it appears on top)
+        wb_draw_multiselection_rect(canvas, canvas->canvas_buffer, canvas->visual);
     }
 
     // Render menu content
@@ -693,4 +696,58 @@ void redraw_canvas(Canvas *canvas) {
     if (!is_client_frame) {
         composite_to_window(canvas, ctx);
     }
+}
+
+// ============================================================================
+// Selection Rectangle Drawing
+// ============================================================================
+
+// Draw selection rectangle with customizable appearance
+void rnd_draw_selection_rect(Display *dpy, Drawable d, Visual *visual, int x1, int y1, int x2, int y2) {
+    if (!dpy || d == None) return;
+
+    // Normalize coordinates (ensure x1 < x2, y1 < y2)
+    if (x1 > x2) { int tmp = x1; x1 = x2; x2 = tmp; }
+    if (y1 > y2) { int tmp = y1; y1 = y2; y2 = tmp; }
+
+    int w = x2 - x1;
+    int h = y2 - y1;
+    if (w < 2 || h < 2) return;  // Skip tiny rectangles
+
+    // Get proper XRender format for the window's visual (supports alpha)
+    XRenderPictFormat *format = XRenderFindVisualFormat(dpy, visual);
+    if (!format) return;
+
+    Picture dest = XRenderCreatePicture(dpy, d, format, 0, NULL);
+    if (dest == None) return;
+
+    // Convert percentage (0-100) to XRender alpha (0x0000-0xFFFF) and premultiply RGB
+    // XRender's PictOpOver expects premultiplied alpha to blend correctly
+    unsigned short fill_alpha = (SELECTION_RECT_ALPHA_FILL * 0xFFFF) / 100;
+    unsigned short outline_alpha = (SELECTION_RECT_ALPHA_OUTLINE * 0xFFFF) / 100;
+
+    float fill_alpha_norm = (float)SELECTION_RECT_ALPHA_FILL / 100.0f;
+    float outline_alpha_norm = (float)SELECTION_RECT_ALPHA_OUTLINE / 100.0f;
+
+    XRenderColor fill_color = {
+        (unsigned short)(SELECTION_RECT_FILL_COLOR.red * fill_alpha_norm),
+        (unsigned short)(SELECTION_RECT_FILL_COLOR.green * fill_alpha_norm),
+        (unsigned short)(SELECTION_RECT_FILL_COLOR.blue * fill_alpha_norm),
+        fill_alpha
+    };
+    XRenderFillRectangle(dpy, PictOpOver, dest, &fill_color, x1, y1, w, h);
+
+    // Outline with different color and alpha (also premultiplied)
+    XRenderColor outline_color = {
+        (unsigned short)(SELECTION_RECT_OUTLINE_COLOR.red * outline_alpha_norm),
+        (unsigned short)(SELECTION_RECT_OUTLINE_COLOR.green * outline_alpha_norm),
+        (unsigned short)(SELECTION_RECT_OUTLINE_COLOR.blue * outline_alpha_norm),
+        outline_alpha
+    };
+    XRenderFillRectangle(dpy, PictOpOver, dest, &outline_color, x1, y1, w, 1);      // Top
+    XRenderFillRectangle(dpy, PictOpOver, dest, &outline_color, x1, y2-1, w, 1);    // Bottom
+    XRenderFillRectangle(dpy, PictOpOver, dest, &outline_color, x1, y1, 1, h);      // Left
+    XRenderFillRectangle(dpy, PictOpOver, dest, &outline_color, x2-1, y1, 1, h);    // Right
+
+    XRenderFreePicture(dpy, dest);
 }
