@@ -106,9 +106,22 @@ void itn_composite_render_canvas(Canvas *canvas);
 Picture itn_composite_get_canvas_picture(Canvas *canvas);
 void itn_composite_process_damage(XDamageNotifyEvent *ev);
 void itn_composite_handle_expose(XExposeEvent *ev);
+void itn_composite_send_expose(Canvas *canvas);
 bool itn_composite_needs_frame(void);
 void itn_composite_reorder_windows(void);
 void itn_composite_swap_buffers(void);
+
+// --- itn_composite_stack.c ---
+void itn_stack_mark_dirty(void);
+Window *itn_stack_get_cached(Display *dpy, Window root, int *out_count);
+void itn_stack_init(void);
+void itn_stack_cleanup(void);
+
+// --- itn_composite_attrs.c ---
+void itn_attrs_batch_update(Display *dpy, Window *windows, int count);
+XWindowAttributes *itn_attrs_get(Window win, bool *out_valid);
+void itn_attrs_init(void);
+void itn_attrs_cleanup(void);
 
 // --- itn_events.c ---
 void itn_events_handle_damage(XDamageNotifyEvent *event);
@@ -150,6 +163,8 @@ void itn_resize_motion(int mouse_x, int mouse_y);
 
 // Composite module - override-redirect window management
 void itn_composite_add_override(Window win, XWindowAttributes *attrs);
+void itn_composite_update_override_position(Window win, int x, int y);
+void itn_composite_update_canvas_pixmap(Canvas *canvas);
 
 // ============================================================================
 // Utility Macros

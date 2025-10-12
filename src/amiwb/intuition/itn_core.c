@@ -184,6 +184,10 @@ bool itn_core_init_compositor(void) {
         return false;
     }
 
+    // Initialize cache modules (Phase 1 optimization - event-driven caching)
+    itn_stack_init();   // Window stacking cache (eliminates XQueryTree from hot path)
+    itn_attrs_init();   // Window attributes cache (batch queries, not per-window XSync)
+
     // MUST set active BEFORE setting up canvases!
     // Otherwise itn_composite_setup_canvas() will return early
     itn_composite_set_active(true);
@@ -259,6 +263,10 @@ void itn_core_shutdown_compositor(void) {
 
     // Cleanup frame scheduler
     itn_render_cleanup_frame_scheduler();
+
+    // Cleanup cache modules (Phase 1 optimization)
+    itn_stack_cleanup();   // Window stacking cache
+    itn_attrs_cleanup();   // Window attributes cache
 
     // Cleanup overlay and compositing resources
     itn_composite_cleanup_overlay();

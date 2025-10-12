@@ -128,6 +128,8 @@ typedef struct Canvas {
 
     // Enhanced damage tracking for compositor
     bool comp_needs_repaint;
+    bool comp_pixmap_stale;  // Pixmap needs refresh (first map, after client draws)
+    bool needs_hotrestart_redraw;  // One-time full redraw after hot-restart to fix obscured regions
     XRectangle comp_damage_bounds;
     struct timespec comp_last_damage_time;
 

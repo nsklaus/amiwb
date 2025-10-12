@@ -373,10 +373,33 @@ static void update_drag_window_position(int root_x, int root_y) {
     if (drag_win == None) return;
 
     Display *dpy = itn_core_get_display();
+
+    // Calculate new position
     int x = root_x - drag_win_w / 2;
     int y = root_y - drag_win_h / 2;
 
+    // Damage old position (before move) so compositor erases old ghost
+    if (last_root_x != -10000 && last_root_y != -10000) {
+        int old_x = last_root_x - drag_win_w / 2;
+        int old_y = last_root_y - drag_win_h / 2;
+        DAMAGE_RECT(old_x, old_y, drag_win_w, drag_win_h);
+    }
+
+    // Move window to new position
     XMoveWindow(dpy, drag_win, x, y);
+
+    // CRITICAL: Update compositor's cached position for override-redirect window
+    // Override-redirect windows don't generate ConfigureNotify, so cached position
+    // is never updated via events. Must manually update after XMoveWindow().
+    itn_composite_update_override_position(drag_win, x, y);
+
+    // Damage new position (after move) so compositor renders at new location
+    DAMAGE_RECT(x, y, drag_win_w, drag_win_h);
+
+    // Schedule frame to render drag window at new position
+    SCHEDULE_FRAME();
+
+    // Save position for next motion event
     last_root_x = root_x;
     last_root_y = root_y;
 }

@@ -103,11 +103,14 @@ void wb_icons_restore_iconified(FileIcon *icon) {
     // Remap and raise the original window frame
     Display *dpy = itn_core_get_display();
     XMapRaised(dpy, canvas->win);
+
+    // CRITICAL: Set compositor flags immediately to avoid race with MapNotify event
+    // Without this, compositor renders BEFORE MapNotify sets comp_mapped=true
+    canvas->comp_mapped = true;
+    canvas->comp_visible = true;
+
     XSync(dpy, False);
-    
-    // Get fresh composite pixmap after mapping
-    itn_composite_update_canvas_pixmap(canvas);
-    
+
     // Prevent trailing click from deactivating
     suppress_desktop_deactivate_for_ms(200);
     

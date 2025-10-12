@@ -49,6 +49,7 @@ void itn_focus_set_active(Canvas *canvas) {
 
     // Raise window and accumulate damage
     XRaiseWindow(dpy, canvas->win);
+    itn_stack_mark_dirty();  // CRITICAL: XRaiseWindow doesn't generate ConfigureNotify!
 
     // Set X11 focus (safe_set_input_focus handles validation and BadMatch errors)
     Window focus = (canvas->client_win != None) ? canvas->client_win : canvas->win;
@@ -145,6 +146,7 @@ void itn_focus_cycle_next(void) {
     // Window is visible - activate it
     itn_focus_set_active(next_window);
     XRaiseWindow(dpy, next_window->win);
+    itn_stack_mark_dirty();  // CRITICAL: XRaiseWindow doesn't generate ConfigureNotify!
     SCHEDULE_FRAME();
 }
 
@@ -196,6 +198,7 @@ void itn_focus_cycle_prev(void) {
     // Window is visible - activate it
     itn_focus_set_active(prev_window);
     XRaiseWindow(dpy, prev_window->win);
+    itn_stack_mark_dirty();  // CRITICAL: XRaiseWindow doesn't generate ConfigureNotify!
     SCHEDULE_FRAME();
 }
 
@@ -304,6 +307,7 @@ void itn_focus_activate_by_index(int index) {
                     }
                 } else {
                     XRaiseWindow(dpy, c->win);
+                    itn_stack_mark_dirty();  // CRITICAL: XRaiseWindow doesn't generate ConfigureNotify!
                 }
             }
             return;

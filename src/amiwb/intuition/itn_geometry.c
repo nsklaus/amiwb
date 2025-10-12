@@ -72,6 +72,9 @@ void itn_geometry_move_resize(Canvas *canvas, int x, int y, int width, int heigh
     // Need to recreate pixmap for new size
     if (canvas->comp_pixmap && size_changed) {
         itn_composite_update_canvas_pixmap(canvas);
+        // After updating pixmap, redraw decorations onto it
+        // This handles maximize button clicks
+        redraw_canvas(canvas);
     }
 }
 
@@ -83,6 +86,7 @@ void itn_geometry_raise(Canvas *canvas) {
 
     // Use X11 stacking for now (compositor will track through events)
     XRaiseWindow(dpy, canvas->win);
+    itn_stack_mark_dirty();  // CRITICAL: XRaiseWindow doesn't generate ConfigureNotify!
 
     // Stacking change affects entire screen
     DAMAGE_RECT(0, 0, itn_core_get_screen_width(), itn_core_get_screen_height());
@@ -107,6 +111,8 @@ void itn_geometry_lower(Canvas *canvas) {
         XConfigureWindow(dpy, canvas->win, CWSibling | CWStackMode, &ch);
         XSync(dpy, False);
     }
+
+    itn_stack_mark_dirty();  // CRITICAL: XLowerWindow doesn't generate ConfigureNotify!
 
     // Stacking change affects entire screen
     DAMAGE_RECT(0, 0, itn_core_get_screen_width(), itn_core_get_screen_height());
@@ -141,6 +147,13 @@ void itn_geometry_apply_resize(Canvas *c, int nw, int nh) {
     // Skip expensive buffer recreation during interactive resize
     if (!c->resizing_interactive) {
         render_recreate_canvas_surfaces(c);
+
+        // After resize, compositor pixmap needs update + decorations redrawn
+        // This handles ConfigureNotify events from GTK file chooser resize
+        if (c->comp_pixmap) {
+            itn_composite_update_canvas_pixmap(c);
+            redraw_canvas(c);
+        }
     }
 
     if (c->client_win != None) {

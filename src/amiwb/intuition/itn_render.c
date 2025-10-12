@@ -344,7 +344,10 @@ static double time_diff_ms(struct timespec *start, struct timespec *end) {
 void itn_render_update_metrics(int composite_calls, uint64_t pixels, int visible) {
     metrics.composite_calls += composite_calls;
     metrics.pixels_actually_drawn += pixels;
-    metrics.visible_windows = visible;
+    // Track MAXIMUM visible windows, not current (Dark Vador fix)
+    if (visible > metrics.visible_windows) {
+        metrics.visible_windows = visible;
+    }
 }
 
 // Log performance metrics (migrated from old compositor)

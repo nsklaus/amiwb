@@ -118,16 +118,25 @@ void intuition_handle_client_message(XClientMessageEvent *event) {
 
 void intuition_handle_expose(XExposeEvent *event) {
     Canvas *canvas = itn_canvas_find_by_window(event->window);
+
     if (canvas && !itn_core_is_fullscreen_active()) {
-        // Only damage non-composited canvases
-        // Client windows (type==WINDOW with client_win) are tracked via XDamage
-        // We only need to handle Expose for our own rendering: desktop, menus, dialogs
+        // Handle Expose events for all canvas types
         if (canvas->type == DESKTOP || canvas->type == MENU || canvas->type == DIALOG ||
-            (canvas->type == WINDOW && canvas->client_win == None)) {
+            canvas->type == WINDOW) {
+
+            // HOT-RESTART FIX: One-time full redraw + comp_pixmap refresh for obscured regions
+            // After hot-restart, obscured window regions have garbage pixels in comp_pixmap
+            // First Expose event triggers: draw to window + recreate comp_pixmap snapshot
+            // This gives us: no trashing (fixed) + normal performance (maintained)
+            if (canvas->needs_hotrestart_redraw) {
+                redraw_canvas(canvas);  // Step 1: Draw decorations to window (updates backing store)
+                itn_composite_update_canvas_pixmap(canvas);  // Step 2: Recreate comp_pixmap (captures fresh pixels)
+                canvas->needs_hotrestart_redraw = false;  // Clear flag - back to fast path
+            }
+
             DAMAGE_CANVAS(canvas);
             SCHEDULE_FRAME();
         }
-        // Composited client windows: XDamage will notify us, don't double-damage
     }
 }
 
@@ -335,6 +344,9 @@ void intuition_handle_destroy_notify(XDestroyWindowEvent *event) {
     Display *display = itn_core_get_display();
     if (!display) return;
 
+    // Mark stacking cache dirty (window destroyed = stacking order changed)
+    itn_stack_mark_dirty();
+
     // First check if this is one of our frame windows being destroyed
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (canvas) {
@@ -452,6 +464,9 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
     Display *display = itn_core_get_display();
     if (!display) return;
 
+    // Mark stacking cache dirty (new window mapping = stacking order changed)
+    itn_stack_mark_dirty();
+
     XWindowAttributes attrs;
     if (!get_window_attrs_with_defaults(event->window, &attrs)) {
         // Not a valid Window - ignore
@@ -464,6 +479,7 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
         // This ensures they appear above other windows, not behind them
         if (attrs.override_redirect) {
             XRaiseWindow(display, event->window);
+            itn_stack_mark_dirty();  // CRITICAL: XRaiseWindow doesn't generate ConfigureNotify!
         }
         send_x_command_and_sync();
         return;
@@ -475,6 +491,9 @@ void intuition_handle_map_request(XMapRequestEvent *event) {
 void intuition_handle_map_notify(XMapEvent *event) {
     Display *display = itn_core_get_display();
     if (!display) return;
+
+    // Mark stacking cache dirty (window mapped = stacking order changed)
+    itn_stack_mark_dirty();
 
     // CRITICAL: Skip our own overlay window!
     Window overlay = itn_composite_get_overlay_window();
@@ -498,6 +517,7 @@ void intuition_handle_map_notify(XMapEvent *event) {
 
         // Raise to ensure it's on top in X11 stacking order
         XRaiseWindow(display, event->window);
+        itn_stack_mark_dirty();  // CRITICAL: XRaiseWindow doesn't generate ConfigureNotify!
         XFlush(display);
 
         // Schedule a frame to composite it
@@ -638,6 +658,9 @@ static void handle_configure_managed(Canvas *canvas, XConfigureRequestEvent *eve
             // Update compositing pixmap
             if (canvas->comp_pixmap) {
                 itn_composite_update_canvas_pixmap(canvas);
+                // After creating fresh pixmap, redraw decorations onto it
+                // This is OUTSIDE compositor hot path - only runs on ConfigureRequest resize events
+                redraw_canvas(canvas);
             }
         }
 
@@ -723,6 +746,9 @@ void intuition_handle_configure_notify(XConfigureEvent *event) {
 void itn_events_handle_configure(XConfigureEvent *event) {
     if (!event) return;
 
+    // Mark stacking cache dirty (window moved/resized = potential stacking change)
+    itn_stack_mark_dirty();
+
     // Find canvas
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) {
@@ -750,6 +776,8 @@ void itn_events_handle_configure(XConfigureEvent *event) {
         // Need to update pixmap for new size
         if (canvas->comp_pixmap) {
             itn_composite_update_canvas_pixmap(canvas);
+            // Fresh pixmap is blank, need to redraw content
+            redraw_canvas(canvas);
         }
     }
 
@@ -762,6 +790,9 @@ void itn_events_handle_configure(XConfigureEvent *event) {
 
 void itn_events_handle_map(XMapEvent *event) {
     if (!event) return;
+
+    // Mark stacking cache dirty (window mapped = stacking order changed)
+    itn_stack_mark_dirty();
 
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (!canvas) {
@@ -784,6 +815,9 @@ void itn_events_handle_map(XMapEvent *event) {
 
 void itn_events_handle_unmap(XUnmapEvent *event) {
     if (!event) return;
+
+    // Mark stacking cache dirty (window unmapped = stacking order changed)
+    itn_stack_mark_dirty();
 
     // CRITICAL: Check for override-redirect window cleanup FIRST
     // Tooltips/popups are NOT Canvas windows - they must be removed from compositor

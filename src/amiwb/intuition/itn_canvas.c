@@ -409,6 +409,7 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
             DAMAGE_CANVAS(canvas);
         }
         XMapRaised(ctx->dpy, canvas->win);
+        canvas->comp_mapped = true;  // Mark as mapped for compositor (event-driven update)
         if (type == WINDOW) {
             // Newly created Workbench windows should become active immediately
             itn_focus_set_active(canvas);
@@ -417,6 +418,7 @@ Canvas *create_canvas_with_client(const char *path, int x, int y, int width,
     } else {
         // Map desktop window at bottom of stack
         XMapWindow(ctx->dpy, canvas->win);
+        canvas->comp_mapped = true;  // Mark as mapped for compositor (event-driven update)
         // Use damage accumulation instead of immediate redraw
         DAMAGE_CANVAS(canvas);
         XSync(ctx->dpy, False);
@@ -664,6 +666,7 @@ void itn_canvas_setup_compositing(Canvas *canvas) {
 
     // Mark canvas for initial rendering
     canvas->comp_needs_repaint = true;
+    canvas->comp_pixmap_stale = true;  // Pixmap needs refresh after client draws
     canvas->comp_damage_bounds = (XRectangle){0, 0, canvas->width, canvas->height};
 }
 
@@ -730,13 +733,21 @@ void iconify_canvas(Canvas *canvas) {
     canvas->comp_visible = false;
     canvas->comp_mapped = false;
 
+    // CRITICAL: Damage the screen region where window was before removing it
+    // This tells compositor to repaint this area with what's behind (desktop, other windows)
+    // Without this, stale window pixels remain on screen (black shape, trashed decorations)
+    DAMAGE_RECT(canvas->x, canvas->y, canvas->width, canvas->height);
+
     // Create an iconified icon on desktop
     create_iconified_icon(canvas);
 
-    // Damage desktop to show new icon
+    // Damage desktop and redraw immediately to show new icon
     Canvas *desktop = itn_canvas_get_desktop();
     if (desktop) {
         DAMAGE_CANVAS(desktop);
+        // CRITICAL: Synchronous redraw required before compositor renders
+        // Synthetic Expose events are async - compositor would render stale content
+        redraw_canvas(desktop);
     }
 
     // Iconified window loses active state - activate next window
@@ -913,6 +924,7 @@ void frame_existing_client_windows(void) {
 
     if (XQueryTree(dpy, DefaultRootWindow(dpy), &root_return, &parent_return,
                    &children, &nchildren)) {
+        // First pass: frame all windows
         for (unsigned int i = 0; i < nchildren; i++) {
             XWindowAttributes attrs;
             if (!safe_get_window_attributes(dpy, children[i], &attrs)) {
@@ -921,6 +933,20 @@ void frame_existing_client_windows(void) {
 
             if (attrs.map_state == IsViewable && !should_skip_framing(children[i], &attrs)) {
                 frame_client_window(children[i], &attrs);
+            }
+        }
+
+        // Hot-restart fix: Mark all EXISTING client windows as needing one-time full redraw
+        // This fixes comp_pixmap staleness for obscured regions without killing performance
+        // NOTE: We can't use itn_core_is_restarting() - it doesn't persist across exec()
+        // INSTEAD: Normal startup has NO existing clients, hot-restart DOES have existing clients
+        // So we just mark ALL framed windows here - only happens during hot-restart!
+        int count = itn_manager_get_count();
+        for (int i = 0; i < count; i++) {
+            Canvas *frame = itn_manager_get_canvas(i);
+            if (frame && frame->type == WINDOW && frame->client_win != None) {
+                // Flag: First Expose event will trigger full redraw, then clear this flag
+                frame->needs_hotrestart_redraw = true;
             }
         }
 

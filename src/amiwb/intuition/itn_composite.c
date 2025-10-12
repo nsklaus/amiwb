@@ -382,6 +382,23 @@ void itn_composite_add_override(Window win, XWindowAttributes *attrs) {
     override_count++;
 }
 
+// Update override window cached position (for drag windows that move without ConfigureNotify)
+void itn_composite_update_override_position(Window win, int x, int y) {
+    if (!itn_composite_is_active()) return;
+
+    // Find the override window in our list
+    OverrideWin *ow = override_list;
+    while (ow) {
+        if (ow->win == win) {
+            // Update cached position so compositor renders at correct location
+            ow->x = x;
+            ow->y = y;
+            return;
+        }
+        ow = ow->next;
+    }
+}
+
 // Remove an override-redirect window
 bool itn_composite_remove_override(Window win) {
     if (!itn_composite_is_active()) return false;
@@ -448,14 +465,15 @@ void itn_composite_render_all(void) {
     Canvas *visible[MAX_WINDOWS];
     int visible_count = 0;
 
-    // Query X11 for actual stacking order (bottom-to-top)
-    Window root_return, parent_return;
-    Window *children = NULL;
-    unsigned int nchildren = 0;
+    // Get cached stacking order (event-driven cache, not XQueryTree!)
+    // This eliminates 2ms blocking call from hot path - cache updated only on events
+    int nchildren = 0;
+    Window *children = itn_stack_get_cached(dpy, itn_core_get_root(), &nchildren);
 
-    if (XQueryTree(dpy, itn_core_get_root(), &root_return, &parent_return, &children, &nchildren)) {
-        // Children are returned in bottom-to-top stacking order
-        for (unsigned int i = 0; i < nchildren && visible_count < MAX_WINDOWS; i++) {
+    if (children) {
+        // Children are in bottom-to-top stacking order
+        // NO X11 calls in this loop - use Canvas cached geometry!
+        for (int i = 0; i < nchildren && visible_count < MAX_WINDOWS; i++) {
             Window w = children[i];
 
             // Skip overlay window if it exists
@@ -470,23 +488,21 @@ void itn_composite_render_all(void) {
                     continue;
                 }
 
-                // Safe attribute query handles window destruction race
-                XWindowAttributes attrs;
-                if (safe_get_window_attributes(dpy, c->win, &attrs)) {
-                    if (attrs.map_state == IsViewable) {
-                        // Check compositor visibility flag (used for hiding menubar during fullscreen)
-                        // Only skip if explicitly set to false (menubar during fullscreen)
-                        if (c->type == MENU && !c->comp_visible) {
-                            continue;  // Skip hidden menubar
-                        }
-                        visible[visible_count++] = c;
+                // Use Canvas cached state - NO X11 queries!
+                // comp_mapped tracks map_state from MapNotify/UnmapNotify events
+                if (c->comp_mapped) {
+                    // Check compositor visibility flag (used for hiding menubar during fullscreen)
+                    // Only skip if explicitly set to false (menubar during fullscreen)
+                    if (c->type == MENU && !c->comp_visible) {
+                        continue;  // Skip hidden menubar
                     }
+                    visible[visible_count++] = c;
                 }
             }
             // Override-redirect windows are now tracked via MapNotify/UnmapNotify events
             // No need to poll for them here - saves expensive XGetWindowAttributes calls
         }
-        if (children) XFree(children);
+        // Note: Don't free 'children' - it's owned by the stack cache module
     }
 
     // Compositor is working correctly - no need to log canvas count
@@ -496,56 +512,34 @@ void itn_composite_render_all(void) {
     for (int i = 0; i < visible_count; i++) {
         Canvas *c = visible[i];
 
-        // If this canvas needs repainting, ensure its window content is current
-        if (c->comp_needs_repaint) {
-            // For client windows, we need BOTH frame decorations AND client content
-            if (c->client_win) {
-                // Redraw frame decorations (borders, title bar, scrollbars)
-                redraw_canvas(c);
-                // THEN get fresh client content from compositor
-                itn_composite_update_canvas_pixmap(c);
-            } else {
-                // Frame-only window (menu, desktop) - just redraw decorations
-                redraw_canvas(c);
-            }
+        // comp_pixmap is a LIVE mirror of window content
+        // Windows draw themselves on Expose events, not here
+        // Compositor just composites (copies) existing pixels
+
+        // For client windows with stale pixmaps, get fresh content from compositor
+        // This happens on first damage or after resize, not every frame
+        if (c->client_win && c->comp_pixmap_stale) {
+            itn_composite_update_canvas_pixmap(c);
+            c->comp_pixmap_stale = false;  // Pixmap now current
         }
 
-        // Ensure canvas has compositing data - create if missing
-        if (!c->comp_pixmap) {
-            // Window is mapped but compositor pixmap is missing (race between XMapWindow and MapEvent)
-            // Try to create it now instead of waiting for MapEvent handler
-            c->comp_pixmap = XCompositeNameWindowPixmap(dpy, c->win);
-            if (!c->comp_pixmap) {
-                // Still can't create - window might not be mapped yet, skip for now
-                continue;
-            }
-            // Force repaint since we just created the pixmap (it's empty)
-            c->comp_needs_repaint = true;
+        // Skip if resources not ready - they MUST be created at map time, not in hot path!
+        // Lazy creation was causing 3 conditionals per window per frame
+        // Old 0.44ms compositor assumed resources always exist here
+        if (!c->comp_pixmap || !c->comp_picture) {
+            continue;
         }
 
-        if (!c->comp_picture && c->comp_pixmap) {
-            int win_depth = c->depth ? c->depth : itn_core_get_screen_depth();
-            c->comp_picture = create_picture_from_pixmap(dpy, c->comp_pixmap, win_depth);
-        }
+        // Render the window (resources guaranteed to exist)
+        // Composite the window
+        // TODO: Handle transparency/opacity
+        // log_error("[COMPOSITE] Compositing canvas %d at %d,%d size %dx%d",
+        //           i, c->x, c->y, c->width, c->height);
+        XRenderComposite(dpy, PictOpOver, c->comp_picture, None, back_buffer,
+                        0, 0, 0, 0, c->x, c->y, c->width, c->height);
 
-        // Ensure damage tracking exists (needed for future updates)
-        if (!c->comp_damage) {
-            c->comp_damage = XDamageCreate(dpy, c->win, XDamageReportRawRectangles);
-        }
-
-        if (c->comp_picture) {
-            // Composite the window
-            // TODO: Handle transparency/opacity
-            // log_error("[COMPOSITE] Compositing canvas %d at %d,%d size %dx%d",
-            //           i, c->x, c->y, c->width, c->height);
-            XRenderComposite(dpy, PictOpOver, c->comp_picture, None, back_buffer,
-                            0, 0, 0, 0, c->x, c->y, c->width, c->height);
-
-            // Update metrics - properly access the itn_render metrics
-            itn_render_update_metrics(1, (uint64_t)(c->width * c->height), visible_count);
-        } else {
-            log_error("[COMPOSITE] Canvas %d has no comp_picture", i);
-        }
+        // Update metrics - properly access the itn_render metrics
+        itn_render_update_metrics(1, (uint64_t)(c->width * c->height), visible_count);
     }
 
     // Pass 4: Render override-redirect windows (popup menus, tooltips) - TOPMOST
@@ -553,29 +547,18 @@ void itn_composite_render_all(void) {
     if (override_count > 0) {
         OverrideWin *ow = override_list;
         while (ow) {
+            // Use cached geometry - updated by MapNotify/ConfigureNotify events, NOT polled!
+            // The old 0.44ms compositor NEVER queried attributes in hot path
             if (ow->picture) {
-                // Check if window is still valid and mapped
-                // Safe attribute query handles window destruction race
-                XWindowAttributes attrs;
-                if (safe_get_window_attributes(dpy, ow->win, &attrs) &&
-                    attrs.map_state == IsViewable) {
+                // Composite with transparency support
+                int op = (ow->depth == 32) ? PictOpOver : PictOpSrc;
+                XRenderComposite(dpy, op, ow->picture, None, back_buffer,
+                                0, 0, 0, 0, ow->x, ow->y,
+                                ow->width, ow->height);
 
-                    // Update position if it moved
-                    ow->x = attrs.x;
-                    ow->y = attrs.y;
-                    ow->width = attrs.width;
-                    ow->height = attrs.height;
-
-                    // Composite with transparency support
-                    int op = (ow->depth == 32) ? PictOpOver : PictOpSrc;
-                    XRenderComposite(dpy, op, ow->picture, None, back_buffer,
-                                    0, 0, 0, 0, ow->x, ow->y,
-                                    ow->width, ow->height);
-
-                    // Update metrics
-                    itn_render_update_metrics(1, (uint64_t)(ow->width * ow->height),
-                                             visible_count + override_count);
-                }
+                // Update metrics - inline for performance
+                itn_render_update_metrics(1, (uint64_t)(ow->width * ow->height),
+                                         visible_count + override_count);
             }
             ow = ow->next;
         }
@@ -627,7 +610,9 @@ void itn_composite_swap_buffers(void) {
     XRenderComposite(dpy, PictOpSrc, back_buffer, None, output_target,
                     0, 0, 0, 0, 0, 0, actual_width, actual_height);
 
-    XSync(dpy, False);
+    // XFlush is non-blocking (just sends commands), XSync blocks ~0.3-0.5ms waiting
+    // The old 0.44ms compositor used XFlush, not XSync
+    XFlush(dpy);
 }
 
 // Render a single canvas (for partial updates)
@@ -689,6 +674,12 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
         damaged->comp_damage_bounds.height = ev->area.height;
         damaged->comp_needs_repaint = true;
 
+        // For client windows, mark pixmap stale to fetch fresh content after client draws
+        // This ensures GTK dialogs show real content, not stale screenshots
+        if (damaged->client_win) {
+            damaged->comp_pixmap_stale = true;
+        }
+
         // Clear the damage (required by XDamage protocol)
         XDamageSubtract(dpy, ev->damage, None, None);
 
@@ -726,6 +717,25 @@ void itn_composite_process_damage(XDamageNotifyEvent *ev) {
     }
 }
 
+// Send synthetic Expose event to window to trigger redraw
+void itn_composite_send_expose(Canvas *canvas) {
+    if (!canvas) return;
+
+    Display *dpy = itn_core_get_display();
+    if (!dpy) return;
+
+    XExposeEvent expose = {0};
+    expose.type = Expose;
+    expose.display = dpy;
+    expose.window = canvas->win;
+    expose.x = 0;
+    expose.y = 0;
+    expose.width = canvas->width;
+    expose.height = canvas->height;
+    expose.count = 0;
+    XSendEvent(dpy, canvas->win, False, ExposureMask, (XEvent *)&expose);
+}
+
 // Handle expose events
 void itn_composite_handle_expose(XExposeEvent *ev) {
     if (!itn_composite_is_active()) return;
@@ -742,9 +752,9 @@ void itn_composite_handle_expose(XExposeEvent *ev) {
     }
 
     if (canvas) {
-        canvas->comp_needs_repaint = true;
-        DAMAGE_RECT(ev->x, ev->y, ev->width, ev->height);
-        SCHEDULE_FRAME();
+        // Trigger window redraw via normal render path
+        // This calls redraw_canvas() which generates damage, which schedules frame
+        redraw_canvas(canvas);
     }
 }
 

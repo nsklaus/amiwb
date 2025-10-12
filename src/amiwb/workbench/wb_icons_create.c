@@ -115,47 +115,53 @@ void remove_icon_for_canvas(Canvas *canvas) {
 // Desktop Slot Management (for Iconified Windows)
 // ============================================================================
 
-static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy, int icon_width) {
-    if (!desk || !ox || !oy) return;
-    const int sx = 20, step_x = 110;
-    
+// Check if a slot (column, row) is already occupied by any icon
+// Icons at different X positions within same column are considered to occupy the same slot
+static bool is_slot_occupied(Canvas *desk, int col_x, int row_y, int step_x) {
     FileIcon **arr = wb_icons_array_get();
     int n = wb_icons_array_count();
-    
-    // Calculate start position: Home icon top + 80px gap
-    int first_iconified_y = 120 + 80;
-    
-    // Find next free slot
-    for (int x = sx; x < desk->width - 64; x += step_x) {
-        int y = first_iconified_y;
-        
-        bool collision_found;
-        do {
-            collision_found = false;
-            for (int i = 0; i < n; i++) {
-                FileIcon *ic = arr[i];
-                if (ic->display_window != desk->win) continue;
-                
-                bool same_column = (ic->x >= x && ic->x < x + step_x) || 
-                                  (x >= ic->x && x < ic->x + ic->width);
-                if (same_column && ic->y == y) {
-                    y += 80;
-                    collision_found = true;
-                    break;
-                }
-            }
-        } while (collision_found && y + 64 < desk->height);
-        
-        if (y + 64 < desk->height) {
-            // Center icon within column using actual icon width (same logic as icon_cleanup)
-            int column_center_offset = (step_x - icon_width) / 2;
-            if (column_center_offset < 0) column_center_offset = 0;
-            *ox = x + column_center_offset;
-            *oy = y;
-            return;
+
+    for (int i = 0; i < n; i++) {
+        FileIcon *ic = arr[i];
+        if (ic->display_window != desk->win) continue;
+
+        // Check if icon is in this column (X within column boundaries)
+        // Icons are centered based on their width, so X varies, but they're in same column
+        bool in_column = (ic->x >= col_x && ic->x < col_x + step_x);
+
+        // Check if icon is at this row (exact Y match)
+        bool at_row = (ic->y == row_y);
+
+        if (in_column && at_row) {
+            return true;
         }
     }
-    // Fallback: center in first column using actual icon width
+    return false;
+}
+
+static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy, int icon_width) {
+    if (!desk || !ox || !oy) return;
+    const int sx = 20, step_x = 110, step_y = 80;
+
+    // Calculate start position: Home icon top + 80px gap
+    int first_iconified_y = 120 + 80;
+
+    // Find next free slot by trying each column, then each row within that column
+    for (int col_x = sx; col_x < desk->width - 64; col_x += step_x) {
+        for (int row_y = first_iconified_y; row_y + 64 < desk->height; row_y += step_y) {
+            // Check if this slot (column, row) is free
+            if (!is_slot_occupied(desk, col_x, row_y, step_x)) {
+                // Slot is free - calculate centered position for this icon's width
+                int column_center_offset = (step_x - icon_width) / 2;
+                if (column_center_offset < 0) column_center_offset = 0;
+                *ox = col_x + column_center_offset;
+                *oy = row_y;
+                return;
+            }
+        }
+    }
+
+    // Fallback: use first slot (should rarely happen unless desktop is full)
     int column_center_offset = (step_x - icon_width) / 2;
     if (column_center_offset < 0) column_center_offset = 0;
     *ox = sx + column_center_offset;
@@ -190,7 +196,7 @@ static const char* find_icon_with_user_override(const char *icon_name, char *buf
 
 FileIcon* create_iconified_icon(Canvas *c) {
     if (!c || (c->type != WINDOW && c->type != DIALOG)) return NULL;
-    
+
     Canvas *desk = itn_canvas_get_desktop();
     if (!desk) return NULL;
 
@@ -237,8 +243,10 @@ FileIcon* create_iconified_icon(Canvas *c) {
         icon_path = def_foo_path;
     }
 
-    // Create icon at temporary position first (so we can get actual width)
-    create_icon(icon_path, desk, 0, 0);
+    // FIX: Create icon at off-screen position (-1000,-1000) to avoid self-collision
+    // If created at (0,0), the collision detection incorrectly identifies it as being
+    // in the first column (x=20), causing wrong slot calculations
+    create_icon(icon_path, desk, -1000, -1000);
     FileIcon *ni = wb_icons_array_get_last_added();
 
     if (!ni) {
