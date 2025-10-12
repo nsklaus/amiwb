@@ -386,3 +386,66 @@ void itn_scrollbar_check_arrow_repeat(void) {
 bool itn_scrollbar_is_scrolling_active(void) {
     return scrolling_canvas != NULL;
 }
+
+// Cancel armed arrow buttons when mouse moves away from button area
+// Returns true if any button state changed, false otherwise
+bool itn_scrollbar_handle_motion_cancel(Canvas *canvas, XMotionEvent *event) {
+    if (!canvas || !event) {
+        return false;
+    }
+
+    int x = event->x;
+    int y = event->y;
+    int w = canvas->width;
+    int h = canvas->height;
+
+    bool needs_redraw = false;
+
+    // Check vertical up arrow - cancel if mouse moved away
+    if (canvas->v_arrow_up_armed) {
+        bool still_on_button = (x >= w - BORDER_WIDTH_RIGHT && x < w &&
+                                y >= h - BORDER_HEIGHT_BOTTOM - 41 && y < h - BORDER_HEIGHT_BOTTOM - 21);
+        if (!still_on_button) {
+            canvas->v_arrow_up_armed = false;
+            needs_redraw = true;
+        }
+    }
+
+    // Check vertical down arrow - cancel if mouse moved away
+    if (canvas->v_arrow_down_armed) {
+        bool still_on_button = (x >= w - BORDER_WIDTH_RIGHT && x < w &&
+                                y >= h - BORDER_HEIGHT_BOTTOM - 21 && y < h - BORDER_HEIGHT_BOTTOM);
+        if (!still_on_button) {
+            canvas->v_arrow_down_armed = false;
+            needs_redraw = true;
+        }
+    }
+
+    // Check horizontal left arrow - cancel if mouse moved away
+    if (canvas->h_arrow_left_armed) {
+        bool still_on_button = (y >= h - BORDER_HEIGHT_BOTTOM && y < h &&
+                                x >= w - BORDER_WIDTH_RIGHT - 41 && x < w - BORDER_WIDTH_RIGHT - 21);
+        if (!still_on_button) {
+            canvas->h_arrow_left_armed = false;
+            needs_redraw = true;
+        }
+    }
+
+    // Check horizontal right arrow - cancel if mouse moved away
+    if (canvas->h_arrow_right_armed) {
+        bool still_on_button = (y >= h - BORDER_HEIGHT_BOTTOM && y < h &&
+                                x >= w - BORDER_WIDTH_RIGHT - 21 && x < w - BORDER_WIDTH_RIGHT);
+        if (!still_on_button) {
+            canvas->h_arrow_right_armed = false;
+            needs_redraw = true;
+        }
+    }
+
+    if (needs_redraw) {
+        redraw_canvas(canvas);
+        DAMAGE_CANVAS(canvas);
+        SCHEDULE_FRAME();
+    }
+
+    return needs_redraw;
+}

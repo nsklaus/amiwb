@@ -13,6 +13,7 @@ typedef struct Canvas Canvas;
 bool itn_scrollbar_handle_button_press(Canvas *canvas, XButtonEvent *event);
 bool itn_scrollbar_handle_button_release(Canvas *canvas, XButtonEvent *event);
 bool itn_scrollbar_handle_motion(XMotionEvent *event);
+bool itn_scrollbar_handle_motion_cancel(Canvas *canvas, XMotionEvent *event);
 
 // Arrow button auto-repeat (called from main event loop)
 void itn_scrollbar_check_arrow_repeat(void);

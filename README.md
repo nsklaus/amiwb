@@ -1,5 +1,15 @@
 # amiwb
-window manager for linux using x11 and xlib, look at screenshots dir.
+a desktop and window manager for linux using x11 and xlib. 
+it tries to reproduce the UX/UI of the amiga workbench
+as a workstation. 
+
+for those that had an amiga equipped with a gfx and a 060 cpu card, 
+you know what i'm talking about.
+it's more like draco motion/a4k 'amiga' rather than a500/cd32 'amiga'.
+the former was professionnal grade workstation using softwares like:
+tvpaint, lightwave, movie-shop, samplitude,...
+the later was more like a home gaming system. 
+look at screenshots dir.
 
 dependencies:
 ```
@@ -10,7 +20,7 @@ dependencies:
 install:
 ```
 $ make
-$ make install
+$ sudo make install
 ```
 
 start the environment:
@@ -44,7 +54,7 @@ any slowdowns or stuttering, coughing, sneezing or whatever. it just flows.
 workbench can show files in "Icons" or "Names" modes and its windows can be made
 "spatial" or "lister".
 ( spatial is: open a new window each time you open a dir.
-lister is: reuse the same window, keep it, all the time )
+lister is: reuse the same window, keep it, all the time ).
 icons being used can be customised very easily. 
 you can make it all mwb, or all glowicons, for example.
 amiwb scans `/usr/local/share/amiwb/icons/def_icons/` at start.

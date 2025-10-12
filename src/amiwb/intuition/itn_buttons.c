@@ -214,6 +214,7 @@ bool itn_buttons_handle_motion_cancel(Canvas *canvas, XMotionEvent *event) {
     }
 
     if (needs_redraw) {
+        redraw_canvas(canvas);
         DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
     }

@@ -329,10 +329,11 @@ void intuition_handle_motion_notify(XMotionEvent *event) {
     if (handle_resize_motion(event)) return;
     if (itn_scrollbar_handle_motion(event)) return;
 
-    // Cancel armed buttons if mouse moves away (delegated to button module)
+    // Cancel armed buttons if mouse moves away (delegated to modules)
     Canvas *canvas = itn_canvas_find_by_window(event->window);
     if (canvas) {
-        itn_buttons_handle_motion_cancel(canvas, event);
+        itn_scrollbar_handle_motion_cancel(canvas, event);  // Arrow buttons
+        itn_buttons_handle_motion_cancel(canvas, event);    // Window control buttons
     }
 }
 

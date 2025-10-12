@@ -125,6 +125,14 @@ void wb_icons_restore_iconified(FileIcon *icon) {
     }
     
     itn_focus_set_active(canvas);
+
+    // CRITICAL: Recreate compositor pixmap after remap (X11 may have invalidated it during unmap)
+    // Without this, redraw_canvas() draws to stale pixmap and buttons don't show pressed/released state
+    // This matches pattern used in resize code (itn_geometry.c:74-77)
+    if (canvas->comp_pixmap) {
+        itn_composite_update_canvas_pixmap(canvas);
+    }
+
     redraw_canvas(canvas);
     
     // Clear press target to prevent crash
