@@ -123,8 +123,7 @@ static void scan_deficons_directory(const char *dir_path, bool is_user) {
 
         size_t ext_len = name_len - 4 - 5; // Remove "def_" and ".info"
         char extension[NAME_SIZE];
-        strncpy(extension, entry->d_name + 4, ext_len);
-        extension[ext_len] = '\0';
+        snprintf(extension, ext_len + 1, "%.*s", (int)ext_len, entry->d_name + 4);
 
         // Handle special cases (silently)
         if (strcmp(extension, "dir") == 0) {

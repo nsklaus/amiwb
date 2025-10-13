@@ -194,8 +194,7 @@ static void execute_pending_deletes(void) {
         
         // Save path before operations as destroy_icon will free it
         char saved_path[PATH_SIZE];
-        strncpy(saved_path, selected->path, sizeof(saved_path) - 1);
-        saved_path[sizeof(saved_path) - 1] = '\0';
+        snprintf(saved_path, sizeof(saved_path), "%s", selected->path);
         
         // Execute delete using progress-enabled function
         int result = wb_progress_perform_operation(2, // FILE_OP_DELETE = 2
@@ -786,10 +785,8 @@ void trigger_copy_action(void) {
                 log_error("[ERROR] Failed to allocate memory for directory path - copy cancelled");
                 return;  // Graceful degradation: abort copy operation
             }
-            strncpy(dir_path, selected->path, dir_len);
-            dir_path[dir_len] = '\0';
-            strncpy(base_name, last_slash + 1, NAME_SIZE - 1);
-            base_name[NAME_SIZE - 1] = '\0';
+            snprintf(dir_path, dir_len + 1, "%.*s", (int)dir_len, selected->path);
+            snprintf(base_name, NAME_SIZE, "%s", last_slash + 1);
             // Extract directory and base name
         } else {
             dir_path = strdup(".");
@@ -797,8 +794,7 @@ void trigger_copy_action(void) {
                 log_error("[ERROR] strdup failed for directory path - copy cancelled");
                 return;  // Graceful degradation: abort copy operation
             }
-            strncpy(base_name, selected->path, NAME_SIZE - 1);
-            base_name[NAME_SIZE - 1] = '\0';
+            snprintf(base_name, NAME_SIZE, "%s", selected->path);
             // Use current directory
         }
         
@@ -829,8 +825,7 @@ void trigger_copy_action(void) {
         
         // Save path before refresh as it will destroy the icon
         char saved_path[PATH_SIZE];
-        strncpy(saved_path, selected->path, sizeof(saved_path) - 1);
-        saved_path[sizeof(saved_path) - 1] = '\0';
+        snprintf(saved_path, sizeof(saved_path), "%s", selected->path);
         
         // Check if source has a sidecar .info file
         char src_info_path[PATH_SIZE + 10];  // PATH_SIZE + room for ".info"
@@ -885,15 +880,15 @@ void trigger_copy_action(void) {
             time_t start_time;
             int files_done;
             int files_total;
-            char current_file[128];
+            char current_file[NAME_SIZE];          // Filename only
             size_t bytes_done;
             size_t bytes_total;
-            char dest_path[512];
-            char dest_dir[512];
+            char dest_path[FULL_SIZE];             // Full path with potential extensions
+            char dest_dir[PATH_SIZE];              // Directory only
             bool create_icon;
             bool has_sidecar;
-            char sidecar_src[512];
-            char sidecar_dst[512];
+            char sidecar_src[FULL_SIZE];           // Full path + ".info" suffix
+            char sidecar_dst[FULL_SIZE];           // Full path + ".info" suffix
             int icon_x, icon_y;
             Window target_window;
         } ProgressMessage;
@@ -904,11 +899,11 @@ void trigger_copy_action(void) {
         icon_metadata.icon_x = new_x;
         icon_metadata.icon_y = new_y;
         icon_metadata.target_window = target_canvas ? target_canvas->win : None;
-        strncpy(icon_metadata.dest_path, copy_path, sizeof(icon_metadata.dest_path) - 1);
-        strncpy(icon_metadata.dest_dir, dir_path, sizeof(icon_metadata.dest_dir) - 1);
+        snprintf(icon_metadata.dest_path, sizeof(icon_metadata.dest_path), "%s", copy_path);
+        snprintf(icon_metadata.dest_dir, sizeof(icon_metadata.dest_dir), "%s", dir_path);
         if (has_sidecar) {
-            strncpy(icon_metadata.sidecar_src, src_info_path, sizeof(icon_metadata.sidecar_src) - 1);
-            strncpy(icon_metadata.sidecar_dst, dst_info_path, sizeof(icon_metadata.sidecar_dst) - 1);
+            snprintf(icon_metadata.sidecar_src, sizeof(icon_metadata.sidecar_src), "%s", src_info_path);
+            snprintf(icon_metadata.sidecar_dst, sizeof(icon_metadata.sidecar_dst), "%s", dst_info_path);
         }
         
         // Use extended file operation with icon metadata

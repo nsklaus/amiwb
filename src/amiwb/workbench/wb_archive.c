@@ -71,19 +71,16 @@ int extract_file_at_path(const char *archive_path, Canvas *canvas) {
     if (last_slash) {
         size_t dir_len = last_slash - archive_path;
         if (dir_len >= PATH_SIZE) dir_len = PATH_SIZE - 1;
-        strncpy(dir_path, archive_path, dir_len);
-        dir_path[dir_len] = '\0';
-        strncpy(archive_name, last_slash + 1, NAME_SIZE - 1);
+        snprintf(dir_path, dir_len + 1, "%.*s", (int)dir_len, archive_path);
+        snprintf(archive_name, NAME_SIZE, "%s", last_slash + 1);
     } else {
         snprintf(dir_path, sizeof(dir_path), ".");
-        strncpy(archive_name, archive_path, NAME_SIZE - 1);
+        snprintf(archive_name, NAME_SIZE, "%s", archive_path);
     }
-    archive_name[NAME_SIZE - 1] = '\0';
     
     // Get base name
     char base_name[NAME_SIZE];
-    strncpy(base_name, archive_name, NAME_SIZE - 1);
-    base_name[NAME_SIZE - 1] = '\0';
+    snprintf(base_name, NAME_SIZE, "%s", archive_name);
     
     char *ext = strstr(base_name, ".tar.");
     if (ext) {
@@ -122,7 +119,8 @@ int extract_file_at_path(const char *archive_path, Canvas *canvas) {
         
         char prefix[PATH_SIZE] = "";  // Max 99 * 5 = 495 bytes for "copy_" prefixes
         for (int i = 0; i < copy_num; i++) {
-            strcat(prefix, "copy_");
+            size_t current_len = strlen(prefix);
+            snprintf(prefix + current_len, sizeof(prefix) - current_len, "copy_");
         }
         
         written = snprintf(target_dir, PATH_SIZE, "%s/%s%s", dir_path, prefix, base_name);

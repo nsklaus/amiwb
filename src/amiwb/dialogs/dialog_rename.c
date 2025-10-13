@@ -31,8 +31,7 @@ void show_rename_dialog(const char *old_name,
     }
 
     // Set callbacks and user data
-    strncpy(dialog->original_name, old_name, NAME_SIZE - 1);
-    dialog->original_name[NAME_SIZE - 1] = '\0';
+    snprintf(dialog->original_name, NAME_SIZE, "%s", old_name);
     dialog->on_ok = on_ok;
     dialog->on_cancel = on_cancel;
     dialog->user_data = user_data;

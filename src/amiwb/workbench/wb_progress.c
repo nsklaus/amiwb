@@ -61,12 +61,12 @@ typedef struct {
     size_t bytes_total;
 
     // Icon creation metadata (used on MSG_COMPLETE)
-    char dest_path[PATH_SIZE];
-    char dest_dir[PATH_SIZE];
+    char dest_path[FULL_SIZE];              // Full path with potential extensions
+    char dest_dir[PATH_SIZE];               // Directory only - OK
     bool create_icon;
     bool has_sidecar;
-    char sidecar_src[PATH_SIZE];
-    char sidecar_dst[PATH_SIZE];
+    char sidecar_src[FULL_SIZE];            // Full path + ".info" suffix requires FULL_SIZE
+    char sidecar_dst[FULL_SIZE];            // Full path + ".info" suffix requires FULL_SIZE
     int icon_x, icon_y;
     Window target_window;
 } ProgressMessage;
@@ -167,9 +167,8 @@ static int copy_file_with_progress(const char *src, const char *dst, int pipe_fd
     };
     // Extract basename without memory leak
     char temp_path[PATH_SIZE];
-    strncpy(temp_path, src, PATH_SIZE - 1);
-    temp_path[PATH_SIZE - 1] = '\0';
-    strncpy(msg.current_file, basename(temp_path), NAME_SIZE - 1);
+    snprintf(temp_path, PATH_SIZE, "%s", src);
+    snprintf(msg.current_file, NAME_SIZE, "%s", basename(temp_path));
 
     // Copy with progress
     char buf[1 << 16];  // 64KB
@@ -263,8 +262,7 @@ int wb_progress_perform_operation_ex(
                 return wb_fileops_copy(src_path, dst_path);
             case FILE_OP_MOVE: {
                 char temp_dst[PATH_SIZE];
-                strncpy(temp_dst, dst_path, PATH_SIZE - 1);
-                temp_dst[PATH_SIZE - 1] = '\0';
+                snprintf(temp_dst, PATH_SIZE, "%s", dst_path);
                 return wb_fileops_move(src_path, dirname(temp_dst), NULL, 0);
             }
             case FILE_OP_DELETE:
@@ -287,8 +285,7 @@ int wb_progress_perform_operation_ex(
                 return wb_fileops_copy(src_path, dst_path);
             case FILE_OP_MOVE: {
                 char temp_dst[PATH_SIZE];
-                strncpy(temp_dst, dst_path, PATH_SIZE - 1);
-                temp_dst[PATH_SIZE - 1] = '\0';
+                snprintf(temp_dst, PATH_SIZE, "%s", dst_path);
                 return wb_fileops_move(src_path, dirname(temp_dst), NULL, 0);
             }
             case FILE_OP_DELETE:
@@ -311,9 +308,8 @@ int wb_progress_perform_operation_ex(
         };
         // Extract basename without memory leak
         char temp_path[PATH_SIZE];
-        strncpy(temp_path, src_path, PATH_SIZE - 1);
-        temp_path[PATH_SIZE - 1] = '\0';
-        strncpy(msg.current_file, basename(temp_path), NAME_SIZE - 1);
+        snprintf(temp_path, PATH_SIZE, "%s", src_path);
+        snprintf(msg.current_file, NAME_SIZE, "%s", basename(temp_path));
 
         // Copy icon metadata if provided
         if (icon_metadata) {
@@ -323,10 +319,10 @@ int wb_progress_perform_operation_ex(
             msg.icon_x = meta->icon_x;
             msg.icon_y = meta->icon_y;
             msg.target_window = meta->target_window;
-            strncpy(msg.dest_path, meta->dest_path, PATH_SIZE - 1);
-            strncpy(msg.dest_dir, meta->dest_dir, PATH_SIZE - 1);
-            strncpy(msg.sidecar_src, meta->sidecar_src, PATH_SIZE - 1);
-            strncpy(msg.sidecar_dst, meta->sidecar_dst, PATH_SIZE - 1);
+            snprintf(msg.dest_path, sizeof(msg.dest_path), "%s", meta->dest_path);
+            snprintf(msg.dest_dir, sizeof(msg.dest_dir), "%s", meta->dest_dir);
+            snprintf(msg.sidecar_src, sizeof(msg.sidecar_src), "%s", meta->sidecar_src);
+            snprintf(msg.sidecar_dst, sizeof(msg.sidecar_dst), "%s", meta->sidecar_dst);
         }
 
         // Send START message - if this fails, parent won't get progress updates
@@ -434,8 +430,7 @@ int wb_progress_perform_operation_ex(
 
     // Extract basename for progress monitor
     char temp_path[PATH_SIZE];
-    strncpy(temp_path, src_path, PATH_SIZE - 1);
-    temp_path[PATH_SIZE - 1] = '\0';
+    snprintf(temp_path, PATH_SIZE, "%s", src_path);
     const char *filename = basename(temp_path);
 
     // Create background progress monitor (no UI initially)
@@ -825,7 +820,7 @@ void workbench_check_progress_monitors(void) {
                     // Handle START message - DON'T update start_time from child, keep parent's original
                     // dialog->start_time = msg.start_time;  // BUG: This makes diff always 0!
                     dialog->percent = 0.0f;
-                    strncpy(dialog->current_file, msg.current_file, PATH_SIZE - 1);
+                    snprintf(dialog->current_file, PATH_SIZE, "%s", msg.current_file);
 
                     // Create window if threshold has passed
                     if (!dialog->canvas && now - dialog->start_time >= PROGRESS_DIALOG_THRESHOLD) {
@@ -871,7 +866,7 @@ void workbench_check_progress_monitors(void) {
                     }
 
                     dialog->percent = percent;
-                    strncpy(dialog->current_file, msg.current_file, PATH_SIZE - 1);
+                    snprintf(dialog->current_file, PATH_SIZE, "%s", msg.current_file);
 
                 } else if (msg.type == MSG_COMPLETE || msg.type == MSG_ERROR) {
                     // Operation finished

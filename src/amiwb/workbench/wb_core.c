@@ -174,8 +174,7 @@ void workbench_create_new_drawer(Canvas *target_canvas) {
     if (!target_canvas) return;
 
     char target_path[PATH_SIZE];
-    strncpy(target_path, target_canvas->path, PATH_SIZE - 1);
-    target_path[PATH_SIZE - 1] = '\0';
+    snprintf(target_path, PATH_SIZE, "%s", target_canvas->path);
 
     // Find unique name
     char new_dir_name[NAME_SIZE];

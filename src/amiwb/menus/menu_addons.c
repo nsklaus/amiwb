@@ -223,8 +223,7 @@ void menu_addon_load_config(void) {
     // Parse comma-separated list "clock,cpu,ram"
     // Make a copy since strtok_r modifies the string
     char list_copy[NAME_SIZE];
-    strncpy(list_copy, addon_list, sizeof(list_copy) - 1);
-    list_copy[sizeof(list_copy) - 1] = '\0';
+    snprintf(list_copy, sizeof(list_copy), "%s", addon_list);
 
     char *saveptr;
     char *addon_name = strtok_r(list_copy, ",", &saveptr);

@@ -32,16 +32,16 @@ typedef struct {
     time_t start_time;
     int files_done;
     int files_total;
-    char current_file[NAME_SIZE];
+    char current_file[NAME_SIZE];           // Filename only - OK
     size_t bytes_done;
     size_t bytes_total;
     // Icon creation metadata (used on MSG_COMPLETE)
-    char dest_path[PATH_SIZE];
-    char dest_dir[PATH_SIZE];
+    char dest_path[FULL_SIZE];              // Full path with potential extensions
+    char dest_dir[PATH_SIZE];               // Directory only - OK
     bool create_icon;
     bool has_sidecar;
-    char sidecar_src[PATH_SIZE];
-    char sidecar_dst[PATH_SIZE];
+    char sidecar_src[FULL_SIZE];            // Full path + ".info" suffix requires FULL_SIZE
+    char sidecar_dst[FULL_SIZE];            // Full path + ".info" suffix requires FULL_SIZE
     int icon_x, icon_y;
     Window target_window;
 } ProgressMessage;
@@ -737,16 +737,44 @@ static void perform_cross_canvas_drop(Canvas *target) {
             snprintf(src_info, sizeof(src_info), "%s.info", src_path_abs);
             if (check_if_file_exists(src_info)) {
                 icon_meta.has_sidecar = true;
-                strncpy(icon_meta.sidecar_src, src_info, sizeof(icon_meta.sidecar_src) - 1);
-                icon_meta.sidecar_src[sizeof(icon_meta.sidecar_src) - 1] = '\0';
+                snprintf(icon_meta.sidecar_src, sizeof(icon_meta.sidecar_src), "%s", src_info);
 
                 // Build destination .info path
-                char dst_info[FULL_SIZE * 2];
                 const char *base = strrchr(dst_path, '/');
-                const char *name_only = base ? base + 1 : dst_path;
-                snprintf(dst_info, sizeof(dst_info), "%s/%s.info", dst_dir, name_only);
-                strncpy(icon_meta.sidecar_dst, dst_info, sizeof(icon_meta.sidecar_dst) - 1);
-                icon_meta.sidecar_dst[sizeof(icon_meta.sidecar_dst) - 1] = '\0';
+                const char *name_ptr = base ? base + 1 : dst_path;
+
+                // Validate filename length and construct path
+                char filename[NAME_SIZE];
+                size_t name_len = strlen(name_ptr);
+
+                if (name_len >= sizeof(filename)) {
+                    // Filename too long - skip sidecar handling
+                    icon_meta.has_sidecar = false;
+                    log_error("[WARNING] Filename too long for sidecar: %s", name_ptr);
+                } else {
+                    // SAFE: name_len validated < NAME_SIZE (128 bytes)
+                    // Pragma silences false positive - truncation impossible due to check above
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+                    snprintf(filename, sizeof(filename), "%s", name_ptr);
+#pragma GCC diagnostic pop
+
+                    // Check if full path will fit
+                    size_t needed = strlen(dst_dir) + 1 + strlen(filename) + 5 + 1; // "/" + name + ".info" + null
+                    if (needed <= sizeof(icon_meta.sidecar_dst)) {
+                        // SAFE: total length validated to fit in FULL_SIZE buffer
+                        // Pragma silences false positive - truncation impossible due to check above
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+                        snprintf(icon_meta.sidecar_dst, sizeof(icon_meta.sidecar_dst),
+                                "%s/%s.info", dst_dir, filename);
+#pragma GCC diagnostic pop
+                    } else {
+                        // Path too long - skip sidecar handling
+                        icon_meta.has_sidecar = false;
+                        log_error("[WARNING] Path too long for sidecar: %s/%s.info", dst_dir, filename);
+                    }
+                }
             }
 
             // Perform cross-filesystem move with progress

@@ -187,8 +187,7 @@ ProgressMonitor* wb_progress_monitor_create_background(ProgressOperation op, con
     monitor->start_time = time(NULL);
     monitor->canvas = NULL;  // No UI initially - created after threshold
     monitor->percent = -1.0f;
-    strncpy(monitor->current_file, filename, PATH_SIZE - 1);
-    monitor->current_file[PATH_SIZE - 1] = '\0';
+    snprintf(monitor->current_file, PATH_SIZE, "%s", filename);
 
     // Add to monitor list for polling
     add_monitor_to_list(monitor);
@@ -201,8 +200,7 @@ void wb_progress_monitor_update(ProgressMonitor *monitor, const char *file, floa
     if (!monitor) return;
 
     if (file) {
-        strncpy(monitor->current_file, file, PATH_SIZE - 1);
-        monitor->current_file[PATH_SIZE - 1] = '\0';
+        snprintf(monitor->current_file, PATH_SIZE, "%s", file);
     }
 
     if (percent >= 0.0f && percent <= 100.0f) {

@@ -372,12 +372,10 @@ char* xdnd_create_uri_list(const char **paths, int count) {
         char abs_path[PATH_SIZE];
         if (paths[i][0] != '/') {
             if (!realpath(paths[i], abs_path)) {
-                strncpy(abs_path, paths[i], PATH_SIZE - 1);  // Fall back to original
-                abs_path[PATH_SIZE - 1] = '\0';
+                snprintf(abs_path, PATH_SIZE, "%s", paths[i]);  // Fall back to original
             }
         } else {
-            strncpy(abs_path, paths[i], PATH_SIZE - 1);
-            abs_path[PATH_SIZE - 1] = '\0';
+            snprintf(abs_path, PATH_SIZE, "%s", paths[i]);
         }
 
         // Build URI

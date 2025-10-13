@@ -452,8 +452,7 @@ pid_t calculate_directory_size(const char *path, int *pipe_fd) {
                         // Directory - push to stack for processing
                         struct dir_entry *new_entry = malloc(sizeof(struct dir_entry));
                         if (new_entry) {
-                            strncpy(new_entry->path, full_path, PATH_SIZE - 1);
-                            new_entry->path[PATH_SIZE - 1] = '\0';
+                            snprintf(new_entry->path, PATH_SIZE, "%s", full_path);
                             new_entry->next = stack;
                             stack = new_entry;
                         }

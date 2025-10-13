@@ -1710,11 +1710,11 @@ static bool reqasl_execute_action(ReqASL *req) {
 
                         // Check if all extensions use the same app
                         if (g == 0) {
-                            strcpy(first_app, groups[g].app);
-                            strcpy(first_mime, mime_type);
+                            snprintf(first_app, sizeof(first_app), "%s", groups[g].app);
+                            snprintf(first_mime, sizeof(first_mime), "%s", mime_type);
                         } else if (strcmp(first_app, groups[g].app) != 0) {
                             mismatch_group = g;
-                            strcpy(first_mime, mime_type);  // Save for error message
+                            snprintf(first_mime, sizeof(first_mime), "%s", mime_type);  // Save for error message
                             break;
                         }
                     }

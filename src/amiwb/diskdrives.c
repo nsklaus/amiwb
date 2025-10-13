@@ -19,7 +19,7 @@ static DriveManager drive_manager = {0};
 
 // Track ejected devices to prevent remounting until replug
 #define MAX_EJECTED 8
-static char ejected_devices[MAX_EJECTED][64];
+static char ejected_devices[MAX_EJECTED][PATH_SIZE];  // Device paths like /dev/sda1
 static int ejected_count = 0;
 
 // Check if filesystem type should be ignored
@@ -77,8 +77,8 @@ static int find_drive_by_mount(const char *mount_point) {
 // Check if device is removable
 static bool check_removable(const char *device) {
     // Extract base device name (e.g., sda from /dev/sda1)
-    char base_device[64];
-    strncpy(base_device, device, sizeof(base_device)-1);
+    char base_device[NAME_SIZE];  // Device name only
+    snprintf(base_device, sizeof(base_device), "%s", device);
     
     // Remove partition number
     char *p = base_device + strlen(base_device) - 1;
@@ -91,7 +91,7 @@ static bool check_removable(const char *device) {
     else dev_name++;
     
     // Check removable flag in sysfs
-    char path[256];
+    char path[PATH_SIZE];  // Filesystem path
     snprintf(path, sizeof(path), "/sys/block/%s/removable", dev_name);
     
     FILE *f = fopen(path, "r");
@@ -111,11 +111,11 @@ static bool check_removable(const char *device) {
 // Add new drive and create icon
 static void add_new_drive(const char *device, const char *mount_point, const char *fs_type) {
     if (drive_manager.drive_count >= MAX_DRIVES) return;
-    
+
     DiskDrive *drive = &drive_manager.drives[drive_manager.drive_count];
-    strncpy(drive->device, device, sizeof(drive->device)-1);
-    strncpy(drive->mount_point, mount_point, sizeof(drive->mount_point)-1);
-    strncpy(drive->fs_type, fs_type, sizeof(drive->fs_type)-1);
+    snprintf(drive->device, sizeof(drive->device), "%s", device);
+    snprintf(drive->mount_point, sizeof(drive->mount_point), "%s", mount_point);
+    snprintf(drive->fs_type, sizeof(drive->fs_type), "%s", fs_type);
     
     // Determine label
     if (strcmp(mount_point, "/") == 0) {
@@ -130,7 +130,7 @@ static void add_new_drive(const char *device, const char *mount_point, const cha
         // Extract last component as label
         const char *label = strrchr(mount_point, '/');
         if (label && *(label+1)) {
-            strncpy(drive->label, label+1, sizeof(drive->label)-1);
+            snprintf(drive->label, sizeof(drive->label), "%s", label+1);
         } else {
             snprintf(drive->label, sizeof(drive->label), "Drive");
         }
@@ -259,7 +259,7 @@ static bool is_ejected(const char *device) {
 }
 
 // Track devices we've seen to avoid spam
-static char seen_devices[32][64];
+static char seen_devices[32][PATH_SIZE];  // Device paths like /dev/sda1
 static int seen_count = 0;
 
 // Clear ejected devices that no longer exist (unplugged)
@@ -270,7 +270,7 @@ static void clean_ejected_list(void) {
         if (access(ejected_devices[i], F_OK) == 0) {
             // Device still exists, keep it in list
             if (new_count != i) {
-                strcpy(ejected_devices[new_count], ejected_devices[i]);
+                snprintf(ejected_devices[new_count], sizeof(ejected_devices[new_count]), "%s", ejected_devices[i]);
             }
             new_count++;
         } else {
@@ -280,7 +280,7 @@ static void clean_ejected_list(void) {
                 if (strcmp(seen_devices[j], ejected_devices[i]) == 0) {
                     // Remove by shifting remaining devices
                     for (int k = j; k < seen_count - 1; k++) {
-                        strcpy(seen_devices[k], seen_devices[k + 1]);
+                        snprintf(seen_devices[k], sizeof(seen_devices[k]), "%s", seen_devices[k + 1]);
                     }
                     seen_count--;
                     break;
@@ -300,39 +300,37 @@ static bool have_seen_device(const char *device) {
 
 static void mark_device_seen(const char *device) {
     if (seen_count < 32 && !have_seen_device(device)) {
-        strcpy(seen_devices[seen_count++], device);
+        snprintf(seen_devices[seen_count++], sizeof(seen_devices[0]), "%s", device);
     }
 }
 
-// Track /sys/block devices for immediate detection  
-// Device names in /dev/ are limited by system, but we'll use safe size
-#define DEVICE_PATH_SIZE 64  // More than enough for /dev/xxx device paths
-static char sys_block_devices[32][DEVICE_PATH_SIZE];
+// Track /sys/block devices for immediate detection
+static char sys_block_devices[32][PATH_SIZE];  // Device paths like /dev/sda1
 static int sys_block_count = 0;
 
 static void check_sys_block_devices(void) {
     // Check /sys/block for ANY new devices immediately
     DIR *dir = opendir("/sys/block");
     if (!dir) return;
-    
-    char current_sys_devices[32][DEVICE_PATH_SIZE];
+
+    char current_sys_devices[32][PATH_SIZE];  // Device paths
     int current_count = 0;
-    
+
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
-        
+
         // Track current devices
         if (current_count < 32) {
-            char temp[DEVICE_PATH_SIZE];
-            snprintf(temp, DEVICE_PATH_SIZE, "/dev/%.58s", entry->d_name);  // Max 58 chars + /dev/ = 63
-            strcpy(current_sys_devices[current_count++], temp);
+            char temp[PATH_SIZE];  // Device path
+            snprintf(temp, sizeof(temp), "/dev/%s", entry->d_name);
+            snprintf(current_sys_devices[current_count++], sizeof(current_sys_devices[0]), "%s", temp);
         }
-        
+
         // Check if this is new
         bool is_new = true;
-        char full_path[DEVICE_PATH_SIZE];
-        snprintf(full_path, DEVICE_PATH_SIZE, "/dev/%.58s", entry->d_name);
+        char full_path[PATH_SIZE];  // Device path
+        snprintf(full_path, sizeof(full_path), "/dev/%s", entry->d_name);
         for (int i = 0; i < sys_block_count; i++) {
             if (strcmp(sys_block_devices[i], full_path) == 0) {
                 is_new = false;
@@ -364,7 +362,7 @@ static void check_sys_block_devices(void) {
     // Update our tracking list to current state
     sys_block_count = current_count;
     for (int i = 0; i < current_count; i++) {
-        strcpy(sys_block_devices[i], current_sys_devices[i]);
+        snprintf(sys_block_devices[i], sizeof(sys_block_devices[0]), "%s", current_sys_devices[i]);
     }
 }
 
@@ -384,29 +382,29 @@ static void try_automount_removable(void) {
         return;
     }
     
-    char line[256];
+    char line[PATH_SIZE];  // Parse buffer for lsblk output
     // Track what devices exist THIS poll
-    char current_devices[32][64];
+    char current_devices[32][PATH_SIZE];  // Device paths
     int current_count = 0;
-    
+
     while (fgets(line, sizeof(line), fp)) {
         char *nl = strchr(line, '\n');
         if (nl) *nl = '\0';
-        
+
         // Track ALL block devices we see
-        char device_name[64];
-        if (sscanf(line, "%63s", device_name) >= 1) {
+        char device_name[NAME_SIZE];  // Device name only (e.g., "sda1")
+        if (sscanf(line, "%127s", device_name) >= 1) {  // NAME_SIZE - 1
             // Skip partitions of devices we already know
             if (strchr(device_name, 'p') || isdigit(device_name[strlen(device_name)-1])) {
                 // This is likely a partition, track it anyway
             }
-            
-            char full_device[256];
+
+            char full_device[PATH_SIZE];  // Full device path
             snprintf(full_device, sizeof(full_device), "/dev/%s", device_name);
             
             // Track current devices
             if (current_count < 32) {
-                strcpy(current_devices[current_count++], full_device);
+                snprintf(current_devices[current_count++], sizeof(current_devices[0]), "%s", full_device);
             }
             
             // Log ANY new device immediately
@@ -418,23 +416,24 @@ static void try_automount_removable(void) {
         
         // Only process sd devices for mounting
         if (strncmp(line, "sd", 2) == 0) {
-            
+
             // Parse the line
-            char name[64], mountpoint[256], fstype[64];
+            char name[NAME_SIZE], mountpoint[NAME_SIZE], fstype[NAME_SIZE];  // device name, fs type temp, fs type
             mountpoint[0] = '\0';
             fstype[0] = '\0';
-            
-            // Simple parsing - name is first field, mountpoint could be empty
-            if (sscanf(line, "%63s %255s %63s", name, mountpoint, fstype) >= 2) {
+
+            // Simple parsing - name is first field, second could be mountpoint or fstype
+            // Use NAME_SIZE for second field since unmounted devices have fstype not path
+            if (sscanf(line, "%127s %127s %127s", name, mountpoint, fstype) >= 2) {  // SIZE - 1 for each
                 // If only 2 fields, second is fstype not mountpoint
                 if (fstype[0] == '\0' && mountpoint[0] != '\0' && mountpoint[0] != '/') {
-                    strcpy(fstype, mountpoint);
+                    snprintf(fstype, sizeof(fstype), "%s", mountpoint);
                     mountpoint[0] = '\0';
                 }
-                
+
                 // Check if unmounted with filesystem
                 if (mountpoint[0] == '\0' && fstype[0] != '\0') {
-                    char device[256];
+                    char device[PATH_SIZE];  // Full device path
                     snprintf(device, sizeof(device), "/dev/%s", name);
                     
                     // Skip if device was manually ejected
@@ -468,7 +467,7 @@ static void try_automount_removable(void) {
             // Device disappeared
             // Remove from seen list
             for (int j = i; j < seen_count - 1; j++) {
-                strcpy(seen_devices[j], seen_devices[j + 1]);
+                snprintf(seen_devices[j], sizeof(seen_devices[j]), "%s", seen_devices[j + 1]);
             }
             seen_count--;
             i--; // Recheck this index since we shifted
@@ -494,8 +493,8 @@ void diskdrives_poll(void) {
     bool found[MAX_DRIVES] = {0};
     
     while (fgets(line, sizeof(line), mounts)) {
-        char device[256], mount_point[256], fs_type[64];
-        if (sscanf(line, "%255s %255s %63s", device, mount_point, fs_type) < 3)
+        char device[PATH_SIZE], mount_point[PATH_SIZE], fs_type[NAME_SIZE];  // device path, mount path, fs type name
+        if (sscanf(line, "%511s %511s %127s", device, mount_point, fs_type) < 3)  // SIZE - 1 for each
             continue;
         
         // Skip virtual filesystems
@@ -538,14 +537,14 @@ void diskdrives_cleanup(void) {
 }
 
 bool mount_device(const char *device) {
-    char cmd[512];
+    char cmd[FULL_SIZE];  // Command with device path
     // udisksctl automatically mounts with user permissions when run by user
     snprintf(cmd, sizeof(cmd), "udisksctl mount -b %s 2>&1", device);
-    
+
     FILE *fp = popen(cmd, "r");
     if (!fp) return false;
-    
-    char result[256];
+
+    char result[PATH_SIZE];  // Command output line buffer
     bool success = false;
     while (fgets(result, sizeof(result), fp)) {
         // udisksctl outputs: "Mounted /dev/sda1 at /media/user/LABEL"
@@ -559,13 +558,13 @@ bool mount_device(const char *device) {
 }
 
 bool unmount_device(const char *device) {
-    char cmd[512];
+    char cmd[FULL_SIZE];  // Command with device path
     snprintf(cmd, sizeof(cmd), "udisksctl unmount -b %s 2>&1", device);
-    
+
     FILE *fp = popen(cmd, "r");
     if (!fp) return false;
-    
-    char result[256];
+
+    char result[PATH_SIZE];  // Command output line buffer
     bool success = false;
     while (fgets(result, sizeof(result), fp)) {
         if (strstr(result, "Unmounted")) {
@@ -597,11 +596,10 @@ void eject_drive(FileIcon *icon) {
             // Unmount the device
             if (unmount_device(drive->device)) {
                 // Drive ejected successfully
-                
+
                 // Add to ejected list to prevent auto-remount
                 if (ejected_count < MAX_EJECTED) {
-                    strncpy(ejected_devices[ejected_count], drive->device, 63);
-                    ejected_devices[ejected_count][63] = '\0';
+                    snprintf(ejected_devices[ejected_count], sizeof(ejected_devices[0]), "%s", drive->device);
                     ejected_count++;
                 }
                 

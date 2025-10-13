@@ -65,8 +65,7 @@ void show_delete_confirmation(const char *message,
     if (strlen(message) >= NAME_SIZE) {
         log_error("[WARNING] Delete confirmation message truncated: %s", message);
     }
-    strncpy(dialog->text_buffer, message, NAME_SIZE - 1);
-    dialog->text_buffer[NAME_SIZE - 1] = '\0';
+    snprintf(dialog->text_buffer, NAME_SIZE, "%s", message);
     dialog->on_ok = delete_confirm_ok;
     dialog->on_cancel = delete_confirm_cancel;
 

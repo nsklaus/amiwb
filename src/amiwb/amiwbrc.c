@@ -32,8 +32,7 @@ static char* trim(char* str) {
 
 // Set a string field in config
 static void set_string(char *dest, const char *value, size_t max_size) {
-    strncpy(dest, value, max_size - 1);
-    dest[max_size - 1] = '\0';
+    snprintf(dest, max_size, "%s", value);
 }
 
 // Parse a single line and update config

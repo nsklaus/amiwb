@@ -134,8 +134,7 @@ void show_icon_info_dialog(FileIcon *icon) {
         snprintf(dialog->path_field->name, sizeof(dialog->path_field->name), "Filepath");
         // Extract directory path (without filename)
         char dir_path[PATH_SIZE];
-        strncpy(dir_path, icon->path, sizeof(dir_path) - 1);
-        dir_path[sizeof(dir_path) - 1] = '\0';
+        snprintf(dir_path, sizeof(dir_path), "%s", icon->path);
         char *last_slash = strrchr(dir_path, '/');
         if (last_slash && last_slash != dir_path) {
             *(last_slash + 1) = '\0';  // Keep the trailing slash
@@ -190,14 +189,14 @@ static void load_file_info(IconInfoDialog *dialog) {
         // Get owner and group names
         struct passwd *pw = getpwuid(st.st_uid);
         if (pw) {
-            strncpy(dialog->owner_text, pw->pw_name, sizeof(dialog->owner_text) - 1);
+            snprintf(dialog->owner_text, sizeof(dialog->owner_text), "%s", pw->pw_name);
         } else {
             snprintf(dialog->owner_text, sizeof(dialog->owner_text), "%d", st.st_uid);
         }
-        
+
         struct group *gr = getgrgid(st.st_gid);
         if (gr) {
-            strncpy(dialog->group_text, gr->gr_name, sizeof(dialog->group_text) - 1);
+            snprintf(dialog->group_text, sizeof(dialog->group_text), "%s", gr->gr_name);
         } else {
             snprintf(dialog->group_text, sizeof(dialog->group_text), "%d", st.st_gid);
         }

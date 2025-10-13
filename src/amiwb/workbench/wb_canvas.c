@@ -80,7 +80,7 @@ void refresh_canvas_from_directory(Canvas *canvas, const char *dirpath) {
             // Skip orphan .info files
             if (ends_with(entry->d_name, ".info")) {
                 char base_path[PATH_SIZE];
-                strncpy(base_path, full_path, sizeof(base_path) - 1);
+                snprintf(base_path, sizeof(base_path), "%s", full_path);
                 base_path[strlen(base_path) - 5] = '\0';  // Remove .info
                 
                 if (stat(base_path, &st) != 0) {

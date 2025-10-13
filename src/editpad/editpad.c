@@ -112,7 +112,7 @@ EditPad* editpad_create(Display *display) {
     ep->untitled = true;
     ep->modified = false;
     ep->initial_title_set = false;
-    strcpy(ep->current_file, "");
+    ep->current_file[0] = '\0';
     
     // Register with AmiWB for menu substitution
     // Set X11 properties to identify this as a toolkit app
@@ -302,7 +302,7 @@ void editpad_new_file(EditPad *ep) {
     textview_set_text(ep->text_view, "");
     ep->untitled = true;
     ep->modified = false;
-    strcpy(ep->current_file, "");
+    ep->current_file[0] = '\0';
     
     // Clear syntax highlighting
     if (ep->syntax) {
