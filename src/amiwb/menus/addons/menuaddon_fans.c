@@ -15,6 +15,7 @@
 
 static char cached_text[NAME_SIZE] = {0};  // Cache formatted text "fans 155 RPM"
 static int max_rpm = 0;                    // Maximum RPM among all fans
+static int reserved_width = 0;             // Reserved width for maximum text (prevents shifting)
 
 // ============================================================================
 // Fan RPM Reading
@@ -66,11 +67,11 @@ static void update_fan_rpm(void) {
 static void fans_render(RenderContext *ctx, Canvas *menubar, int *x, int y) {
     if (!ctx || !menubar || !x) return;
 
-    // Render cached text at provided x position (text left-aligned in reserved space)
+    // Render cached text at current position
     menu_render_text(ctx, menubar, cached_text, *x, y);
 
-    // Update x for next addon: use fixed width (130px) to prevent shifting
-    *x += 130 + 40;  // Fixed width + spacing
+    // Update x for next addon: use fixed maximum width + spacing (prevents shifting)
+    *x += reserved_width + 40;
 }
 
 // ============================================================================
@@ -107,10 +108,18 @@ void menuaddon_fans_init(void) {
     // Initial update to populate cached_text
     update_fan_rpm();
 
+    // Calculate maximum text width (worst case: "Fans: 9999 RPM")
+    RenderContext *ctx = get_render_context();
+    if (ctx) {
+        reserved_width = menu_measure_text(ctx, "Fans: 9999 RPM");
+    } else {
+        reserved_width = 130;  // Fallback if context not available yet
+    }
+
     // Configure addon
     snprintf(fans_addon->name, sizeof(fans_addon->name), "fans");
     fans_addon->position = ADDON_POS_MIDDLE;    // Center of menubar
-    fans_addon->width = 130;                    // Approximate width for "fans 9999 RPM"
+    fans_addon->width = reserved_width;         // Use calculated maximum width
     fans_addon->render = fans_render;
     fans_addon->update = fans_update;
     fans_addon->cleanup = fans_cleanup;

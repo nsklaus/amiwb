@@ -14,6 +14,7 @@
 // ============================================================================
 
 static char cached_text[NAME_SIZE] = {0};  // Cache formatted text "mem 12Gb Free"
+static int reserved_width = 0;             // Reserved width for maximum text (prevents shifting)
 
 // ============================================================================
 // Memory Usage Calculation
@@ -73,11 +74,11 @@ static void update_memory_usage(void) {
 static void memory_render(RenderContext *ctx, Canvas *menubar, int *x, int y) {
     if (!ctx || !menubar || !x) return;
 
-    // Render cached text at provided x position (text left-aligned in reserved space)
+    // Render cached text at current position
     menu_render_text(ctx, menubar, cached_text, *x, y);
 
-    // Update x for next addon: use fixed width (140px) to prevent shifting
-    *x += 140 + 40;  // Fixed width + spacing
+    // Update x for next addon: use fixed maximum width + spacing (prevents shifting)
+    *x += reserved_width + 40;
 }
 
 // ============================================================================
@@ -114,10 +115,35 @@ void menuaddon_memory_init(void) {
     // Initial update to populate cached_text
     update_memory_usage();
 
+    // Calculate maximum text width based on actual system RAM
+    // Read MemTotal from /proc/meminfo to determine realistic maximum
+    FILE *fp = fopen("/proc/meminfo", "r");
+    unsigned long mem_total_kb = 0;
+    if (fp) {
+        char line[256];
+        if (fgets(line, sizeof(line), fp)) {
+            sscanf(line, "MemTotal: %lu kB", &mem_total_kb);
+        }
+        fclose(fp);
+    }
+
+    // Convert to GB and build maximum display string (with space before unit)
+    double total_gb = mem_total_kb / (1024.0 * 1024.0);
+    char max_text[NAME_SIZE];
+    snprintf(max_text, sizeof(max_text), "Mem: %.1f Gb Free", total_gb);
+
+    // Measure maximum width
+    RenderContext *ctx = get_render_context();
+    if (ctx) {
+        reserved_width = menu_measure_text(ctx, max_text);
+    } else {
+        reserved_width = 150;  // Fallback if context not available yet
+    }
+
     // Configure addon
     snprintf(memory_addon->name, sizeof(memory_addon->name), "memory");
     memory_addon->position = ADDON_POS_MIDDLE;  // Center of menubar
-    memory_addon->width = 140;                  // Approximate width for "mem 99.9Gb Free"
+    memory_addon->width = reserved_width;       // Use calculated maximum width
     memory_addon->render = memory_render;
     memory_addon->update = memory_update;
     memory_addon->cleanup = memory_cleanup;

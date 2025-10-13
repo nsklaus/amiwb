@@ -17,6 +17,7 @@ static char cached_text[NAME_SIZE] = {0};  // Cache formatted text "cpu 5% Use"
 static unsigned long long prev_total = 0;
 static unsigned long long prev_idle = 0;
 static int current_usage = 0;              // CPU usage percentage
+static int reserved_width = 0;             // Reserved width for maximum text (prevents shifting)
 
 // ============================================================================
 // CPU Usage Calculation
@@ -83,11 +84,11 @@ static void update_cpu_usage(void) {
 static void cpu_render(RenderContext *ctx, Canvas *menubar, int *x, int y) {
     if (!ctx || !menubar || !x) return;
 
-    // Render cached text at provided x position (text left-aligned in reserved space)
+    // Render cached text at current position
     menu_render_text(ctx, menubar, cached_text, *x, y);
 
-    // Update x for next addon: use fixed width (120px) to prevent shifting
-    *x += 120 + 40;  // Fixed width + spacing
+    // Update x for next addon: use fixed maximum width + spacing (prevents shifting)
+    *x += reserved_width + 40;
 }
 
 // ============================================================================
@@ -129,10 +130,18 @@ void menuaddon_cpu_init(void) {
     update_cpu_usage();
     snprintf(cached_text, sizeof(cached_text), "CPU: %d%% Use", current_usage);
 
+    // Calculate maximum text width (worst case: "CPU: 100% Use")
+    RenderContext *ctx = get_render_context();
+    if (ctx) {
+        reserved_width = menu_measure_text(ctx, "CPU: 100% Use");
+    } else {
+        reserved_width = 130;  // Fallback if context not available yet
+    }
+
     // Configure addon
     snprintf(cpu_addon->name, sizeof(cpu_addon->name), "cpu");
     cpu_addon->position = ADDON_POS_MIDDLE;     // Center of menubar
-    cpu_addon->width = 120;                     // Approximate width for "cpu 99% Use"
+    cpu_addon->width = reserved_width;          // Use calculated maximum width
     cpu_addon->render = cpu_render;
     cpu_addon->update = cpu_update;
     cpu_addon->cleanup = cpu_cleanup;

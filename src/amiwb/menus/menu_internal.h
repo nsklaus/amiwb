@@ -142,5 +142,6 @@ void menuaddon_clock_init(void);                                                
 void menuaddon_cpu_init(void);                                                      // Initialize CPU addon
 void menuaddon_memory_init(void);                                                   // Initialize memory addon
 void menuaddon_fans_init(void);                                                     // Initialize fans addon
+void menuaddon_temps_init(void);                                                    // Initialize temps addon
 
 #endif // MENU_INTERNAL_H

@@ -45,7 +45,7 @@ static void clock_render(RenderContext *ctx, Canvas *menubar, int *x, int y) {
 // ============================================================================
 
 // Update callback - called periodically (every 1 second)
-// Updates cached text and width when minute changes
+// Updates cached text when minute changes (width stays fixed)
 static void clock_update(void) {
     time_t now;
     time(&now);
@@ -55,12 +55,7 @@ static void clock_update(void) {
         struct tm *tm_info = localtime(&now);
         strftime(cached_time, sizeof(cached_time), MENUBAR_DATE_FORMAT, tm_info);
         last_update = now;
-
-        // Recalculate width only when text changes
-        RenderContext *ctx = get_render_context();
-        if (ctx) {
-            cached_width = menu_measure_text(ctx, cached_time);
-        }
+        // NOTE: cached_width is NOT recalculated - fixed to prevent layout shifting
     }
 }
 
@@ -88,19 +83,20 @@ void menuaddon_clock_init(void) {
         return;  // Gracefully fail - menubar works without clock
     }
 
-    // Initialize cached time and width
+    // Initialize cached time with current time
     time_t now;
     time(&now);
     struct tm *tm_info = localtime(&now);
     strftime(cached_time, sizeof(cached_time), MENUBAR_DATE_FORMAT, tm_info);
     last_update = now;
 
-    // Calculate initial width
+    // Calculate maximum width (worst case: "Wed.30 Sep 23:59" for format "%a.%e %b %H:%M")
+    // This prevents layout shifting when date/time changes
     RenderContext *ctx = get_render_context();
     if (ctx) {
-        cached_width = menu_measure_text(ctx, cached_time);
+        cached_width = menu_measure_text(ctx, "Wed.30 Sep 23:59");
     } else {
-        cached_width = 120;  // Fallback width if context not available yet
+        cached_width = 150;  // Fallback width if context not available yet
     }
 
     // Configure addon

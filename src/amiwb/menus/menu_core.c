@@ -502,6 +502,7 @@ finish_menu_init:
     menuaddon_cpu_init();               // Register CPU addon
     menuaddon_memory_init();            // Register memory addon
     menuaddon_fans_init();              // Register fans addon
+    menuaddon_temps_init();             // Register temps addon
     menu_addon_load_config();           // Enable addons from config
 
     redraw_canvas(menubar->canvas);
