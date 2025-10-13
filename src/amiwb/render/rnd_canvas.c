@@ -387,7 +387,8 @@ static void render_menubar_addons(Canvas *canvas, RenderContext *ctx) {
 static void render_window_title(Canvas *canvas, RenderContext *ctx, Picture dest) {
     // Properly allocate XftColor for title text
     XftColor text_col;
-    XRenderColor render_color = canvas->active ? WHITE : BLACK;
+    bool is_active = (canvas == itn_focus_get_active());
+    XRenderColor render_color = is_active ? WHITE : BLACK;
     XftColorAllocValue(ctx->dpy, canvas->visual, canvas->colormap, &render_color, &text_col);
 
     // Get unified font for title drawing
@@ -426,9 +427,10 @@ static void render_window_title(Canvas *canvas, RenderContext *ctx, Picture dest
 
 // Render vertical and horizontal scrollbar knobs
 static void render_scrollbar_knobs(Canvas *canvas, RenderContext *ctx, Picture dest) {
-    XRenderColor knob_color = canvas->active ? BLUE : GRAY;
-    XRenderColor color1 = canvas->active ? BLUE : BLACK;
-    XRenderColor color2 = canvas->active ? BLACK : GRAY;
+    bool is_active = (canvas == itn_focus_get_active());
+    XRenderColor knob_color = is_active ? BLUE : GRAY;
+    XRenderColor color1 = is_active ? BLUE : BLACK;
+    XRenderColor color2 = is_active ? BLACK : GRAY;
 
     // Vertical scrollbar
     int sb_x = canvas->width - BORDER_WIDTH_RIGHT + 4;
@@ -507,7 +509,8 @@ static void render_canvas_content(Canvas *canvas, RenderContext *ctx, Picture de
 
     // Draw frame for WINDOW and DIALOG types BEFORE content (skip when fullscreen)
     if ((canvas->type == WINDOW || canvas->type == DIALOG) && !canvas->fullscreen) {
-        XRenderColor frame_color = canvas->active ? BLUE : GRAY;
+        bool is_active = (canvas == itn_focus_get_active());
+        XRenderColor frame_color = is_active ? BLUE : GRAY;
 
         // top border
         XRenderFillRectangle(ctx->dpy, PictOpSrc, dest, &frame_color, 0, 0, canvas->width, BORDER_HEIGHT_TOP);

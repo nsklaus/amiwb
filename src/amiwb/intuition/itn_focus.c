@@ -21,30 +21,27 @@ void itn_focus_set_active(Canvas *canvas) {
     Display *dpy = itn_core_get_display();
     if (!dpy) return;
 
-    // Deactivate all other windows
-    int count = itn_manager_get_count();
-    for (int i = 0; i < count; i++) {
-        Canvas *o = itn_manager_get_canvas(i);
-        if (!o) continue;
-
-        if ((o->type == WINDOW || o->type == DIALOG) && o != canvas) {
-            if (o->active) {
-                o->active = false;
-                // Must redraw decorations to update border color
-                redraw_canvas(o);  // This updates the window pixmap with new decoration colors
-                DAMAGE_CANVAS(o);  // Then mark for compositor update
-            }
-        }
-    }
-
-    // Set new active
-    g_active_canvas = canvas;
-    canvas->active = true;
-
-    // Validate canvas window before attempting focus operations
-    // Protects against asynchronous window destruction or corruption
+    // CRITICAL: Validate window FIRST, before changing any state!
+    // If window is invalid, do nothing - prevents "all windows gray" bug
+    // where we deactivate old window but fail to activate new one
     if (!is_window_valid(dpy, canvas->win)) {
         return;
+    }
+
+    // Save old active window reference before changing state
+    Canvas *old_active = g_active_canvas;
+
+    // CRITICAL: Set new active BEFORE any redraw operations!
+    // This ensures itn_focus_get_active() returns the correct value during rendering,
+    // so the old window draws with inactive (gray) decorations
+    g_active_canvas = canvas;
+
+    // Deactivate old active window (if it exists and is different from new active)
+    if (old_active && old_active != canvas &&
+        (old_active->type == WINDOW || old_active->type == DIALOG)) {
+        // Must redraw decorations to update border color to inactive (gray)
+        redraw_canvas(old_active);  // Now itn_focus_get_active() returns 'canvas', not old_active
+        DAMAGE_CANVAS(old_active);  // Mark for compositor update
     }
 
     // Raise window and accumulate damage
@@ -80,17 +77,20 @@ Canvas *itn_focus_get_active(void) {
 }
 
 void itn_focus_deactivate_all(void) {
-    int count = itn_manager_get_count();
-    for (int i = 0; i < count; i++) {
-        Canvas *c = itn_manager_get_canvas(i);
-        if (c && c->active) {
-            c->active = false;
-            // Must redraw decorations to show inactive color
-            redraw_canvas(c);  // Updates the window pixmap with gray decoration
-            DAMAGE_CANVAS(c);
-        }
-    }
+    // Save old active window reference before changing state
+    Canvas *old_active = g_active_canvas;
+
+    // CRITICAL: Set to NULL BEFORE any redraw operations!
+    // This ensures itn_focus_get_active() returns NULL during rendering,
+    // so the window draws with inactive (gray) decorations
     g_active_canvas = NULL;
+
+    // Deactivate the old active window (if it exists)
+    if (old_active && (old_active->type == WINDOW || old_active->type == DIALOG)) {
+        // Must redraw decorations to show inactive color
+        redraw_canvas(old_active);  // Now itn_focus_get_active() returns NULL
+        DAMAGE_CANVAS(old_active);
+    }
 
     // Restore system menus when no window is active (desktop focused)
     restore_system_menu();

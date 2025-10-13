@@ -67,7 +67,6 @@ typedef struct Canvas {
     int depth;
     XRenderColor bg_color;
     ViewMode view_mode;
-    bool active;
     Colormap colormap;
     bool scanning;
     bool show_hidden;
@@ -263,6 +262,7 @@ bool is_toplevel_under_root(Window win);
 // --- Desktop operations ---
 void handle_desktop_button(XButtonEvent *event);
 void suppress_desktop_deactivate_for_ms(int ms);
+bool itn_core_is_deactivate_suppressed(void);
 
 // --- Menu operations ---
 void toggle_menubar_and_redraw(void);

@@ -753,6 +753,10 @@ void suppress_desktop_deactivate_for_ms(int ms) {
     }
 }
 
+bool itn_core_is_deactivate_suppressed(void) {
+    return now_ms() < g_deactivate_suppress_until_ms;
+}
+
 
 void remove_canvas_from_array(Canvas *canvas) {
     itn_manager_remove(canvas);

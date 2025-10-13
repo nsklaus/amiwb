@@ -752,8 +752,8 @@ void iconify_canvas(Canvas *canvas) {
 
     // Iconified window loses active state - activate next window
     // This also handles menu restoration automatically via focus change
-    if (canvas->active) {
-        canvas->active = false;
+    bool was_active = (canvas == itn_focus_get_active());
+    if (was_active) {
         itn_focus_select_next(canvas);
     } else if (was_menu_owner) {
         // Even if not active, if it owned menus, restore system menu

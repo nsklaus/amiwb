@@ -133,8 +133,14 @@ void wb_icons_restore_iconified(FileIcon *icon) {
         itn_composite_update_canvas_pixmap(canvas);
     }
 
+    // Redraw to the NEW pixmap with correct active state decorations
     redraw_canvas(canvas);
-    
+
+    // CRITICAL: Damage canvas after redraw to new pixmap!
+    // Without this, compositor uses stale content from before pixmap recreation
+    itn_render_accumulate_canvas_damage(canvas);
+    itn_render_schedule_frame();
+
     // Clear press target to prevent crash
     clear_press_target_if_matches(icon->display_window);
     

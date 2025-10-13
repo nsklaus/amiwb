@@ -270,7 +270,7 @@ static void clean_ejected_list(void) {
         if (access(ejected_devices[i], F_OK) == 0) {
             // Device still exists, keep it in list
             if (new_count != i) {
-                snprintf(ejected_devices[new_count], sizeof(ejected_devices[new_count]), "%s", ejected_devices[i]);
+                memmove(ejected_devices[new_count], ejected_devices[i], PATH_SIZE);
             }
             new_count++;
         } else {
@@ -280,7 +280,7 @@ static void clean_ejected_list(void) {
                 if (strcmp(seen_devices[j], ejected_devices[i]) == 0) {
                     // Remove by shifting remaining devices
                     for (int k = j; k < seen_count - 1; k++) {
-                        snprintf(seen_devices[k], sizeof(seen_devices[k]), "%s", seen_devices[k + 1]);
+                        memmove(seen_devices[k], seen_devices[k + 1], PATH_SIZE);
                     }
                     seen_count--;
                     break;
@@ -467,7 +467,7 @@ static void try_automount_removable(void) {
             // Device disappeared
             // Remove from seen list
             for (int j = i; j < seen_count - 1; j++) {
-                snprintf(seen_devices[j], sizeof(seen_devices[j]), "%s", seen_devices[j + 1]);
+                memmove(seen_devices[j], seen_devices[j + 1], PATH_SIZE);
             }
             seen_count--;
             i--; // Recheck this index since we shifted

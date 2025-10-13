@@ -172,7 +172,6 @@ bool itn_buttons_handle_release(Canvas *canvas, XButtonEvent *event) {
         SCHEDULE_FRAME();
         if (hit == HIT_LOWER) {
             itn_geometry_lower(canvas);
-            canvas->active = false;
             itn_focus_activate_window_behind(canvas);
             // Let compositor handle stacking through ConfigureNotify events
         }

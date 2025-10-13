@@ -929,7 +929,9 @@ void handle_desktop_button(XButtonEvent *event) {
 
     // Left-click gives focus to desktop and deactivates all windows
     if (event->button == Button1) {
-        itn_focus_deactivate_all();
+        if (!itn_core_is_deactivate_suppressed()) {
+            itn_focus_deactivate_all();
+        }
     }
 }
 
