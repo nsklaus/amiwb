@@ -486,7 +486,7 @@ static void reqasl_update_menu_data(ReqASL *req) {
     const char *show_pattern_state = req->show_pattern ? "[o]" : "[x]";
 
     snprintf(menu_data, sizeof(menu_data),
-            "File:Open #O,Quit #Q|Edit:New Drawer,Rename,Delete,Select Files #A,Select None #Z|View:By Names,By Date,%s Show Hidden #H,%s By Pattern|Locations:Add Place,Del Place",
+            "File:Open #O,Quit #Q|Edit:New Drawer,Rename,Delete,Select Files #A,Select None #Z|View:By Names,By Date,%s Show Hidden #H,%s By Pattern|Places:Add location,Del Location",
             show_hidden_state, show_pattern_state);
 
     // Update the property
@@ -494,6 +494,9 @@ static void reqasl_update_menu_data(ReqASL *req) {
     XChangeProperty(req->display, req->window, menu_data_atom,
                    XA_STRING, 8, PropModeReplace,
                    (unsigned char*)menu_data, strlen(menu_data));
+
+    // Flush to ensure PropertyNotify event is sent immediately to AmiWB
+    XFlush(req->display);
 }
 
 // Check if path is a standard XDG directory (protected from deletion)
@@ -638,14 +641,14 @@ static void reqasl_update_menu_states(ReqASL *req) {
     p += written;
     remaining -= written;
 
-    // Locations menu (index 3)
-    // Add Place (0): Enable if not already in user-dirs.dirs and not in Locations view
+    // Places menu (index 3)
+    // Add location (0): Enable if not already in user-dirs.dirs and not in Locations view
     bool can_add_place = !req->showing_locations && !path_exists_in_user_dirs(req->current_path);
     written = snprintf(p, remaining, "3,0,%d;", can_add_place ? 1 : 0);
     p += written;
     remaining -= written;
 
-    // Del Place (1): Enable if in user-dirs.dirs but NOT a standard XDG directory
+    // Del Location (1): Enable if in user-dirs.dirs but NOT a standard XDG directory
     bool can_del_place = !req->showing_locations &&
                          path_exists_in_user_dirs(req->current_path) &&
                          !is_standard_xdg_dir(req->current_path);
@@ -794,7 +797,7 @@ static void navigate_internal(ReqASL *req, const char *path, bool update_env) {
                 listview_clear_selection(req->listview);
             }
         }
-        // Update menu states for Add/Del Place based on new directory
+        // Update menu states for Add/Del Location based on new directory
         reqasl_update_menu_states(req);
         draw_window(req);
     } else {
@@ -1541,7 +1544,7 @@ static void draw_window(ReqASL *req) {
     Button volumes_btn = {
         .x = volumes_x, .y = button_y,
         .width = BUTTON_WIDTH, .height = BUTTON_HEIGHT,
-        .label = "Locations",
+        .label = "Places",
         .pressed = req->volumes_button_pressed,
         .font = req->font
     };
@@ -2124,7 +2127,9 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
 
                     if (click_handled) {
                         // Check if ListView cleared selection or has no selection (empty space click)
-                        if (req->listview->selected_index == -1) {
+                        // In multi-select mode, check selection_count (not just selected_index)
+                        // because selected_index is the anchor and may remain set
+                        if (req->listview->selection_count == 0) {
                             // Empty space was clicked - start multiselection
                             multiselect_pending = true;
                             multiselect_start_x = x;
@@ -2188,9 +2193,10 @@ req->open_button_pressed = true;
                 if (multiselect_pending && !multiselect_active) {
                     int dx = x - multiselect_start_x;
                     int dy = y - multiselect_start_y;
+                    int dist_sq = dx*dx + dy*dy;
 
                     // Require 10 pixel movement (prevents accidental activation)
-                    if (dx*dx + dy*dy >= 10*10) {
+                    if (dist_sq >= 10*10) {
                         // Threshold crossed - activate multiselection
                         multiselect_start(req);
                     }
@@ -2445,6 +2451,28 @@ req->open_button_pressed = true;
                             scan_directory(req, req->current_path);
                             draw_window(req);
                             return true;
+
+                        case XK_Page_Up:  // Super+PageUp - Scroll view up (page)
+                            if (req->listview && req->listview->item_count > 0) {
+                                req->listview->scroll_offset -= req->listview->visible_items;
+                                if (req->listview->scroll_offset < 0) req->listview->scroll_offset = 0;
+                                listview_update_scrollbar(req->listview);
+                                draw_window(req);
+                            }
+                            return true;
+
+                        case XK_Page_Down:  // Super+PageDown - Scroll view down (page)
+                            if (req->listview && req->listview->item_count > 0) {
+                                int max_scroll = req->listview->item_count - req->listview->visible_items;
+                                if (max_scroll < 0) max_scroll = 0;
+                                req->listview->scroll_offset += req->listview->visible_items;
+                                if (req->listview->scroll_offset > max_scroll) {
+                                    req->listview->scroll_offset = max_scroll;
+                                }
+                                listview_update_scrollbar(req->listview);
+                                draw_window(req);
+                            }
+                            return true;
                     }
                 }
 
@@ -2515,28 +2543,91 @@ req->open_button_pressed = true;
                 // Handle arrow keys for listview navigation
                 if (keysym == XK_Up || keysym == XK_Down) {
                     if (req->listview && req->listview->item_count > 0) {
-                        // Check if Shift is pressed - scroll view without changing selection
+                        // Check if Shift is pressed
                         if (event->xkey.state & ShiftMask) {
-                            // Shift+Arrow: scroll view only
-                            if (keysym == XK_Up) {
-                                if (req->listview->scroll_offset > 0) {
-                                    req->listview->scroll_offset--;
-                                    listview_update_scrollbar(req->listview);
-                                    draw_window(req);
+                            // Shift+Arrow behavior depends on multi-selection mode
+                            if (req->multi_select_enabled) {
+                                // Multi-selection enabled: extend selection range (standard UI behavior)
+                                int anchor_index = req->listview->selected_index;
+
+                                // If no anchor, start from first item
+                                if (anchor_index < 0) {
+                                    anchor_index = 0;
+                                    req->listview->selected_index = 0;
                                 }
-                            } else { // XK_Down
-                                int max_scroll = req->listview->item_count - req->listview->visible_items;
-                                if (max_scroll < 0) max_scroll = 0;
-                                if (req->listview->scroll_offset < max_scroll) {
-                                    req->listview->scroll_offset++;
-                                    listview_update_scrollbar(req->listview);
-                                    draw_window(req);
+
+                                // Find current extending end (furthest selected item from anchor)
+                                // This allows repeated Shift+Arrow to continue extending
+                                int extending_end = anchor_index;
+                                for (int i = 0; i < req->listview->item_count; i++) {
+                                    if (req->listview->selected[i]) {
+                                        int current_distance = (i > anchor_index) ? (i - anchor_index) : (anchor_index - i);
+                                        int end_distance = (extending_end > anchor_index) ? (extending_end - anchor_index) : (anchor_index - extending_end);
+                                        if (current_distance > end_distance) {
+                                            extending_end = i;
+                                        }
+                                    }
                                 }
+
+                                // Move the extending end based on arrow key
+                                int new_index = extending_end;
+                                if (keysym == XK_Up) {
+                                    new_index--;
+                                    if (new_index < 0) new_index = 0;
+                                } else { // XK_Down
+                                    new_index++;
+                                    if (new_index >= req->listview->item_count) {
+                                        new_index = req->listview->item_count - 1;
+                                    }
+                                }
+
+                                // Extend selection: clear and select range (like Shift+Click)
+                                listview_clear_selection(req->listview);
+                                int start = (anchor_index < new_index) ? anchor_index : new_index;
+                                int end = (anchor_index < new_index) ? new_index : anchor_index;
+                                for (int i = start; i <= end; i++) {
+                                    req->listview->selected[i] = true;
+                                    req->listview->selection_count++;
+                                }
+
+                                // Keep anchor fixed at selected_index for future shift+arrow operations
+
+                                // Update file field to show selected files
+                                int file_count = 0;
+                                int single_file_index = -1;
+                                for (int i = 0; i < req->entry_count && i < req->listview->capacity; i++) {
+                                    if (req->listview->selected[i] && req->entries[i]->type == TYPE_FILE) {
+                                        if (file_count == 0) {
+                                            single_file_index = i;
+                                        }
+                                        file_count++;
+                                    }
+                                }
+
+                                if (file_count == 1 && single_file_index >= 0) {
+                                    // Single file - show its name
+                                    strncpy(req->file_text, req->entries[single_file_index]->name, sizeof(req->file_text) - 1);
+                                    req->file_text[sizeof(req->file_text) - 1] = '\0';
+                                } else if (file_count > 1) {
+                                    // Multiple files - show count
+                                    snprintf(req->file_text, sizeof(req->file_text), "%d files selected", file_count);
+                                } else {
+                                    req->file_text[0] = '\0';
+                                }
+
+                                if (req->file_field) {
+                                    inputfield_set_text(req->file_field, req->file_text);
+                                }
+
+                                listview_ensure_visible(req->listview, new_index);
+                                draw_window(req);
                             }
+                            // Note: In single-select mode, Shift+Arrow does nothing
+                            // Use Super+PageUp/PageDown for scrolling instead
                         } else {
-                            // Regular arrow keys: change selection
+                            // Regular arrow keys: clear multi-selection and change selection
                             int new_index = req->listview->selected_index;
-                            
+
                             if (keysym == XK_Up) {
                                 new_index--;
                                 if (new_index < 0) new_index = 0;
@@ -2546,9 +2637,35 @@ req->open_button_pressed = true;
                                     new_index = req->listview->item_count - 1;
                                 }
                             }
-                            
+
+                            // Clear multi-selection and select only the new item
+                            if (req->multi_select_enabled && req->listview) {
+                                listview_clear_selection(req->listview);
+                                if (new_index >= 0 && new_index < req->listview->item_count) {
+                                    req->listview->selected[new_index] = true;
+                                    req->listview->selection_count = 1;
+                                }
+                            }
+
                             listview_set_selected(req->listview, new_index);
                             listview_ensure_visible(req->listview, new_index);
+
+                            // Update file field
+                            if (req->multi_select_enabled && new_index >= 0 && new_index < req->entry_count) {
+                                if (req->entries[new_index]->type == TYPE_FILE) {
+                                    strncpy(req->file_text, req->entries[new_index]->name, sizeof(req->file_text) - 1);
+                                    req->file_text[sizeof(req->file_text) - 1] = '\0';
+                                    if (req->file_field) {
+                                        inputfield_set_text(req->file_field, req->file_text);
+                                    }
+                                } else {
+                                    req->file_text[0] = '\0';
+                                    if (req->file_field) {
+                                        inputfield_set_text(req->file_field, "");
+                                    }
+                                }
+                            }
+
                             draw_window(req);
                         }
                         return true;
@@ -2870,15 +2987,15 @@ req->open_button_pressed = true;
                             break;
                     }
                 }
-                // Handle Locations menu (index 3)
+                // Handle Places menu (index 3)
                 else if (menu_index == 3) {
                     switch (item_index) {
-                        case 0:  // Add Place
+                        case 0:  // Add location
                             add_user_place(req, req->current_path);
                             // Update menu states after adding place
                             reqasl_update_menu_states(req);
                             break;
-                        case 1:  // Del Place
+                        case 1:  // Del Location
                             remove_user_place(req, req->current_path);
                             // Update menu states after removing place
                             reqasl_update_menu_states(req);
