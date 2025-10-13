@@ -278,6 +278,7 @@ ReqASL* reqasl_create(Display *display) {
     }
     req->is_open = false;
     req->show_hidden = false;
+    req->show_pattern = false;  // Pattern field hidden by default (cleaner UI)
     req->selected_index = -1;
 
     // Initialize button press states
@@ -287,16 +288,18 @@ ReqASL* reqasl_create(Display *display) {
     req->cancel_button_pressed = false;
 
     // Calculate list area (at top, takes most space)
+    // Dynamic calculation based on visible input fields
+    int input_field_count = req->show_pattern ? 3 : 2;  // Pattern, Drawer, File OR just Drawer, File
+    int spacing_count = input_field_count + 1;  // One before fields, between fields, and after
     req->list_y = MARGIN;
-    req->list_height = req->height - MARGIN - (3 * INPUT_HEIGHT) - (4 * SPACING) - BUTTON_HEIGHT - MARGIN;
+    req->list_height = req->height - MARGIN - (input_field_count * INPUT_HEIGHT) - (spacing_count * SPACING) - BUTTON_HEIGHT - MARGIN;
     
     // Create ListView widget
-    req->listview = listview_create(MARGIN, req->list_y, 
-                                   req->width - MARGIN * 2, 
+    req->listview = listview_create(MARGIN, req->list_y,
+                                   req->width - MARGIN * 2,
                                    req->list_height);
     if (!req->listview) {
-        log_error("[ERROR] Failed to create listview");
-        // Continue anyway - old rendering will be fallback
+        log_error("[ERROR] Failed to create listview - rendering will fail");
     } else {
         // Set callbacks for ListView
         listview_set_callbacks(req->listview, 
@@ -400,14 +403,17 @@ ReqASL* reqasl_create(Display *display) {
     // This effectively makes the window non-resizable
     XSizeHints *size_hints = XAllocSizeHints();
     if (size_hints) {
+        // Dynamic min height based on visible input fields
+        int min_height = req->show_pattern ? REQASL_MIN_HEIGHT : (REQASL_MIN_HEIGHT - INPUT_HEIGHT - SPACING);
+
         size_hints->flags = PMinSize | PMaxSize | PBaseSize | PSize;
         size_hints->min_width = REQASL_MIN_WIDTH;
-        size_hints->min_height = REQASL_MIN_HEIGHT;
+        size_hints->min_height = min_height;
         // Set max size to same as min - this makes window non-resizable
         size_hints->max_width = REQASL_MIN_WIDTH;
-        size_hints->max_height = REQASL_MIN_HEIGHT;
+        size_hints->max_height = min_height;
         size_hints->base_width = REQASL_MIN_WIDTH;
-        size_hints->base_height = REQASL_MIN_HEIGHT;
+        size_hints->base_height = min_height;
         size_hints->width = req->width;
         size_hints->height = req->height;
         // Use both old and new API for maximum compatibility
@@ -468,7 +474,7 @@ void reqasl_destroy(ReqASL *req) {
     free(req);
 }
 
-// Update menu data to show checkmark for Show Hidden toggle
+// Update menu data to show checkmarks for toggle items
 static void reqasl_update_menu_data(ReqASL *req) {
     if (!req || !req->display || !req->window) return;
 
@@ -477,10 +483,11 @@ static void reqasl_update_menu_data(ReqASL *req) {
 
     // Use [o] for checked (on), [x] for unchecked (off) toggleable items
     const char *show_hidden_state = req->show_hidden ? "[o]" : "[x]";
+    const char *show_pattern_state = req->show_pattern ? "[o]" : "[x]";
 
     snprintf(menu_data, sizeof(menu_data),
-            "File:Open #O,Quit #Q|Edit:New Drawer,Rename,Delete,Select Files #A,Select None #Z|View:By Names,By Date,%s Show Hidden #H|Locations:Add Place,Del Place",
-            show_hidden_state);
+            "File:Open #O,Quit #Q|Edit:New Drawer,Rename,Delete,Select Files #A,Select None #Z|View:By Names,By Date,%s Show Hidden #H,%s By Pattern|Locations:Add Place,Del Place",
+            show_hidden_state, show_pattern_state);
 
     // Update the property
     Atom menu_data_atom = XInternAtom(req->display, "_AMIWB_MENU_DATA", False);
@@ -1422,18 +1429,21 @@ static void draw_window(ReqASL *req) {
         
         // Calculate label positions (right-justified, moved 5px to right to align with listview)
         int label_x_right = MARGIN + LABEL_WIDTH;
-        
-        // Pattern label
-        int pattern_y = req->height - MARGIN - BUTTON_HEIGHT - SPACING - (3 * INPUT_HEIGHT) - (2 * SPACING);
         XGlyphInfo extents;
-        XftTextExtentsUtf8(req->display, req->font, (FcChar8*)"Pattern:", 8, &extents);
-        XftDrawStringUtf8(temp_xft_draw, &label_color, req->font,
-                         label_x_right - extents.width,
-                         pattern_y + (INPUT_HEIGHT + req->font->ascent - req->font->descent) / 2,
-                         (FcChar8*)"Pattern:", 8);
-        
-        // Drawer label
-        int drawer_y = req->height - MARGIN - BUTTON_HEIGHT - SPACING - (2 * INPUT_HEIGHT) - SPACING;
+
+        // Pattern label (only if show_pattern is enabled)
+        if (req->show_pattern) {
+            int pattern_y = req->height - MARGIN - BUTTON_HEIGHT - SPACING - (3 * INPUT_HEIGHT) - (2 * SPACING);
+            XftTextExtentsUtf8(req->display, req->font, (FcChar8*)"Pattern:", 8, &extents);
+            XftDrawStringUtf8(temp_xft_draw, &label_color, req->font,
+                             label_x_right - extents.width,
+                             pattern_y + (INPUT_HEIGHT + req->font->ascent - req->font->descent) / 2,
+                             (FcChar8*)"Pattern:", 8);
+        }
+
+        // Drawer label (always at "2 fields up from bottom" position)
+        int drawer_y_offset = (2 * INPUT_HEIGHT) + SPACING;  // Always 45px
+        int drawer_y = req->height - MARGIN - BUTTON_HEIGHT - SPACING - drawer_y_offset;
         XftTextExtentsUtf8(req->display, req->font, (FcChar8*)"Drawer:", 7, &extents);
         XftDrawStringUtf8(temp_xft_draw, &label_color, req->font,
                          label_x_right - extents.width,
@@ -1483,18 +1493,20 @@ static void draw_window(ReqASL *req) {
         inputfield_render(req->drawer_field, dest, req->display, temp_xft_draw);
     }
     
-    // Pattern field (top-most input)
-    input_y -= (INPUT_HEIGHT + SPACING);
-    if (req->pattern_field) {
-        req->pattern_field->x = MARGIN + LABEL_WIDTH + 5;
-        req->pattern_field->y = input_y;
-        req->pattern_field->width = req->width - MARGIN * 2 - LABEL_WIDTH - 5;
-        req->pattern_field->height = INPUT_HEIGHT;
-        // Only sync text if it has changed (to preserve cursor position)
-        if (strcmp(req->pattern_field->text, req->pattern_text) != 0) {
-            inputfield_set_text(req->pattern_field, req->pattern_text);
+    // Pattern field (top-most input, only if show_pattern is enabled)
+    if (req->show_pattern) {
+        input_y -= (INPUT_HEIGHT + SPACING);
+        if (req->pattern_field) {
+            req->pattern_field->x = MARGIN + LABEL_WIDTH + 5;
+            req->pattern_field->y = input_y;
+            req->pattern_field->width = req->width - MARGIN * 2 - LABEL_WIDTH - 5;
+            req->pattern_field->height = INPUT_HEIGHT;
+            // Only sync text if it has changed (to preserve cursor position)
+            if (strcmp(req->pattern_field->text, req->pattern_text) != 0) {
+                inputfield_set_text(req->pattern_field, req->pattern_text);
+            }
+            inputfield_render(req->pattern_field, dest, req->display, temp_xft_draw);
         }
-        inputfield_render(req->pattern_field, dest, req->display, temp_xft_draw);
     }
     
     // Draw buttons with dynamic spacing (moved down by 2 pixels)
@@ -2314,13 +2326,16 @@ req->open_button_pressed = true;
             {
                 XSizeHints *size_hints = XAllocSizeHints();
                 if (size_hints) {
+                    // Dynamic min height based on visible input fields
+                    int min_height = req->show_pattern ? REQASL_MIN_HEIGHT : (REQASL_MIN_HEIGHT - INPUT_HEIGHT - SPACING);
+
                     size_hints->flags = PMinSize | PMaxSize | PBaseSize | PSize;
                     size_hints->min_width = REQASL_MIN_WIDTH;
-                    size_hints->min_height = REQASL_MIN_HEIGHT;
+                    size_hints->min_height = min_height;
                     size_hints->max_width = 1920;
                     size_hints->max_height = 1080;
                     size_hints->base_width = REQASL_MIN_WIDTH;
-                    size_hints->base_height = REQASL_MIN_HEIGHT;
+                    size_hints->base_height = min_height;
                     size_hints->width = req->width;
                     size_hints->height = req->height;
                     XSetWMSizeHints(req->display, req->window, size_hints, XA_WM_NORMAL_HINTS);
@@ -2344,12 +2359,13 @@ req->open_button_pressed = true;
                 changes.sibling = event->xconfigurerequest.above;
                 changes.stack_mode = event->xconfigurerequest.detail;
                 
-                // Enforce minimum dimensions
+                // Enforce minimum dimensions (dynamic based on visible fields)
+                int min_height = req->show_pattern ? REQASL_MIN_HEIGHT : (REQASL_MIN_HEIGHT - INPUT_HEIGHT - SPACING);
                 if (changes.width < REQASL_MIN_WIDTH) {
                     changes.width = REQASL_MIN_WIDTH;
                 }
-                if (changes.height < REQASL_MIN_HEIGHT) {
-                    changes.height = REQASL_MIN_HEIGHT;
+                if (changes.height < min_height) {
+                    changes.height = min_height;
                 }
                 
                 XConfigureWindow(req->display, req->window, 
@@ -2652,8 +2668,11 @@ req->open_button_pressed = true;
                     req->height = new_height;
                     
                     // Recalculate list area height (grows with window)
-                    req->list_height = req->height - MARGIN - (3 * INPUT_HEIGHT) -
-                                      (4 * SPACING) - BUTTON_HEIGHT - MARGIN;
+                    // Dynamic calculation based on visible input fields
+                    int input_field_count = req->show_pattern ? 3 : 2;
+                    int spacing_count = input_field_count + 1;
+                    req->list_height = req->height - MARGIN - (input_field_count * INPUT_HEIGHT) -
+                                      (spacing_count * SPACING) - BUTTON_HEIGHT - MARGIN;
 
                     // Update ListView dimensions
                     if (req->listview) {
@@ -2813,6 +2832,41 @@ req->open_button_pressed = true;
                             reqasl_update_menu_data(req);
                             // Refresh directory listing with new hidden state
                             reqasl_refresh(req);
+                            break;
+                        case 3:  // By Pattern
+                            // Toggle show_pattern state
+                            req->show_pattern = !req->show_pattern;
+                            // Update menu to show/hide checkmark
+                            reqasl_update_menu_data(req);
+                            // Recalculate layout and redraw window
+                            {
+                                // Recalculate list area height with new field count
+                                int input_field_count = req->show_pattern ? 3 : 2;
+                                int spacing_count = input_field_count + 1;
+                                req->list_height = req->height - MARGIN - (input_field_count * INPUT_HEIGHT) -
+                                                  (spacing_count * SPACING) - BUTTON_HEIGHT - MARGIN;
+                                // Update ListView dimensions
+                                if (req->listview) {
+                                    req->listview->height = req->list_height;
+                                    listview_update_scrollbar(req->listview);
+                                }
+                                // Update size hints for window manager
+                                int min_height = req->show_pattern ? REQASL_MIN_HEIGHT : (REQASL_MIN_HEIGHT - INPUT_HEIGHT - SPACING);
+                                XSizeHints *size_hints = XAllocSizeHints();
+                                if (size_hints) {
+                                    size_hints->flags = PMinSize | PMaxSize | PBaseSize;
+                                    size_hints->min_width = REQASL_MIN_WIDTH;
+                                    size_hints->min_height = min_height;
+                                    size_hints->max_width = 1920;
+                                    size_hints->max_height = 1080;
+                                    size_hints->base_width = REQASL_MIN_WIDTH;
+                                    size_hints->base_height = min_height;
+                                    XSetWMSizeHints(req->display, req->window, size_hints, XA_WM_NORMAL_HINTS);
+                                    XSetWMNormalHints(req->display, req->window, size_hints);
+                                    XFree(size_hints);
+                                }
+                                draw_window(req);
+                            }
                             break;
                     }
                 }

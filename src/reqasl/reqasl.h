@@ -54,6 +54,7 @@ typedef struct ReqASL {
     // Dialog state
     bool is_open;
     bool show_hidden;
+    bool show_pattern;  // Toggle visibility of Pattern input field
     
     // Callbacks
     void (*on_open)(const char *path);
