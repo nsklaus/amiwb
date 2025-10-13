@@ -85,6 +85,9 @@ void open_directory(FileIcon *icon, Canvas *current_canvas) {
         current_canvas->path = new_path;
         current_canvas->title_base = strdup(dir_name);
 
+        // Recalculate cached title width (cache invalidation after title change)
+        itn_decorations_recalc_title_width(current_canvas);
+
         // Refresh with new directory
         refresh_canvas_from_directory(current_canvas, current_canvas->path);
 

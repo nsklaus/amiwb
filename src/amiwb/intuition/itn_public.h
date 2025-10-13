@@ -251,6 +251,7 @@ void itn_composite_update_canvas_pixmap(Canvas *canvas);
 // --- Decoration and hit testing ---
 int hit_test(Canvas *canvas, int x, int y);
 void handle_window_controls(Canvas *canvas, XButtonEvent *event);
+void itn_decorations_recalc_title_width(Canvas *canvas);
 
 // --- Client window management ---
 bool should_skip_framing(Window win, XWindowAttributes *attrs);

@@ -78,6 +78,7 @@ void itn_decorations_update_title(Canvas *canvas, const char *title) {
 // Public API to recalculate title width (called from canvas creation)
 void itn_decorations_recalc_title_width(Canvas *canvas) {
     update_title_width_cache(canvas);
+    itn_decorations_update_visibility(canvas);  // Auto-update visibility after width change
 }
 
 // Update title visibility based on available space (Module Encapsulation - AWP compliant)
@@ -86,8 +87,9 @@ void itn_decorations_update_visibility(Canvas *canvas) {
 
     // Calculate available space for title
     // Title starts at x=50, right buttons start at x=(width-91)
-    // Available space: (width-91) - 50 = width - 141
-    int title_space = canvas->width - 141;
+    // Add 20px padding before buttons to avoid collision
+    // Available space: (width-91) - 50 - 20 = width - 161
+    int title_space = canvas->width - 161;
 
     // Update visibility based on cached title width
     canvas->show_title = (canvas->title_width <= title_space);

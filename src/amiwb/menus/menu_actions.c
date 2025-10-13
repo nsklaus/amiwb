@@ -662,11 +662,14 @@ void trigger_parent_action(void) {
             
             // Update window title
             const char *dir_name = strrchr(parent_path, '/');
-            if (dir_name && *(dir_name + 1)) dir_name++; 
+            if (dir_name && *(dir_name + 1)) dir_name++;
             else dir_name = parent_path;
             if (active_window->title_base) free(active_window->title_base);
             active_window->title_base = strdup(dir_name);
-            
+
+            // Recalculate cached title width (cache invalidation after title change)
+            itn_decorations_recalc_title_width(active_window);
+
             // Refresh with parent directory
             refresh_canvas_from_directory(active_window, parent_path);
             

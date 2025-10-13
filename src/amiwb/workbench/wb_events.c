@@ -206,6 +206,9 @@ void workbench_handle_button_press(XButtonEvent *event) {
             Time click_time = event->time;
 
             if (icon->type == TYPE_DRAWER || icon->type == TYPE_DEVICE) {
+                // Suppress desktop deactivation - newly created window should stay active
+                // Pattern: Same as iconified window restoration (prevents race with queued events)
+                suppress_desktop_deactivate_for_ms(200);
                 open_directory(icon, canvas);
                 // Icon is now freed, don't access it
             } else if (icon->type == TYPE_FILE) {

@@ -398,27 +398,37 @@ static void render_window_title(Canvas *canvas, RenderContext *ctx, Picture dest
         const char *display_title = canvas->title_change ? canvas->title_change : canvas->title_base;
         if (!display_title) display_title = "Untitled";  // Fallback if both are NULL
 
-        // Title visibility is updated when width changes (see itn_geometry.c)
-        // Only render title if it fits
-        if (canvas->show_title) {
-            int text_y = (BORDER_HEIGHT_TOP + title_font->ascent - title_font->descent) / 2 + title_font->descent;
+        int text_y = (BORDER_HEIGHT_TOP + title_font->ascent - title_font->descent) / 2 + title_font->descent;
 
-            if (canvas->client_win == None) {
-                // Workbench windows: draw to buffer using cached XftDraw
-                if (canvas->xft_draw) {
-                    XftDrawStringUtf8(canvas->xft_draw, &text_col, title_font, 50, text_y-4,
-                                    (FcChar8 *)display_title, strlen(display_title));
-                }
-            } else {
-                // Client windows: draw directly to window, not buffer
-                // Create cached XftDraw for direct window drawing if needed
-                if (!canvas->xft_draw) {
-                    canvas->xft_draw = XftDrawCreate(ctx->dpy, canvas->win, canvas->visual, canvas->colormap);
-                }
-                if (canvas->xft_draw) {
-                    XftDrawStringUtf8(canvas->xft_draw, &text_col, title_font, 50, text_y-4,
-                                    (FcChar8 *)display_title, strlen(display_title));
-                }
+        // Prepare display string: full title or truncated with ".."
+        const char *render_title = display_title;
+        char truncated[256];
+        if (!canvas->show_title && canvas->title_width > 0) {
+            // Title doesn't fit - truncate with ".."
+            int available = canvas->width - 161;  // Space before buttons with padding
+            int title_len = strlen(display_title);
+            int fit_chars = (available * title_len) / canvas->title_width - 2;
+            if (fit_chars > 0 && fit_chars < title_len) {
+                snprintf(truncated, sizeof(truncated), "%.*s..", fit_chars, display_title);
+                render_title = truncated;
+            }
+        }
+
+        if (canvas->client_win == None) {
+            // Workbench windows: draw to buffer using cached XftDraw
+            if (canvas->xft_draw) {
+                XftDrawStringUtf8(canvas->xft_draw, &text_col, title_font, 50, text_y-4,
+                                (FcChar8 *)render_title, strlen(render_title));
+            }
+        } else {
+            // Client windows: draw directly to window, not buffer
+            // Create cached XftDraw for direct window drawing if needed
+            if (!canvas->xft_draw) {
+                canvas->xft_draw = XftDrawCreate(ctx->dpy, canvas->win, canvas->visual, canvas->colormap);
+            }
+            if (canvas->xft_draw) {
+                XftDrawStringUtf8(canvas->xft_draw, &text_col, title_font, 50, text_y-4,
+                                (FcChar8 *)render_title, strlen(render_title));
             }
         }
         XftColorFree(ctx->dpy, canvas->visual, canvas->colormap, &text_col);
