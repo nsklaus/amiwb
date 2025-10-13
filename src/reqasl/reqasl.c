@@ -24,6 +24,24 @@
 #include <ctype.h>
 #include <errno.h>
 
+// ============================================================================
+// Mouse Multiselection State (module-private)
+// ============================================================================
+
+static bool multiselect_pending = false;           // Button pressed, awaiting 10px threshold
+static bool multiselect_active = false;            // Threshold crossed, drawing active
+static int multiselect_start_x = 0;                // Initial click position
+static int multiselect_start_y = 0;
+static int multiselect_current_x = 0;              // Current mouse position
+static int multiselect_current_y = 0;
+static ReqASL *multiselect_target = NULL;          // ReqASL instance where selection is happening
+
+// ============================================================================
+// Forward Declarations
+// ============================================================================
+
+static void draw_window(ReqASL *req);
+
 // Initialize log file with timestamp header (overwrites previous log)
 static void reqasl_log_init(void) {
     const char *home = getenv("HOME");
@@ -81,13 +99,157 @@ void log_error(const char *format, ...) {
 
 // Note: Colors are now defined in config.h (BLACK, WHITE, GRAY, BLUE)
 
+// ============================================================================
+// Mouse Multiselection Functions (module-private)
+// ============================================================================
+
+// Start multiselection - activates rectangle drawing
+static void multiselect_start(ReqASL *req) {
+    if (!req || multiselect_active) return;
+    multiselect_active = true;
+}
+
+// Update file selection based on rectangle bounds (live updates)
+static void multiselect_update_selection(ReqASL *req, int x1, int y1, int x2, int y2) {
+    if (!req || !req->listview) return;
+
+    ListView *lv = req->listview;
+
+    // Normalize rectangle bounds
+    int left = (x1 < x2) ? x1 : x2;
+    int top = (y1 < y2) ? y1 : y2;
+    int right = (x1 < x2) ? x2 : x1;
+    int bottom = (y1 < y2) ? y2 : y1;
+
+    // Clear all selections first
+    listview_clear_selection(lv);
+
+    // Check each visible item for intersection
+    for (int i = 0; i < lv->item_count; i++) {
+        // Calculate item bounds in screen coordinates
+        int item_y = lv->y + 2 + (i - lv->scroll_offset) * LISTVIEW_ITEM_HEIGHT;
+
+        // Skip items outside visible area
+        if (i < lv->scroll_offset || i >= lv->scroll_offset + lv->visible_items) {
+            continue;
+        }
+
+        int item_x = lv->x + 6;  // Text starts at x+6
+        int item_w = lv->width - LISTVIEW_SCROLLBAR_WIDTH - 8;
+        int item_h = LISTVIEW_ITEM_HEIGHT;
+
+        // Rectangle intersection test
+        bool intersects = !(item_x + item_w < left || item_x > right ||
+                           item_y + item_h < top || item_y > bottom);
+
+        if (intersects) {
+            lv->selected[i] = true;
+            lv->selection_count++;
+        }
+    }
+}
+
+// Update rectangle position as mouse moves
+static void multiselect_update(ReqASL *req, int x, int y) {
+    if (!req || !multiselect_active) return;
+
+    // Save current mouse position
+    multiselect_current_x = x;
+    multiselect_current_y = y;
+
+    // Update file selection based on current rectangle
+    multiselect_update_selection(req, multiselect_start_x, multiselect_start_y, x, y);
+
+    // Redraw window to show updated rectangle and selection
+    draw_window(req);
+}
+
+// End multiselection and cleanup
+static void multiselect_end(void) {
+    if (!multiselect_active) return;
+
+    ReqASL *target = multiselect_target;
+
+    // Reset state flags
+    multiselect_active = false;
+    multiselect_pending = false;
+    multiselect_target = NULL;
+
+    // Redraw to remove rectangle
+    if (target) {
+        draw_window(target);
+    }
+}
+
+// ============================================================================
+// Selection Rectangle Drawing
+// ============================================================================
+
+// Draw selection rectangle using XRender (called from draw_window)
+static void draw_selection_rect(ReqASL *req) {
+    if (!req || !multiselect_active || req != multiselect_target) return;
+
+    Display *dpy = req->display;
+    Drawable d = req->window;
+    if (!dpy || d == None) return;
+
+    Visual *visual = DefaultVisual(dpy, DefaultScreen(dpy));
+
+    // Normalize coordinates (ensure x1 < x2, y1 < y2)
+    int x1 = multiselect_start_x;
+    int y1 = multiselect_start_y;
+    int x2 = multiselect_current_x;
+    int y2 = multiselect_current_y;
+
+    if (x1 > x2) { int tmp = x1; x1 = x2; x2 = tmp; }
+    if (y1 > y2) { int tmp = y1; y1 = y2; y2 = tmp; }
+
+    int w = x2 - x1;
+    int h = y2 - y1;
+    if (w < 2 || h < 2) return;  // Skip tiny rectangles
+
+    // Get XRender format for alpha blending
+    XRenderPictFormat *format = XRenderFindVisualFormat(dpy, visual);
+    if (!format) return;
+
+    Picture dest = XRenderCreatePicture(dpy, d, format, 0, NULL);
+    if (dest == None) return;
+
+    // Convert percentage to XRender alpha and premultiply RGB
+    unsigned short fill_alpha = (SELECTION_RECT_ALPHA_FILL * 0xFFFF) / 100;
+    unsigned short outline_alpha = (SELECTION_RECT_ALPHA_OUTLINE * 0xFFFF) / 100;
+
+    float fill_alpha_norm = (float)SELECTION_RECT_ALPHA_FILL / 100.0f;
+    float outline_alpha_norm = (float)SELECTION_RECT_ALPHA_OUTLINE / 100.0f;
+
+    // Fill rectangle with transparent SELECT color
+    XRenderColor fill_color = {
+        (unsigned short)(SELECTION_RECT_FILL_COLOR.red * fill_alpha_norm),
+        (unsigned short)(SELECTION_RECT_FILL_COLOR.green * fill_alpha_norm),
+        (unsigned short)(SELECTION_RECT_FILL_COLOR.blue * fill_alpha_norm),
+        fill_alpha
+    };
+    XRenderFillRectangle(dpy, PictOpOver, dest, &fill_color, x1, y1, w, h);
+
+    // Draw outline with different opacity
+    XRenderColor outline_color = {
+        (unsigned short)(SELECTION_RECT_OUTLINE_COLOR.red * outline_alpha_norm),
+        (unsigned short)(SELECTION_RECT_OUTLINE_COLOR.green * outline_alpha_norm),
+        (unsigned short)(SELECTION_RECT_OUTLINE_COLOR.blue * outline_alpha_norm),
+        outline_alpha
+    };
+    XRenderFillRectangle(dpy, PictOpOver, dest, &outline_color, x1, y1, w, 1);      // Top
+    XRenderFillRectangle(dpy, PictOpOver, dest, &outline_color, x1, y2-1, w, 1);    // Bottom
+    XRenderFillRectangle(dpy, PictOpOver, dest, &outline_color, x1, y1, 1, h);      // Left
+    XRenderFillRectangle(dpy, PictOpOver, dest, &outline_color, x2-1, y1, 1, h);    // Right
+
+    XRenderFreePicture(dpy, dest);
+}
+
 // Forward declarations
 static void free_entries(ReqASL *req);
 static void scan_directory(ReqASL *req, const char *path);
 static void draw_window(ReqASL *req);
-static void draw_list_view(ReqASL *req, Picture dest);
-static void handle_list_click(ReqASL *req, int y);
-static void handle_list_double_click(ReqASL *req, int y);
 static int compare_entries(const void *a, const void *b);
 static void listview_select_callback(int index, const char *text, void *user_data);
 static void listview_double_click_callback(int index, const char *text, void *user_data);
@@ -117,18 +279,16 @@ ReqASL* reqasl_create(Display *display) {
     req->is_open = false;
     req->show_hidden = false;
     req->selected_index = -1;
-    req->scroll_offset = 0;
-    
+
     // Initialize button press states
     req->open_button_pressed = false;
     req->volumes_button_pressed = false;
     req->parent_button_pressed = false;
     req->cancel_button_pressed = false;
-    
+
     // Calculate list area (at top, takes most space)
     req->list_y = MARGIN;
     req->list_height = req->height - MARGIN - (3 * INPUT_HEIGHT) - (4 * SPACING) - BUTTON_HEIGHT - MARGIN;
-    req->visible_items = req->list_height / LISTVIEW_ITEM_HEIGHT;
     
     // Create ListView widget
     req->listview = listview_create(MARGIN, req->list_y, 
@@ -319,7 +479,7 @@ static void reqasl_update_menu_data(ReqASL *req) {
     const char *show_hidden_state = req->show_hidden ? "[o]" : "[x]";
 
     snprintf(menu_data, sizeof(menu_data),
-            "File:Open #O|Edit:New Drawer,Rename,Delete,Select Files #A,Select None #Z|View:By Names,By Date,%s Show Hidden #H|Locations:Add Place,Del Place",
+            "File:Open #O,Quit #Q|Edit:New Drawer,Rename,Delete,Select Files #A,Select None #Z|View:By Names,By Date,%s Show Hidden #H|Locations:Add Place,Del Place",
             show_hidden_state);
 
     // Update the property
@@ -433,7 +593,11 @@ static void reqasl_update_menu_states(ReqASL *req) {
     int written = snprintf(p, remaining, "0,0,%d;", has_selection ? 1 : 0);  // File > Open
     p += written;
     remaining -= written;
-    
+
+    written = snprintf(p, remaining, "0,1,1;");  // File > Quit (always enabled)
+    p += written;
+    remaining -= written;
+
     // Edit menu (index 1)
     // New Drawer (0): Disabled (not implemented yet)
     // Rename (1): Disabled for now (needs dialog)
@@ -540,9 +704,10 @@ void reqasl_show(ReqASL *req, const char *initial_path) {
     
     // Initial draw
     draw_window(req);
-    
-    // Set initial menu states
-    reqasl_update_menu_states(req);
+
+    // Set initial menu data and states
+    reqasl_update_menu_data(req);    // Send menu structure with checkmarks
+    reqasl_update_menu_states(req);  // Send enabled/disabled states
 }
 
 void reqasl_hide(ReqASL *req) {
@@ -611,7 +776,6 @@ static void navigate_internal(ReqASL *req, const char *path, bool update_env) {
         }
         
         req->selected_index = -1;
-        req->scroll_offset = 0;
         scan_directory(req, req->current_path);  // Use copied path, not original which may be freed
         // Scanned directory
         if (req->listview) {
@@ -1027,9 +1191,8 @@ static void build_locations_view(ReqASL *req) {
     req->entry_capacity = place_count;
     req->showing_locations = true;
 
-    // Reset selection and scroll
+    // Reset selection
     req->selected_index = -1;
-    req->scroll_offset = 0;
 }
 
 // Add current directory to user places in user-dirs.dirs
@@ -1241,35 +1404,12 @@ static void draw_window(ReqASL *req) {
     XRenderFillRectangle(req->display, PictOpSrc, dest, &gray, 
                         0, 0, req->width, req->height);
     
-    // Draw ListView widget if available, otherwise fallback to old rendering
+    // Draw ListView widget
     if (req->listview) {
         listview_draw(req->listview, req->display, dest, temp_xft_draw, req->font);
     } else {
-        // Fallback to old manual rendering
-        int list_x = MARGIN;
-        int list_w = req->width - MARGIN * 2;
-        
-        // Inset border for list
-        XRenderColor black = BLACK;
-        XRenderColor white = WHITE;
-        XRenderColor dark = {0x5555, 0x5555, 0x5555, 0xffff};  // Dark gray for border
-        XRenderFillRectangle(req->display, PictOpSrc, dest, &dark, 
-                            list_x, req->list_y, list_w, req->list_height);
-        XRenderFillRectangle(req->display, PictOpSrc, dest, &black,
-                            list_x+1, req->list_y+1, 1, req->list_height-2);
-        XRenderFillRectangle(req->display, PictOpSrc, dest, &black,
-                            list_x+1, req->list_y+1, list_w-2, 1);
-        XRenderFillRectangle(req->display, PictOpSrc, dest, &white,
-                            list_x+list_w-2, req->list_y+1, 1, req->list_height-2);
-        XRenderFillRectangle(req->display, PictOpSrc, dest, &white,
-                            list_x+1, req->list_y+req->list_height-2, list_w-2, 1);
-        
-        // Gray background for list content (Amiga style)
-        XRenderFillRectangle(req->display, PictOpSrc, dest, &gray,
-                            list_x+2, req->list_y+2, list_w-4, req->list_height-4);
-        
-        // Draw list items
-        draw_list_view(req, dest);
+        // ListView creation failed - this should never happen
+        log_error("[ERROR] ListView widget not available in draw_window()");
     }
     
     // Draw input field labels if we have font
@@ -1423,117 +1563,11 @@ static void draw_window(ReqASL *req) {
     XftDrawDestroy(temp_xft_draw);
     XRenderFreePicture(req->display, dest);
     XFreePixmap(req->display, pixmap);
+
+    // Draw multiselection rectangle on top (after window is drawn)
+    draw_selection_rect(req);
+
     XFlush(req->display);
-}
-
-static void draw_list_view(ReqASL *req, Picture dest) {
-    if (!req || !req->entries) return;
-    
-    int list_x = MARGIN + 4;
-    int list_y = req->list_y + 4;
-    int list_w = req->width - MARGIN * 2 - 8;
-    
-    // Set up text color if we have font
-    XftColor text_color, white_color;
-    if (req->font && req->xft_draw) {
-        XRenderColor black = BLACK;
-        XRenderColor white = WHITE;
-        XftColorAllocValue(req->display, DefaultVisual(req->display, DefaultScreen(req->display)),
-                          DefaultColormap(req->display, DefaultScreen(req->display)),
-                          &black, &text_color);
-        XftColorAllocValue(req->display, DefaultVisual(req->display, DefaultScreen(req->display)),
-                          DefaultColormap(req->display, DefaultScreen(req->display)),
-                          &white, &white_color);
-    }
-    
-    // Draw visible items
-    for (int i = 0; i < req->visible_items && i + req->scroll_offset < req->entry_count; i++) {
-        int idx = i + req->scroll_offset;
-        FileEntry *entry = req->entries[idx];
-        
-        int item_y = list_y + i * LIST_ITEM_HEIGHT;
-        
-        // Highlight selected item
-        if (idx == req->selected_index) {
-            XRenderColor blue = BLUE;
-            XRenderFillRectangle(req->display, PictOpSrc, dest, &blue,
-                               list_x, item_y, list_w, LIST_ITEM_HEIGHT);
-        }
-        
-        // Draw item name if we have font (no icon squares)
-        if (req->font && req->xft_draw && entry->name) {
-            int text_x = list_x + 4;  // Small left padding
-            int text_y = item_y + (LIST_ITEM_HEIGHT + req->font->ascent - req->font->descent) / 2;
-            
-            // Choose text color based on type and selection:
-            // - Selected items always use white
-            // - Directories use white (unless selected)
-            // - Files use black (unless selected)
-            XftColor *color;
-            if (idx == req->selected_index) {
-                color = &white_color;  // White text on blue background
-            } else if (entry->type == TYPE_DRAWER) {
-                color = &white_color;  // White text for directories
-            } else {
-                color = &text_color;   // Black text for files
-            }
-            
-            XftDrawStringUtf8(req->xft_draw, color, req->font,
-                             text_x, text_y,
-                             (FcChar8*)entry->name, strlen(entry->name));
-        }
-    }
-    
-    // Free colors if allocated
-    if (req->font && req->xft_draw) {
-        XftColorFree(req->display, DefaultVisual(req->display, DefaultScreen(req->display)),
-                    DefaultColormap(req->display, DefaultScreen(req->display)), &text_color);
-        XftColorFree(req->display, DefaultVisual(req->display, DefaultScreen(req->display)),
-                    DefaultColormap(req->display, DefaultScreen(req->display)), &white_color);
-    }
-}
-
-static void handle_list_click(ReqASL *req, int y) {
-    if (!req) return;
-    
-    int relative_y = y - req->list_y - 4;
-    if (relative_y < 0) return;
-    
-    int item_index = relative_y / LIST_ITEM_HEIGHT;
-    int absolute_index = item_index + req->scroll_offset;
-    
-    if (absolute_index >= 0 && absolute_index < req->entry_count) {
-        req->selected_index = absolute_index;
-        
-        // Update file field with selection
-        FileEntry *entry = req->entries[absolute_index];
-        if (entry->type == TYPE_FILE) {
-            snprintf(req->file_text, PATH_SIZE, "%s", entry->name);
-        }
-        
-        draw_window(req);
-    }
-}
-
-static void handle_list_double_click(ReqASL *req, int y) {
-    if (!req) return;
-    
-    handle_list_click(req, y);
-    
-    if (req->selected_index >= 0 && req->selected_index < req->entry_count) {
-        FileEntry *entry = req->entries[req->selected_index];
-        
-        if (entry->type == TYPE_DRAWER) {
-            // Navigate into directory
-            reqasl_navigate_to(req, entry->path);
-        } else {
-            // Open file
-            if (req->on_open) {
-                req->on_open(entry->path);
-            }
-            reqasl_hide(req);
-        }
-    }
 }
 
 // Helper function to execute the appropriate action based on current ReqASL state
@@ -2070,27 +2104,22 @@ bool reqasl_handle_event(ReqASL *req, XEvent *event) {
                 // Handle ListView click if available
                 if (req->listview) {
                     // Use the time-aware click handler for proper double-click detection
-                    if (listview_handle_click_with_time(req->listview, x, y, 
-                                                       event->xbutton.state, 
+                    bool click_handled = listview_handle_click_with_time(req->listview, x, y,
+                                                       event->xbutton.state,
                                                        event->xbutton.time,
                                                        req->display,
-                                                       req->font)) {
-                        draw_window(req);
-                        return true;
-                    }
-                } else {
-                    // Fallback to old list handling
-                    if (x >= MARGIN && x < req->width - MARGIN &&
-                        y >= req->list_y && y < req->list_y + req->list_height) {
-                        
-                        // Check for double-click (simplified - would need timing)
-                        static Time last_click = 0;
-                        if (event->xbutton.time - last_click < 500) {
-                            handle_list_double_click(req, y);
-                        } else {
-                            handle_list_click(req, y);
+                                                       req->font);
+
+                    if (click_handled) {
+                        // Check if ListView cleared selection or has no selection (empty space click)
+                        if (req->listview->selected_index == -1) {
+                            // Empty space was clicked - start multiselection
+                            multiselect_pending = true;
+                            multiselect_start_x = x;
+                            multiselect_start_y = y;
+                            multiselect_target = req;
                         }
-                        last_click = event->xbutton.time;
+                        draw_window(req);
                         return true;
                     }
                 }
@@ -2137,6 +2166,30 @@ req->open_button_pressed = true;
                     return true;
                 }
             }
+
+            // Handle multiselection motion
+            if (req == multiselect_target && (multiselect_pending || multiselect_active)) {
+                int x = event->xmotion.x;
+                int y = event->xmotion.y;
+
+                // Check 10px threshold before activating
+                if (multiselect_pending && !multiselect_active) {
+                    int dx = x - multiselect_start_x;
+                    int dy = y - multiselect_start_y;
+
+                    // Require 10 pixel movement (prevents accidental activation)
+                    if (dx*dx + dy*dy >= 10*10) {
+                        // Threshold crossed - activate multiselection
+                        multiselect_start(req);
+                    }
+                }
+
+                // Update rectangle if active
+                if (multiselect_active) {
+                    multiselect_update(req, x, y);
+                    return true;
+                }
+            }
             break;
             
         case ButtonRelease:
@@ -2147,7 +2200,20 @@ req->open_button_pressed = true;
                     return true;
                 }
             }
-            
+
+            // Handle multiselection release
+            if (req == multiselect_target && (multiselect_pending || multiselect_active)) {
+                if (multiselect_active) {
+                    // Active state - complete selection
+                    multiselect_end();
+                } else {
+                    // Pending state - below threshold, just clear flags
+                    multiselect_pending = false;
+                    multiselect_target = NULL;
+                }
+                // Note: Don't return here - let button handling proceed
+            }
+
             // Handle button clicks on release
             if (event->xbutton.button == Button1) {
                 int x = event->xbutton.x;
@@ -2586,10 +2652,9 @@ req->open_button_pressed = true;
                     req->height = new_height;
                     
                     // Recalculate list area height (grows with window)
-                    req->list_height = req->height - MARGIN - (3 * INPUT_HEIGHT) - 
+                    req->list_height = req->height - MARGIN - (3 * INPUT_HEIGHT) -
                                       (4 * SPACING) - BUTTON_HEIGHT - MARGIN;
-                    req->visible_items = req->list_height / LIST_ITEM_HEIGHT;
-                    
+
                     // Update ListView dimensions
                     if (req->listview) {
                         req->listview->width = req->width - 2 * MARGIN;
@@ -2649,6 +2714,9 @@ req->open_button_pressed = true;
                     switch (item_index) {
                         case 0:  // Open - same as OK button/double-click
                             reqasl_execute_action(req);
+                            break;
+                        case 1:  // Quit
+                            req->is_open = false;
                             break;
                     }
                 }

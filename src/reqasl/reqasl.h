@@ -39,9 +39,7 @@ typedef struct ReqASL {
     int entry_capacity;
     
     // Selection state
-    int selected_index;
-    int scroll_offset;
-    int visible_items;
+    int selected_index;  // Synchronized with ListView via callbacks
     
     // Input fields
     char pattern_text[NAME_SIZE];     // Pattern filter

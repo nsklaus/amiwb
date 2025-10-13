@@ -44,6 +44,9 @@ install: $(EXEC) $(HOOK)
 	mkdir -p /usr/local/lib
 	cp $(HOOK) /usr/local/lib/reqasl_hook.so.new
 	mv /usr/local/lib/reqasl_hook.so.new /usr/local/lib/reqasl_hook.so
+	cp ../../libamiwb.so /usr/local/lib/libamiwb.so.new
+	mv /usr/local/lib/libamiwb.so.new /usr/local/lib/libamiwb.so
+	ldconfig
 	@echo "ReqASL installed"
 
 # Uninstall target

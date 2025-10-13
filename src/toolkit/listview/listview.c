@@ -549,7 +549,7 @@ bool listview_handle_scroll(ListView *lv, int direction) {
 
 void listview_draw(ListView *lv, Display *dpy, Picture dest, XftDraw *xft_draw, XftFont *font) {
     if (!lv || !dpy) return;
-    
+
     int x = lv->x;
     int y = lv->y;
     int w = lv->width;
@@ -581,19 +581,30 @@ void listview_draw(ListView *lv, Display *dpy, Picture dest, XftDraw *xft_draw, 
             int item_index = i + lv->scroll_offset;
             int item_y = y + 2 + i * LISTVIEW_ITEM_HEIGHT;
             
-            // Draw selection background
+            // Measure text width first (needed for both selection and drawing)
+            const char *text = lv->items[item_index].text;
+            int text_len = strlen(text);
+            XGlyphInfo text_extents;
+            XftTextExtentsUtf8(dpy, font, (FcChar8*)text, text_len, &text_extents);
+
+            // Draw selection background (only around text + padding)
             bool is_selected = false;
             if (lv->multi_select_enabled && lv->selected[item_index]) {
                 is_selected = true;
             } else if (!lv->multi_select_enabled && item_index == lv->selected_index) {
                 is_selected = true;
             }
-            
+
             if (is_selected) {
-                XRenderFillRectangle(dpy, PictOpSrc, dest, &blue, 
-                                   x+2, item_y, content_width, LISTVIEW_ITEM_HEIGHT);
+                // Selection background stops after text + small padding (6px)
+                int sel_width = text_extents.width + 6;
+                int max_sel_width = content_width - 4;  // Don't exceed content area
+                if (sel_width > max_sel_width) sel_width = max_sel_width;
+
+                XRenderFillRectangle(dpy, PictOpSrc, dest, &blue,
+                                   x+6, item_y, sel_width, LISTVIEW_ITEM_HEIGHT);
             }
-            
+
             // Draw text
             XftColor text_color;
             XRenderColor color;
@@ -616,12 +627,8 @@ void listview_draw(ListView *lv, Display *dpy, Picture dest, XftDraw *xft_draw, 
             
             // Calculate maximum text width to prevent drawing into scrollbar
             int max_text_width = list_content_width - 8;  // Account for padding
-            
-            // Measure the text to see if we need to truncate
-            const char *text = lv->items[item_index].text;
-            int text_len = strlen(text);
-            XGlyphInfo text_extents;
-            XftTextExtentsUtf8(dpy, font, (FcChar8*)text, text_len, &text_extents);
+
+            // text, text_len, and text_extents already measured above for selection background
             
             // If text fits, draw it all; otherwise truncate cleanly
             if (text_extents.width <= max_text_width) {

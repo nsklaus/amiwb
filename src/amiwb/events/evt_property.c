@@ -97,8 +97,16 @@ void handle_property_notify(XPropertyEvent *event) {
     // Check if this is our custom title change property
     Atom amiwb_title_change = XInternAtom(dpy, "_AMIWB_TITLE_CHANGE", False);
     Atom amiwb_menu_states = XInternAtom(dpy, "_AMIWB_MENU_STATES", False);
+    Atom amiwb_menu_data = XInternAtom(dpy, "_AMIWB_MENU_DATA", False);
 
-    // Handle menu state changes
+    // Handle menu data changes (checkmarks, new items)
+    if (event->atom == amiwb_menu_data && event->state == PropertyNewValue) {
+        // Re-read and re-parse menu data to pick up checkmark changes
+        check_for_app_menus(event->window);
+        return;
+    }
+
+    // Handle menu state changes (enabled/disabled)
     if (event->atom == amiwb_menu_states) {
         // Call menu handler to update menu states
         handle_menu_state_change(event->window);
