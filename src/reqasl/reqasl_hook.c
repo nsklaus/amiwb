@@ -210,7 +210,12 @@ int gtk_dialog_run(void *dialog) {
         
         if (selected_file) {
             current_dialog.filename = selected_file;
-            current_dialog.response = GTK_RESPONSE_OK;
+            // Set correct response code based on action type (GTK convention)
+            // SAVE operations must return GTK_RESPONSE_ACCEPT, not GTK_RESPONSE_OK
+            // xfce4-screenshooter checks specifically for ACCEPT on save dialogs
+            current_dialog.response = (current_dialog.action == GTK_FILE_CHOOSER_ACTION_SAVE)
+                                     ? GTK_RESPONSE_ACCEPT
+                                     : GTK_RESPONSE_OK;
             // Set filename in GTK dialog
             if (!original_gtk_file_chooser_set_filename) {
                 original_gtk_file_chooser_set_filename = dlsym(RTLD_NEXT, "gtk_file_chooser_set_filename");
@@ -218,8 +223,8 @@ int gtk_dialog_run(void *dialog) {
             if (original_gtk_file_chooser_set_filename) {
                 original_gtk_file_chooser_set_filename(dialog, selected_file);
             }
-            
-            return GTK_RESPONSE_OK;
+
+            return current_dialog.response;
         } else {
             current_dialog.filename = NULL;
             current_dialog.response = GTK_RESPONSE_CANCEL;
