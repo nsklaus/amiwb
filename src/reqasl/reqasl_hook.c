@@ -81,6 +81,8 @@ typedef struct {
     char *initial_folder; // Initial directory for dialog
     char *initial_name;   // Initial filename for Save As
     int response;
+    int needs_reqasl;     // Flag: get_files() should launch ReqASL
+    int created_by_hook;  // Flag: 1=we created dialog, 0=app created it
 } DialogState;
 
 static DialogState current_dialog = {0};
@@ -98,10 +100,16 @@ static void* (*original_gtk_file_chooser_get_filenames)(void *chooser) = NULL;
 static char* (*original_gtk_file_chooser_get_uri)(void *chooser) = NULL;
 static void* (*original_gtk_file_chooser_get_uris)(void *chooser) = NULL;
 static void* (*original_gtk_file_chooser_get_file)(void *chooser) = NULL;
+static void* (*original_gtk_file_chooser_get_files)(void *chooser) = NULL;
 static void (*original_gtk_file_chooser_set_current_folder)(void *chooser, const char *folder) = NULL;
 static void (*original_gtk_file_chooser_set_current_name)(void *chooser, const char *name) = NULL;
-static int (*original_gtk_file_chooser_set_filename)(void *chooser, const char *filename) = NULL;
+static void (*original_gtk_file_chooser_set_action)(void *chooser, int action) = NULL;
+static int (*original_gtk_file_chooser_get_action)(void *chooser) = NULL;
 static void (*original_gtk_widget_destroy)(void *widget) = NULL;
+static void (*original_gtk_widget_show)(void *widget) = NULL;
+static void (*original_gtk_widget_show_all)(void *widget) = NULL;
+static void (*original_gtk_window_present)(void *window) = NULL;
+static void (*original_gtk_widget_map)(void *widget) = NULL;
 
 // GIO (GFile) functions
 static void* (*original_g_file_new_for_path)(const char *path) = NULL;
@@ -109,8 +117,13 @@ static void* (*original_g_file_new_for_path)(const char *path) = NULL;
 // GLib (GSList) functions
 static void* (*original_g_slist_prepend)(void *list, void *data) = NULL;
 
-// GObject (signal) functions
-static void (*original_g_signal_emit_by_name)(void *instance, const char *signal_name, ...) = NULL;
+// GLib (signal) functions
+static unsigned long (*original_g_signal_connect_data)(void *instance, const char *signal, void *callback, void *data, void *destroy_data, int connect_flags) = NULL;
+
+// Captured callback for "response" signal
+typedef void (*ResponseCallback)(void *dialog, int response_id, void *user_data);
+static ResponseCallback captured_callback = NULL;
+static void *captured_user_data = NULL;
 
 // GTK3 Native Dialog API (GTK 3.20+)
 static void* (*original_gtk_file_chooser_native_new)(const char *title,
@@ -119,9 +132,15 @@ static void* (*original_gtk_file_chooser_native_new)(const char *title,
                                                        const char *accept_label,
                                                        const char *cancel_label) = NULL;
 static int (*original_gtk_native_dialog_run)(void *dialog) = NULL;
+static void (*original_gtk_native_dialog_show)(void *dialog) = NULL;
+
+// Forward declarations
+static char* launch_reqasl(int action, const char *title, const char *initial_folder, const char *initial_name);
+static int is_leafpad(void);
 
 // Launch ReqASL and get result
 static char* launch_reqasl(int action, const char *title, const char *initial_folder, const char *initial_name) {
+    (void)initial_name; // TODO: Pass to ReqASL when --filename support is added
 
     // Build command
     char command[1024];
@@ -197,18 +216,41 @@ static char* launch_reqasl(int action, const char *title, const char *initial_fo
         // Check for cancellation
         if (strncmp(result, "CANCEL", 6) == 0 || strlen(result) == 0) {
             pclose(fp);
-            log_error("[DEBUG] ReqASL cancelled");
             return NULL;
         }
 
         pclose(fp);
-        log_error("[DEBUG] ReqASL returned: %s", result);
         return strdup(result);
     }
 
     pclose(fp);
-    log_error("[DEBUG] ReqASL returned nothing");
     return NULL;
+}
+
+// Check if current process is leafpad
+static int is_leafpad(void) {
+    static int cached_result = -1;  // -1=not checked, 0=no, 1=yes
+
+    if (cached_result != -1) {
+        return cached_result;
+    }
+
+    // Read process name from /proc/self/exe
+    char exe_path[256];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+
+    if (len != -1) {
+        exe_path[len] = '\0';
+
+        // Check if path contains "leafpad"
+        if (strstr(exe_path, "leafpad") != NULL) {
+            cached_result = 1;
+            return 1;
+        }
+    }
+
+    cached_result = 0;
+    return 0;
 }
 
 // Hook: gtk_file_chooser_dialog_new
@@ -217,9 +259,7 @@ void* gtk_file_chooser_dialog_new(const char *title,
                                   int action,
                                   const char *first_button_text,
                                   ...) {
-
-    log_error("[DEBUG] gtk_file_chooser_dialog_new called: title='%s', action=%d",
-              title ? title : "NULL", action);
+    (void)first_button_text; // We build our own button list
 
     // Store dialog info
     current_dialog.action = action;
@@ -250,11 +290,13 @@ void* gtk_file_chooser_dialog_new(const char *title,
     // For GTK file chooser, typical args are:
     // "gtk-cancel", GTK_RESPONSE_CANCEL, "gtk-open", GTK_RESPONSE_ACCEPT, NULL
     void *dialog = NULL;
-    
+
     if (action == GTK_FILE_CHOOSER_ACTION_OPEN) {
+        // leafpad expects OK (-5), others expect ACCEPT (-3)
+        int open_response = is_leafpad() ? GTK_RESPONSE_OK : GTK_RESPONSE_ACCEPT;
         dialog = original_gtk_file_chooser_dialog_new(title, parent, action,
                                                       "_Cancel", GTK_RESPONSE_CANCEL,
-                                                      "_Open", GTK_RESPONSE_OK,
+                                                      "_Open", open_response,
                                                       NULL);
     } else if (action == GTK_FILE_CHOOSER_ACTION_SAVE) {
         dialog = original_gtk_file_chooser_dialog_new(title, parent, action,
@@ -269,59 +311,46 @@ void* gtk_file_chooser_dialog_new(const char *title,
     }
     
     va_end(args);
-    
+
     current_dialog.dialog = dialog;
+    current_dialog.created_by_hook = 1;  // We created this dialog
     return dialog;
 }
 
 // Hook: gtk_dialog_run
 int gtk_dialog_run(void *dialog) {
 
-    log_error("[DEBUG] gtk_dialog_run called: dialog=%p, our_dialog=%p",
-              dialog, current_dialog.dialog);
-
     // Check if this is our file chooser dialog
     if (dialog == current_dialog.dialog) {
-
-        log_error("[DEBUG] This is our dialog, launching ReqASL");
 
         // Launch ReqASL with stored initial folder and name
         char *selected_file = launch_reqasl(current_dialog.action, current_dialog.title,
                                             current_dialog.initial_folder, current_dialog.initial_name);
-        
+
         if (selected_file) {
+            // Store result - app will call get_filename() to retrieve it
             current_dialog.filename = selected_file;
-            // Use GTK_RESPONSE_ACCEPT for all actions (geany might expect this)
-            current_dialog.response = GTK_RESPONSE_ACCEPT;
 
-            // Set filename in GTK dialog
-            LOAD_ORIGINAL(gtk_file_chooser_set_filename);
-            if (original_gtk_file_chooser_set_filename) {
-                int success = original_gtk_file_chooser_set_filename(dialog, selected_file);
-                log_error("[DEBUG] gtk_file_chooser_set_filename returned: %d", success);
+            // Return response code that matches button mapping
+            // leafpad expects OK (-5) for OPEN, others expect ACCEPT (-3)
+            if (current_dialog.action == GTK_FILE_CHOOSER_ACTION_OPEN && is_leafpad()) {
+                current_dialog.response = GTK_RESPONSE_OK;
             } else {
-                log_error("[ERROR] Could not find gtk_file_chooser_set_filename");
+                current_dialog.response = GTK_RESPONSE_ACCEPT;
             }
 
-            // CRITICAL: Emit "response" signal so geany's signal handler fires
-            // This must happen BEFORE returning, while dialog is still alive
-            LOAD_ORIGINAL(g_signal_emit_by_name);
-            if (original_g_signal_emit_by_name) {
-                log_error("[DEBUG] Emitting 'response' signal with response=%d", current_dialog.response);
-                original_g_signal_emit_by_name(dialog, "response", current_dialog.response);
-                log_error("[DEBUG] Signal emitted successfully");
-            } else {
-                log_error("[ERROR] Could not find g_signal_emit_by_name");
-            }
-
+            log_error("[DEBUG] gtk_dialog_run: dialog=%p, stored filename='%s', returning response=%d",
+                     dialog, selected_file, current_dialog.response);
             return current_dialog.response;
         } else {
+            // User cancelled
             current_dialog.filename = NULL;
             current_dialog.response = GTK_RESPONSE_CANCEL;
+            log_error("[DEBUG] gtk_dialog_run: dialog=%p, user cancelled, returning CANCEL", dialog);
             return GTK_RESPONSE_CANCEL;
         }
     }
-    
+
     // Not our dialog, call original
     LOAD_ORIGINAL(gtk_dialog_run);
 
@@ -334,10 +363,10 @@ int gtk_dialog_run(void *dialog) {
 
 // Hook: gtk_file_chooser_get_filename
 char* gtk_file_chooser_get_filename(void *chooser) {
-    log_error("[DEBUG] get_filename: chooser=%p, dialog=%p, filename=%s, response=%d",
-              chooser, current_dialog.dialog,
-              current_dialog.filename ? current_dialog.filename : "NULL",
-              current_dialog.response);
+
+    log_error("[DEBUG] gtk_file_chooser_get_filename: chooser=%p, dialog=%p, filename='%s', response=%d",
+             chooser, current_dialog.dialog, current_dialog.filename ? current_dialog.filename : "(null)",
+             current_dialog.response);
 
     // If we have a valid filename from ReqASL, return it
     // NOTE: Not checking pointer equality because GObject interface casting
@@ -345,6 +374,7 @@ char* gtk_file_chooser_get_filename(void *chooser) {
     if (current_dialog.filename &&
         (current_dialog.response == GTK_RESPONSE_OK ||
          current_dialog.response == GTK_RESPONSE_ACCEPT)) {
+        log_error("[DEBUG] gtk_file_chooser_get_filename: RETURNING our filename='%s'", current_dialog.filename);
         return strdup(current_dialog.filename);
     }
 
@@ -352,18 +382,20 @@ char* gtk_file_chooser_get_filename(void *chooser) {
     LOAD_ORIGINAL(gtk_file_chooser_get_filename);
 
     if (original_gtk_file_chooser_get_filename) {
+        log_error("[DEBUG] gtk_file_chooser_get_filename: calling original GTK function");
         return original_gtk_file_chooser_get_filename(chooser);
     }
 
+    log_error("[DEBUG] gtk_file_chooser_get_filename: returning NULL");
     return NULL;
 }
 
 // Hook: gtk_file_chooser_get_filenames (returns GSList* of strings)
 void* gtk_file_chooser_get_filenames(void *chooser) {
-    log_error("[DEBUG] get_filenames: chooser=%p, dialog=%p, filename=%s, response=%d",
-              chooser, current_dialog.dialog,
-              current_dialog.filename ? current_dialog.filename : "NULL",
-              current_dialog.response);
+
+    log_error("[DEBUG] gtk_file_chooser_get_filenames: chooser=%p, dialog=%p, filename='%s', response=%d",
+             chooser, current_dialog.dialog, current_dialog.filename ? current_dialog.filename : "(null)",
+             current_dialog.response);
 
     // If we have a valid filename from ReqASL, return it as list
     // NOTE: Not checking pointer equality due to GObject interface casting
@@ -375,10 +407,10 @@ void* gtk_file_chooser_get_filenames(void *chooser) {
         LOAD_ORIGINAL(g_slist_prepend);
 
         if (original_g_slist_prepend) {
-            log_error("[DEBUG] Returning filename as list: %s", current_dialog.filename);
             // Create a GSList with one element (our filename)
             void *list = NULL;
             list = original_g_slist_prepend(list, strdup(current_dialog.filename));
+            log_error("[DEBUG] gtk_file_chooser_get_filenames: RETURNING list with our filename");
             return list;
         } else {
             log_error("[ERROR] Could not find g_slist_prepend");
@@ -390,10 +422,11 @@ void* gtk_file_chooser_get_filenames(void *chooser) {
     LOAD_ORIGINAL(gtk_file_chooser_get_filenames);
 
     if (original_gtk_file_chooser_get_filenames) {
-        log_error("[DEBUG] Calling original get_filenames");
+        log_error("[DEBUG] gtk_file_chooser_get_filenames: calling original GTK function");
         return original_gtk_file_chooser_get_filenames(chooser);
     }
 
+    log_error("[DEBUG] gtk_file_chooser_get_filenames: returning NULL");
     return NULL;
 }
 
@@ -434,28 +467,12 @@ void gtk_file_chooser_set_current_name(void *chooser, const char *name) {
 // Library constructor - runs when loaded
 __attribute__((constructor))
 static void init(void) {
-    // Initialize log file (append mode - preserves messages on multiple loads)
-    const char *log_path = "/home/klaus/Sources/amiwb/reqasl_hook.log";
-    FILE *log = fopen(log_path, "a");
-    if (log) {
-        time_t now = time(NULL);
-        fprintf(log, "\n========================================\n");
-        fprintf(log, "Hook library loaded: %s", ctime(&now));
-        fprintf(log, "========================================\n");
-        fclose(log);
-    }
-
-    // Test that log_error works
-    log_error("[DEBUG] Hook initialization complete");
-
     // Pre-load gtk_file_chooser_get_filename to ensure it's hooked properly
     LOAD_ORIGINAL(gtk_file_chooser_get_filename);
 }
 
 // Hook: gtk_file_chooser_get_uri
 char* gtk_file_chooser_get_uri(void *chooser) {
-    log_error("[DEBUG] get_uri: chooser=%p, dialog=%p",
-              chooser, current_dialog.dialog);
 
     // CRITICAL: Only return our URI if this is OUR hooked dialog
     if (chooser == current_dialog.dialog &&
@@ -479,8 +496,6 @@ char* gtk_file_chooser_get_uri(void *chooser) {
 
 // Hook: gtk_file_chooser_get_uris (returns GSList* of URI strings)
 void* gtk_file_chooser_get_uris(void *chooser) {
-    log_error("[DEBUG] get_uris: chooser=%p, dialog=%p",
-              chooser, current_dialog.dialog);
 
     // If we have a valid filename from ReqASL, return it as URI list
     // NOTE: Not checking pointer equality due to GObject interface casting
@@ -496,8 +511,6 @@ void* gtk_file_chooser_get_uris(void *chooser) {
             char uri[1024];
             snprintf(uri, sizeof(uri), "file://%s", current_dialog.filename);
 
-            log_error("[DEBUG] Returning URI as list: %s", uri);
-
             // Create a GSList with one URI element
             void *list = NULL;
             list = original_g_slist_prepend(list, strdup(uri));
@@ -512,7 +525,6 @@ void* gtk_file_chooser_get_uris(void *chooser) {
     LOAD_ORIGINAL(gtk_file_chooser_get_uris);
 
     if (original_gtk_file_chooser_get_uris) {
-        log_error("[DEBUG] Calling original get_uris");
         return original_gtk_file_chooser_get_uris(chooser);
     }
 
@@ -521,8 +533,6 @@ void* gtk_file_chooser_get_uris(void *chooser) {
 
 // Hook: gtk_file_chooser_get_file (GTK3 modern API - returns GFile*)
 void* gtk_file_chooser_get_file(void *chooser) {
-    log_error("[DEBUG] get_file: chooser=%p, dialog=%p",
-              chooser, current_dialog.dialog);
 
     // If we have a valid filename from ReqASL, create GFile from it
     // NOTE: Not checking pointer equality due to GObject interface casting
@@ -534,7 +544,6 @@ void* gtk_file_chooser_get_file(void *chooser) {
         LOAD_ORIGINAL(g_file_new_for_path);
 
         if (original_g_file_new_for_path) {
-            log_error("[DEBUG] Returning GFile: %s", current_dialog.filename);
             // Create and return GFile object (caller must g_object_unref() it)
             return original_g_file_new_for_path(current_dialog.filename);
         } else {
@@ -547,8 +556,62 @@ void* gtk_file_chooser_get_file(void *chooser) {
     LOAD_ORIGINAL(gtk_file_chooser_get_file);
 
     if (original_gtk_file_chooser_get_file) {
-        log_error("[DEBUG] Calling original get_file");
         return original_gtk_file_chooser_get_file(chooser);
+    }
+
+    return NULL;
+}
+
+// Hook: gtk_file_chooser_get_files (GTK3 modern API - returns GSList* of GFile*)
+void* gtk_file_chooser_get_files(void *chooser) {
+
+    // Check if this is for our hooked dialog (async apps call this via captured callback)
+    if (chooser == current_dialog.dialog || current_dialog.needs_reqasl) {
+
+        // Launch ReqASL to get user's actual file selection
+        char *selected_file = launch_reqasl(
+            current_dialog.action,
+            current_dialog.title,
+            current_dialog.initial_folder,
+            current_dialog.initial_name
+        );
+
+        if (selected_file) {
+            // User selected a file
+            current_dialog.filename = selected_file;
+            current_dialog.response = GTK_RESPONSE_OK;
+
+            // Create GFile for selected file
+            LOAD_ORIGINAL(g_file_new_for_path);
+            if (original_g_file_new_for_path) {
+                void *gfile = original_g_file_new_for_path(selected_file);
+
+                if (gfile) {
+                    // Return as GSList
+                    LOAD_ORIGINAL(g_slist_prepend);
+                    if (original_g_slist_prepend) {
+                        void *list = NULL;
+                        list = original_g_slist_prepend(list, gfile);
+                        return list;
+                    } else {
+                        log_error("[ERROR] Could not find g_slist_prepend");
+                    }
+                } else {
+                    log_error("[ERROR] g_file_new_for_path returned NULL");
+                }
+            } else {
+                log_error("[ERROR] Could not find g_file_new_for_path");
+            }
+        }
+
+        // User cancelled or error - return NULL
+        return NULL;
+    }
+
+    // Not our dialog, call original
+    LOAD_ORIGINAL(gtk_file_chooser_get_files);
+    if (original_gtk_file_chooser_get_files) {
+        return original_gtk_file_chooser_get_files(chooser);
     }
 
     return NULL;
@@ -556,18 +619,167 @@ void* gtk_file_chooser_get_file(void *chooser) {
 
 // Hook: gtk_widget_destroy
 void gtk_widget_destroy(void *widget) {
-    log_error("[DEBUG] gtk_widget_destroy: widget=%p, dialog=%p",
-              widget, current_dialog.dialog);
-
-    if (widget == current_dialog.dialog) {
-        log_error("[DEBUG] Our dialog is being destroyed!");
-    }
 
     LOAD_ORIGINAL(gtk_widget_destroy);
 
     if (original_gtk_widget_destroy) {
         original_gtk_widget_destroy(widget);
     }
+}
+
+// Hook: gtk_widget_show (for apps that show dialog without gtk_dialog_run)
+void gtk_widget_show(void *widget) {
+
+    // Check if this is our file chooser dialog being shown
+    if (widget == current_dialog.dialog) {
+
+        // Set flag for get_files() to launch ReqASL
+        current_dialog.needs_reqasl = 1;
+
+        // DON'T call original gtk_widget_show - dialog never appears!
+
+        // Call xed's callback directly with GTK_RESPONSE_OK
+        if (captured_callback) {
+            int response = (current_dialog.action == GTK_FILE_CHOOSER_ACTION_OPEN)
+                           ? GTK_RESPONSE_OK
+                           : GTK_RESPONSE_ACCEPT;
+
+            captured_callback(widget, response, captured_user_data);
+
+        } else {
+            log_error("[ERROR] No callback captured - cannot trigger file loading!");
+        }
+
+        return;
+    }
+
+    // Not our dialog, call original
+    LOAD_ORIGINAL(gtk_widget_show);
+
+    if (original_gtk_widget_show) {
+        original_gtk_widget_show(widget);
+    }
+}
+
+// Hook: gtk_widget_show_all (recursively shows widget and all children)
+void gtk_widget_show_all(void *widget) {
+
+    // Check if this is our file chooser dialog being shown
+    if (widget == current_dialog.dialog) {
+        // Block this too - don't show the dialog
+        return;
+    }
+
+    // Not our dialog, call original
+    LOAD_ORIGINAL(gtk_widget_show_all);
+
+    if (original_gtk_widget_show_all) {
+        original_gtk_widget_show_all(widget);
+    }
+}
+
+// Hook: gtk_window_present (brings window to front and shows it)
+void gtk_window_present(void *window) {
+
+    // Check if this is our file chooser dialog
+    if (window == current_dialog.dialog) {
+        // Don't call original - dialog should not be presented
+        // Signal was already emitted in gtk_widget_show()
+        return;
+    }
+
+    // Not our dialog, call original
+    LOAD_ORIGINAL(gtk_window_present);
+
+    if (original_gtk_window_present) {
+        original_gtk_window_present(window);
+    }
+}
+
+// Hook: gtk_widget_map (maps widget to X11 window)
+void gtk_widget_map(void *widget) {
+
+    // Check if this is our file chooser dialog
+    if (widget == current_dialog.dialog) {
+        // Block this - don't map the dialog
+        return;
+    }
+
+    // Not our dialog, call original
+    LOAD_ORIGINAL(gtk_widget_map);
+
+    if (original_gtk_widget_map) {
+        original_gtk_widget_map(widget);
+    }
+}
+
+// ============================================================================
+// GLib Signal Hook (capture xed's response callback)
+// ============================================================================
+
+// Hook: g_signal_connect_data (captures callback when xed connects "response" signal)
+unsigned long g_signal_connect_data(void *instance, const char *signal, void *callback,
+                                     void *data, void *destroy_data, int connect_flags) {
+    // Check if this is the "response" signal on our dialog
+    if (instance == current_dialog.dialog && signal && strcmp(signal, "response") == 0) {
+        captured_callback = (ResponseCallback)callback;
+        captured_user_data = data;
+    }
+
+    // Call original to actually connect the signal
+    LOAD_ORIGINAL(g_signal_connect_data);
+    if (original_g_signal_connect_data) {
+        return original_g_signal_connect_data(instance, signal, callback, data, destroy_data, connect_flags);
+    }
+
+    return 0;
+}
+
+// ============================================================================
+// File Chooser Action Hook (for apps using g_object_new + setter functions)
+// ============================================================================
+
+// Hook: gtk_file_chooser_set_action
+// This catches file choosers created via g_object_new() when they set action
+void gtk_file_chooser_set_action(void *chooser, int action) {
+
+    // Track this as our dialog if we haven't seen it yet
+    if (current_dialog.dialog != chooser) {
+        current_dialog.dialog = chooser;
+        current_dialog.action = action;
+        current_dialog.created_by_hook = 0;  // App created this dialog via g_object_new
+
+        // Clear previous state
+        if (current_dialog.filename) {
+            free(current_dialog.filename);
+            current_dialog.filename = NULL;
+        }
+        if (current_dialog.title) {
+            free(current_dialog.title);
+            current_dialog.title = NULL;
+        }
+    } else {
+        // Update action if dialog already tracked
+        current_dialog.action = action;
+    }
+
+    // Call original to actually set the action
+    LOAD_ORIGINAL(gtk_file_chooser_set_action);
+    if (original_gtk_file_chooser_set_action) {
+        original_gtk_file_chooser_set_action(chooser, action);
+    }
+}
+
+// Hook: gtk_file_chooser_get_action
+int gtk_file_chooser_get_action(void *chooser) {
+
+    // Call original
+    LOAD_ORIGINAL(gtk_file_chooser_get_action);
+    if (original_gtk_file_chooser_get_action) {
+        return original_gtk_file_chooser_get_action(chooser);
+    }
+
+    return GTK_FILE_CHOOSER_ACTION_OPEN; // Default fallback
 }
 
 // ============================================================================
@@ -580,9 +792,6 @@ void* gtk_file_chooser_native_new(const char *title,
                                    int action,
                                    const char *accept_label,
                                    const char *cancel_label) {
-
-    log_error("[DEBUG] gtk_file_chooser_native_new called: title='%s', action=%d",
-              title ? title : "NULL", action);
 
     // Store dialog info (same as Classic Dialog API)
     current_dialog.action = action;
@@ -615,45 +824,28 @@ void* gtk_file_chooser_native_new(const char *title,
 // Hook: gtk_native_dialog_run
 int gtk_native_dialog_run(void *dialog) {
 
-    log_error("[DEBUG] gtk_native_dialog_run called: dialog=%p, our_dialog=%p",
-              dialog, current_dialog.dialog);
-
     // Check if this is our file chooser native dialog
     if (dialog == current_dialog.dialog) {
-
-        log_error("[DEBUG] This is our native dialog, launching ReqASL");
 
         // Launch ReqASL with stored initial folder and name
         char *selected_file = launch_reqasl(current_dialog.action, current_dialog.title,
                                             current_dialog.initial_folder, current_dialog.initial_name);
 
         if (selected_file) {
+            // Store result - app will call get_filename() to retrieve it
             current_dialog.filename = selected_file;
-            // Use GTK_RESPONSE_ACCEPT for all actions (geany might expect this)
-            current_dialog.response = GTK_RESPONSE_ACCEPT;
 
-            // Set filename in GTK dialog (native dialogs implement GtkFileChooser interface)
-            LOAD_ORIGINAL(gtk_file_chooser_set_filename);
-            if (original_gtk_file_chooser_set_filename) {
-                int success = original_gtk_file_chooser_set_filename(dialog, selected_file);
-                log_error("[DEBUG] gtk_file_chooser_set_filename returned: %d", success);
+            // Return response code that matches button mapping
+            // leafpad expects OK (-5) for OPEN, others expect ACCEPT (-3)
+            if (current_dialog.action == GTK_FILE_CHOOSER_ACTION_OPEN && is_leafpad()) {
+                current_dialog.response = GTK_RESPONSE_OK;
             } else {
-                log_error("[ERROR] Could not find gtk_file_chooser_set_filename");
-            }
-
-            // CRITICAL: Emit "response" signal so geany's signal handler fires
-            // This must happen BEFORE returning, while dialog is still alive
-            LOAD_ORIGINAL(g_signal_emit_by_name);
-            if (original_g_signal_emit_by_name) {
-                log_error("[DEBUG] Emitting 'response' signal with response=%d", current_dialog.response);
-                original_g_signal_emit_by_name(dialog, "response", current_dialog.response);
-                log_error("[DEBUG] Signal emitted successfully");
-            } else {
-                log_error("[ERROR] Could not find g_signal_emit_by_name");
+                current_dialog.response = GTK_RESPONSE_ACCEPT;
             }
 
             return current_dialog.response;
         } else {
+            // User cancelled
             current_dialog.filename = NULL;
             current_dialog.response = GTK_RESPONSE_CANCEL;
             return GTK_RESPONSE_CANCEL;
@@ -668,6 +860,47 @@ int gtk_native_dialog_run(void *dialog) {
     }
 
     return GTK_RESPONSE_CANCEL;
+}
+
+// Hook: gtk_native_dialog_show (async API)
+void gtk_native_dialog_show(void *dialog) {
+
+    // Check if this is our file chooser native dialog
+    if (dialog == current_dialog.dialog) {
+
+        // Launch ReqASL synchronously (blocks until user responds)
+        // Even though the app expects async behavior, we block here and then fire the callback
+        char *selected_file = launch_reqasl(current_dialog.action, current_dialog.title,
+                                            current_dialog.initial_folder, current_dialog.initial_name);
+
+        if (selected_file) {
+            // Store result - app will call get_filename() to retrieve it
+            current_dialog.filename = selected_file;
+
+            // Return response code that matches button mapping
+            // leafpad expects OK (-5) for OPEN, others expect ACCEPT (-3)
+            if (current_dialog.action == GTK_FILE_CHOOSER_ACTION_OPEN && is_leafpad()) {
+                current_dialog.response = GTK_RESPONSE_OK;
+            } else {
+                current_dialog.response = GTK_RESPONSE_ACCEPT;
+            }
+        } else {
+            // User cancelled
+            current_dialog.filename = NULL;
+            current_dialog.response = GTK_RESPONSE_CANCEL;
+        }
+
+        // Return immediately (async behavior)
+        // NOTE: We don't call original_gtk_native_dialog_show because we handled everything
+        return;
+    }
+
+    // Not our dialog, call original
+    LOAD_ORIGINAL(gtk_native_dialog_show);
+
+    if (original_gtk_native_dialog_show) {
+        original_gtk_native_dialog_show(dialog);
+    }
 }
 
 // Library destructor - cleanup
