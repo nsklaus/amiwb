@@ -174,10 +174,12 @@ void launch_with_hook(const char *command) {
         for (int i = 3; i < 256; i++) {
             close(i);
         }
-        
+
         // Inject ReqASL hook
-        setenv("LD_PRELOAD", REQASL_HOOK_PATH, 1);
-        
+        // DISABLED: Causes log reset issues when terminals inherit LD_PRELOAD
+        // To use hook: LD_PRELOAD=/usr/local/lib/reqasl_hook.so <app>
+        // setenv("LD_PRELOAD", REQASL_HOOK_PATH, 1);
+
         // Execute through shell
         execl("/bin/sh", "sh", "-c", command, NULL);
         _exit(EXIT_FAILURE);
