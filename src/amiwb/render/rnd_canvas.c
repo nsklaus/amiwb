@@ -165,9 +165,10 @@ static void render_icons_grid_view(Canvas *canvas, FileIcon **icon_array,
             label_width = extents.xOff;
         }
 
-        // Icon bounding box includes label
-        int icon_left = icon->x;
-        int icon_right = icon->x + max(icon->width, label_width);
+        // Icon bounding box includes centered label (labels centered below icons, can extend both sides)
+        int icon_center = icon->x + icon->width / 2;
+        int icon_left = min(icon->x, icon_center - label_width / 2);
+        int icon_right = max(icon->x + icon->width, icon_center + label_width / 2);
         int icon_top = icon->y;
         int icon_bottom = icon->y + icon->height +
                          (font ? font->ascent + 4 : 20);
