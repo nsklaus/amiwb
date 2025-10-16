@@ -44,14 +44,15 @@ static void clock_render(RenderContext *ctx, Canvas *menubar, int *x, int y) {
 // Clock Update
 // ============================================================================
 
-// Update callback - called periodically (every 1 second)
+// Update callback - called periodically (every 2 seconds)
 // Updates cached text when minute changes (width stays fixed)
 static void clock_update(void) {
     time_t now;
     time(&now);
 
-    // Check if minute changed or first call
-    if (now - last_update >= 60 || cached_time[0] == '\0') {
+    // Check if minute changed (detects boundary crossing accurately)
+    // Using integer division: 01:40:59/60 != 01:41:00/60 triggers immediately
+    if (now / 60 != last_update / 60 || cached_time[0] == '\0') {
         struct tm *tm_info = localtime(&now);
         strftime(cached_time, sizeof(cached_time), MENUBAR_DATE_FORMAT, tm_info);
         last_update = now;

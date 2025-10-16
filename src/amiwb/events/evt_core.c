@@ -306,10 +306,9 @@ void handle_events(void) {
         time_t now = time(NULL);
 
         // Check if we should update time and addons
-        if (now - last_time_check >= 1) {  // Check every second
+        if (now - last_time_check >= 2) {  // Check every 2 seconds
             last_time_check = now;
-            update_menubar_time();      // Will only redraw if minute changed
-            menu_addon_update_all();    // Update CPU, memory, fans, etc.
+            menu_addon_update_all();    // Update CPU, memory, fans, clock, etc.
 
             // Redraw menubar to display addon changes in real-time (logo mode only)
             // Without this, CPU/RAM/fans show stale data for up to 59 seconds
