@@ -126,18 +126,26 @@ void wb_layout_compute_bounds(Canvas *canvas) {
         for (int i = 0; i < icon_count; i++) {
             if (icon_array[i]->display_window == canvas->win) {
                 FileIcon *icon = icon_array[i];
-                int icon_right = icon->x + icon->width;
+
+                // Labels are centered below icons - can extend beyond icon edges
+                int label_w = get_text_width(icon->label ? icon->label : "");
+                int icon_center = icon->x + icon->width / 2;
+                int label_right = icon_center + label_w / 2;  // Right edge of centered label
+                int icon_right = icon->x + icon->width;       // Right edge of icon graphic
+
+                // Use whichever extends further right
+                int actual_right = max(icon_right, label_right);
                 int icon_bottom = icon->y + icon->height + 20;  // +20 for label
-                
-                if (icon_right > max_x) max_x = icon_right;
+
+                if (actual_right > max_x) max_x = actual_right;
                 if (icon_bottom > max_y) max_y = icon_bottom;
             }
         }
-        
+
         int visible_w = canvas->width - BORDER_WIDTH_LEFT -
                        (canvas->client_win == None ? BORDER_WIDTH_RIGHT : BORDER_WIDTH_RIGHT_CLIENT);
         int visible_h = canvas->height - BORDER_HEIGHT_TOP - BORDER_HEIGHT_BOTTOM;
-        
+
         canvas->content_width = max(visible_w, max_x + 20);
         canvas->content_height = max(visible_h, max_y + 20);
     }
