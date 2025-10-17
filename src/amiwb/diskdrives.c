@@ -344,12 +344,13 @@ static void detect_and_mount_new_devices(void) {
     clean_ejected_list();
 
     // Retry loop: kernel needs time to scan filesystem after device appears
-    const int max_retries = 10;  // Up to 2 seconds total wait (btrfs can be slow)
-    const int retry_delay_ms = 200;  // 200ms between retries
+    // Exponential backoff: 0, 50, 100, 200, 400, 800, 1600ms (~3.1s max)
+    const int max_retries = 7;  // Fewer retries needed with exponential backoff
     bool found_unscanned_device = false;
 
     for (int retry = 0; retry < max_retries; retry++) {
         if (retry > 0) {
+            int retry_delay_ms = 50 << (retry - 1);  // 50*2^(retry-1): 50, 100, 200, 400, 800, 1600
             usleep(retry_delay_ms * 1000);
         }
 

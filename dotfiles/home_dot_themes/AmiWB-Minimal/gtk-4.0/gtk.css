@@ -19,14 +19,16 @@
     min-height: 0;
     min-width: 0;
     outline: none;
-    -gtk-outline-radius: 0;
 }
 
 /* Default spacing between elements */
 box > *,
 hbox > *,
 vbox > * {
-    margin: 2px;
+    margin: 0px;
+    padding-right: 0px;
+    padding-left: 0px;
+
 }
 
 /* ============= WINDOW & BASE ============= */
@@ -41,10 +43,69 @@ window {
 }
 
 /* ============= BUTTONS ============= */
-button {
+/* ALL BUTTON TYPES - To change height, edit min-height value below AND in containers section */
+button,
+button:hover,
+button:active,
+button:checked,
+button:disabled,
+button.flat,
+button.toggle,
+button.toggle:hover,
+button.toggle:active,
+button.toggle:checked,
+button.toggle:disabled,
+button.popup,
+button.popup:hover,
+button.popup:active,
+button.popup:disabled,
+button.scale,
+button.lock,
+button.color,
+button.font,
+button.file,
+toolbar button,
+toolbar button:hover,
+toolbar button:active,
+toolbar button:disabled,
+treeview header button,
+treeview header button:hover,
+treeview header button:active,
+spinbutton button,
+spinbutton button:hover,
+spinbutton button:active,
+scrollbar button,
+scrollbar button:hover,
+scrollbar button:active,
+scrollbar button:disabled,
+statusbar button,
+statusbar button:hover,
+statusbar button:active,
+statusbar button:disabled,
+combobox button,
+combobox button:hover,
+combobox button:active,
+combobox button:disabled,
+combobox button.combo {
     padding: 0px 6px;
-    min-height: 16px;  /* 16px + 2px borders = 18px total */
-    max-height: 16px;
+    min-height: 16px;
+}
+
+/* ALL CONTAINERS - To change height, edit min-height value below AND in buttons section */
+spinbutton,
+spinbutton > entry,
+combobox,
+combobox > box,
+combobox cellview,
+combobox arrow,
+button > box,
+button > arrow {
+    min-height: 16px;
+    padding: 0;
+}
+
+/* Base button styling */
+button {
     background-color: @ami_gray;
     color: @ami_black;
     border-style: solid;
@@ -64,17 +125,19 @@ button:active,
 button:checked {
     background-color: @ami_blue;
     color: @ami_black;
+    /* 3D pressed effect - only swap border colors */
     border-left-color: @ami_black;
     border-top-color: @ami_black;
     border-right-color: @ami_white;
     border-bottom-color: @ami_white;
-    padding: 1px 5px 0px 7px; /* Slight shift for pressed effect, maintain height */
+    /* NO dimension changes - padding inherited from universal rule */
 }
 
 button:disabled {
     background-color: @ami_gray;
     color: @ami_dark_gray;
     opacity: 0.8;
+    /* Dimensions inherited from universal button height rule */
 }
 
 /* ============= MENUS ============= */
@@ -99,6 +162,19 @@ menuitem:hover:not(:disabled) {
     color: @ami_white;
 }
 
+/* GTK4 popover menu items use button.model nodes */
+popover.menu button.model:hover {
+    background-color: @ami_blue;
+    color: @ami_white;
+}
+
+/* GTK4 modelbutton for menu items */
+modelbutton.flat:hover,
+modelbutton.flat:selected {
+    background-color: @ami_blue;
+    color: @ami_white;
+}
+
 /* Disabled menu items */
 menuitem:disabled {
     background-color: @ami_gray;
@@ -117,6 +193,19 @@ menubar {
     padding: 0;
 }
 
+/* GTK4 uses 'item' node instead of 'menuitem' */
+menubar > item {
+    padding: 2px 6px;
+    min-height: 18px;
+    margin: 0 2px;  /* Spacing between menu items */
+}
+
+menubar > item:hover {
+    background-color: @ami_blue;
+    color: @ami_white;
+}
+
+/* GTK3 compatibility - keep menuitem selector */
 menubar > menuitem {
     padding: 2px 6px;
     min-height: 18px;
@@ -131,7 +220,6 @@ menubar > menuitem:hover {
 entry {
     padding: 0px 4px;
     min-height: 16px;  /* 16px + 2px borders = 18px total */
-    max-height: 16px;
     background-color: @ami_gray;
     color: @ami_black;
     border-style: solid;
@@ -153,30 +241,106 @@ entry selection {
 scrollbar {
     opacity: 1;
     background-color: @ami_gray;
+    min-width: 18px;
+    min-height: 18px;
 }
 
+/* Scrollbar track with 3D inset effect */
 scrollbar trough {
     background-color: shade(@ami_gray, 0.95);
-    border: 1px solid @ami_dark_gray;
-    min-width: 10px;
-    min-height: 10px;
+    min-width: 18px;
+    min-height: 18px;
+    border: none;
+    /* 3D inset effect: white on top-left, black on bottom-right */
+    box-shadow: inset 1px 1px 0 @ami_white,
+                inset -1px -1px 0 @ami_black;
 }
 
-scrollbar slider {
+/* Scrollbar thumb/slider - full width black knob */
+scrollbar.vertical slider {
     background-color: @ami_black;
-    border: none;
-    min-width: 10px;
+    min-width: 18px;
     min-height: 30px;
+    margin: 2px 0; /* 2px padding from top/bottom of track */
+    border: none;
+    box-shadow: none; /* No outline */
+}
+
+scrollbar.horizontal slider {
+    background-color: @ami_black;
+    min-height: 18px;
+    min-width: 30px;
+    margin: 0 2px; /* 2px padding from left/right of track */
+    border: none;
+    box-shadow: none; /* No outline */
 }
 
 scrollbar slider:hover {
     background-color: shade(@ami_black, 1.3);
 }
 
-/* Force scrollbars always visible */
-* {
-    -gtk-overlay-scrolling: false;
+scrollbar slider:active {
+    background-color: shade(@ami_black, 1.5);
 }
+
+/* Scrollbar arrow buttons with 3D effect */
+scrollbar button {
+    min-width: 18px;
+    min-height: 18px;
+    background-color: @ami_gray;
+    border: none;
+    color: @ami_black;
+    padding: 0;
+    /* 3D raised effect: white on top-left, black on bottom-right */
+    box-shadow: inset 1px 1px 0 @ami_white,
+                inset -1px -1px 0 @ami_black;
+}
+
+scrollbar button:hover {
+    background-color: shade(@ami_gray, 1.05);
+    color: @ami_black; /* Keep arrows black */
+}
+
+scrollbar button:active {
+    /* Pressed effect - invert the 3D */
+    box-shadow: inset 1px 1px 0 @ami_black,
+                inset -1px -1px 0 @ami_white;
+    color: @ami_black; /* Keep arrows black */
+    padding: 0; /* No dimension changes - only border inversion */
+    min-width: 18px;
+    min-height: 18px;
+}
+
+scrollbar button:disabled {
+    color: @ami_black; /* Keep arrows black even when disabled */
+    opacity: 1; /* Don't fade the button */
+}
+
+/* Arrow symbols for scrollbar buttons */
+scrollbar.vertical button.up {
+    -gtk-icon-source: -gtk-icontheme("pan-up-symbolic");
+}
+
+scrollbar.vertical button.down {
+    -gtk-icon-source: -gtk-icontheme("pan-down-symbolic");
+}
+
+scrollbar.horizontal button:first-child {
+    -gtk-icon-source: -gtk-icontheme("pan-start-symbolic");
+}
+
+scrollbar.horizontal button:last-child {
+    -gtk-icon-source: -gtk-icontheme("pan-end-symbolic");
+}
+
+/* Make arrow icons smaller and centered */
+scrollbar button box {
+    min-width: 12px;
+    min-height: 12px;
+}
+
+/* Note: -gtk-overlay-scrolling removed - not supported in all GTK3 versions */
+/* Scrollbars are always visible by default in GTK 3.0-3.15 */
 
 /* ============= LISTS & CONTAINERS ============= */
 treeview,
@@ -203,30 +367,30 @@ list row:selected {
 
 /* List headers */
 treeview header button {
-    padding: 2px 4px;
-    min-height: 18px;
     background-color: @ami_gray;
     border: 1px solid @ami_dark_gray;
+    /* Dimensions inherited from universal button height rule */
 }
 
 /* ============= NOTEBOOKS/TABS ============= */
-notebook {
+/*notebook {
     background-color: @ami_gray;
-}
+}*/
 
-notebook header {
+/*notebook header {
     background-color: @ami_gray;
-}
+}*/
 
 notebook header.top {
     border-bottom: 1px solid @ami_black;
 }
 
 notebook tab {
-    padding: 2px 6px;
+    padding: 2px 4px;  /* Reduced vertical padding for uniform height */
     background-color: @ami_inactive_gray;
     color: @ami_black;
     border: 1px solid @ami_black;
+    border-bottom-color: @ami_gray;
     margin: 0 -1px 0 0;
     transition: background-color 0.1s;
 }
@@ -259,6 +423,33 @@ notebook header tab:checked:hover {
     background-color: @ami_gray;
 }
 
+/* Tab close button - borderless and compact */
+notebook tab button,
+notebook tab button.flat {
+    min-width: 14px;
+    min-height: 14px;
+    padding: 0;
+    margin: 0;
+    margin-left: 4px;  /* Small gap from tab label */
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: @ami_black;
+}
+
+notebook tab button:hover {
+    background-color: rgba(0, 0, 0, 0.1);  /* Subtle hover effect */
+    border: none;
+    box-shadow: none;
+}
+
+notebook tab button:active {
+    background-color: rgba(0, 0, 0, 0.2);  /* Darker when clicked */
+    border: none;
+    box-shadow: none;
+    padding: 0;  /* No shift on press */
+}
+
 notebook stack {
     border: 1px solid @ami_black;
     border-top: none;
@@ -273,9 +464,7 @@ toolbar {
 
 toolbar button {
     margin: 0 2px;
-    padding: 2px;
-    min-width: 22px;
-    min-height: 22px;
+    /* Dimensions inherited from universal button height rule */
 }
 
 toolbar button:first-child {
@@ -286,12 +475,11 @@ toolbar button:last-child {
     margin-right: 0;
 }
 
-/* Icon sizing */
+/* Icon sizing - GTK3 uses min-width/min-height for icons */
 toolbar button image,
 button image {
     min-width: 18px;
     min-height: 18px;
-    -gtk-icon-size: 18px;
 }
 
 /* ============= DROPDOWNS/COMBOBOX ============= */
@@ -309,11 +497,8 @@ combobox menu {
     border: 1px solid @ami_black;
 }
 
-/* Dropdown button indicator */
-button.combo::after {
-    content: "▼";
-    margin-left: 4px;
-}
+/* Note: GTK3 doesn't support ::after pseudo-element for dropdown indicators */
+/* Combobox arrow is controlled by combobox arrow selector instead */
 
 /* ============= PROGRESSBAR ============= */
 progressbar {
@@ -424,9 +609,79 @@ spinbutton entry {
 
 spinbutton button {
     margin: 0;
-    min-height: 9px;
-    min-width: 12px;
+    /* Dimensions inherited from universal button height rule */
+}
+
+/* ============= STATUSBAR ============= */
+statusbar {
+    background-color: @ami_gray;
     padding: 0;
+}
+
+/* Reset all padding/margins like Prof-XFCE does */
+statusbar *,
+statusbar frame,
+statusbar frame > border,
+statusbar .frame {
+    padding: 0;
+    margin: 0;
+}
+
+/* Statusbar buttons */
+statusbar button {
+    background-color: @ami_gray;
+    color: @ami_black;
+    border-style: solid;
+    border-width: 1px;
+    border-left-color: @ami_white;
+    border-top-color: @ami_white;
+    border-right-color: @ami_black;
+    border-bottom-color: @ami_black;
+    margin: 1px 2px;
+    /* Dimensions inherited from universal button height rule */
+}
+
+/* Statusbar frame container - no border on parent */
+statusbar frame {
+    background-color: @ami_gray;
+    border: none;  /* No border on outer container */
+    padding: 0;
+    margin: 0;
+    font-size: 8pt;  /* Smaller font to reduce height */
+}
+
+/* Statusbar frame inner border - only this shows the 3D inset */
+statusbar frame > border,
+statusbar .frame {
+    background-color: @ami_gray;
+    border-style: solid;
+    border-width: 1px;
+    /* Inset effect like entry fields */
+    border-left-color: @ami_black;
+    border-top-color: @ami_black;
+    border-right-color: @ami_white;
+    border-bottom-color: @ami_white;
+    padding: 0;  /* No padding */
+    margin: 0;
+    font-size: 8pt;  /* Force smaller font */
+}
+
+/* All elements inside statusbar frame - aggressive height control */
+statusbar frame *,
+statusbar frame label,
+statusbar frame box,
+statusbar frame widget {
+    padding: 0;
+    margin: 0;
+    font-size: 8pt;  /* Smaller font throughout */
+    min-height: 12px;
+}
+
+/* Labels inside statusbar */
+statusbar label {
+    padding: 0 4px;  /* Only horizontal padding */
+    color: @ami_black;
+    font-size: 8pt;
 }
 
 /* ============= SPECIAL FIXES ============= */
@@ -449,7 +704,7 @@ popover {
 
 popover modelbutton {
     padding: 2px 8px;
-    min-height: 16px;
+    min-height: 18px;
     background-color: transparent;
     color: @ami_black;
 }
@@ -457,4 +712,9 @@ popover modelbutton {
 popover modelbutton:hover {
     background-color: @ami_blue;
     color: @ami_white;
+}
+
+popover modelbutton:disabled {
+    background-color: @ami_gray;
+    color: @ami_dark_gray;
 }

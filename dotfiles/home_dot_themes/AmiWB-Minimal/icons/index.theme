@@ -1,0 +1,11 @@
+[Icon Theme]
+Name=AmiWB-Minimal-Icons
+Comment=Custom icons for AmiWB-Minimal theme
+Inherits=Adwaita
+
+Directories=16x16/ui
+
+[16x16/ui]
+Size=16
+Context=UI
+Type=Fixed
