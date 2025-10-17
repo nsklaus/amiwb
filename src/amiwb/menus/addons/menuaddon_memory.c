@@ -85,7 +85,7 @@ static void memory_render(RenderContext *ctx, Canvas *menubar, int *x, int y) {
 // Memory Update
 // ============================================================================
 
-// Update callback - called periodically (every 1 second)
+// Update callback - called periodically (every 2 seconds)
 static void memory_update(void) {
     update_memory_usage();
 }

@@ -21,31 +21,30 @@ static int reserved_width = 0;             // Reserved width for maximum text (p
 // Fan RPM Reading
 // ============================================================================
 
-// Run sensors command and parse fan RPM values
+// Read fan RPM directly from sysfs (no process fork - fast!)
 static void update_fan_rpm(void) {
-    // Run: sensors | grep -E "cpu_fan|gpu_fan|mid_fan"
-    FILE *fp = popen("sensors 2>/dev/null | grep -E 'cpu_fan|gpu_fan|mid_fan'", "r");
-    if (!fp) {
-        snprintf(cached_text, sizeof(cached_text), "Fans: N/A");
-        return;
-    }
-
-    char line[256];
     int highest_rpm = 0;
     bool found_any = false;
 
-    // Parse each line: "cpu_fan:        0 RPM"
-    while (fgets(line, sizeof(line), fp)) {
-        int rpm = 0;
-        // Try to extract RPM value
-        if (sscanf(line, "%*[^:]: %d RPM", &rpm) == 1) {
-            found_any = true;
-            if (rpm > highest_rpm) {
-                highest_rpm = rpm;
+    // Read all hwmon fan inputs: /sys/class/hwmon/hwmon*/fan*_input
+    for (int hwmon = 0; hwmon < 10; hwmon++) {  // Usually hwmon0-hwmon5
+        for (int fan = 1; fan <= 9; fan++) {  // fan1_input to fan9_input
+            char path[256];
+            snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon%d/fan%d_input", hwmon, fan);
+
+            FILE *fp = fopen(path, "r");
+            if (!fp) continue;  // File doesn't exist, try next
+
+            int rpm = 0;
+            if (fscanf(fp, "%d", &rpm) == 1) {
+                found_any = true;
+                if (rpm > highest_rpm) {
+                    highest_rpm = rpm;
+                }
             }
+            fclose(fp);
         }
     }
-    pclose(fp);
 
     if (!found_any) {
         snprintf(cached_text, sizeof(cached_text), "Fans: N/A");
@@ -55,7 +54,7 @@ static void update_fan_rpm(void) {
     // Store for rendering
     max_rpm = highest_rpm;
 
-    // Format display text
+    // Format display text (show biggest RPM, or 0 if all fans are stopped)
     snprintf(cached_text, sizeof(cached_text), "Fans: %d RPM", max_rpm);
 }
 
@@ -78,7 +77,7 @@ static void fans_render(RenderContext *ctx, Canvas *menubar, int *x, int y) {
 // Fan Update
 // ============================================================================
 
-// Update callback - called periodically (every 1 second)
+// Update callback - called periodically (every 2 seconds)
 static void fans_update(void) {
     update_fan_rpm();
 }

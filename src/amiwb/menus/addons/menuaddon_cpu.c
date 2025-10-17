@@ -95,7 +95,7 @@ static void cpu_render(RenderContext *ctx, Canvas *menubar, int *x, int y) {
 // CPU Update
 // ============================================================================
 
-// Update callback - called periodically (every 1 second)
+// Update callback - called periodically (every 2 seconds)
 static void cpu_update(void) {
     // Update CPU usage calculation
     update_cpu_usage();

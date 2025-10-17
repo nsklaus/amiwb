@@ -478,8 +478,8 @@ static void try_automount_removable(void) {
 void diskdrives_poll(void) {
     static int poll_count = 0;
     poll_count++;
-    
-    // Try to auto-mount removable devices every poll (2 seconds)
+
+    // Try to auto-mount removable devices every poll (1 second)
     try_automount_removable();
     
     FILE *mounts = fopen("/proc/mounts", "r");
