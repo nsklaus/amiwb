@@ -42,9 +42,9 @@ in other words: it's a desktop ..
 
 it have "on-demand" and "continuous" render modes as options:
 - in on-demand mode the desktop will render as little as possbile 
-(at idle, it's like 1 or 2 FPS, but the desktop is still extremely reactive, 
-with average rendering frame time of 0.05ms, as soon as you just blink the FPS
-are climbing back up to reach up to target fps if need be).
+(at idle, it's like 1 or 2 FPS, but the desktop is reactive,
+ average rendering frame time is 0.05ms, as soon as you just blink, the FPS
+adapts to reach up to target fps if need be).
 - in continuous mode it always render at the target fps, like 60 or 120fps.
 
 on general usage, for me: 10-20 windows opened, browser with 20 tabs or such,
@@ -74,6 +74,7 @@ example:
 - `super+P` opens parent window in file manager
 - `super+R` calls rename dialog for the selected icon 
 - `super+shift+Q` quits amiwb
+- `super+shift+D` prints perfs output in the amiwb.log
 ..
 
 ### the desktop elements:

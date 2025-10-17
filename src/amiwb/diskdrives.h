@@ -27,9 +27,12 @@ typedef struct {
 } DriveManager;
 
 // Public functions
-void diskdrives_init(void);      // Initialize drive system on startup
-void diskdrives_poll(void);      // Check for drive changes (call every 2 seconds)
-void diskdrives_cleanup(void);   // Cleanup on exit
+void diskdrives_init(void);         // Initialize drive system on startup
+void diskdrives_cleanup(void);      // Cleanup on exit
+
+// Event-driven monitoring (replaces polling)
+int diskdrives_get_inotify_fd(void);     // Get inotify FD for select() (returns -1 if disabled)
+void diskdrives_process_events(void);    // Process inotify events (call when FD ready)
 
 // Mount/unmount operations
 bool mount_device(const char *device);      // Mount device using udisksctl

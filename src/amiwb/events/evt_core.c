@@ -101,12 +101,14 @@ void handle_events(void) {
         log_error("[EVENTS] Frame timer not available - rendering disabled");
     }
 
+    // Get disk drives inotify FD (event-driven monitoring, module already initialized)
+    int diskdrives_inotify_fd = diskdrives_get_inotify_fd();
+
     // Log cap management
     #if LOGGING_ENABLED && LOG_CAP_ENABLED
     unsigned int iter = 0;  // For log truncation
     #endif
     time_t last_time_check = 0;
-    time_t last_drive_check = 0;  // For diskdrives polling
 
     while (running) {
         fd_set read_fds;
@@ -119,6 +121,12 @@ void handle_events(void) {
         if (frame_timer_fd >= 0) {
             FD_SET(frame_timer_fd, &read_fds);
             if (frame_timer_fd > max_fd) max_fd = frame_timer_fd;
+        }
+
+        // Add diskdrives inotify to select set if available
+        if (diskdrives_inotify_fd >= 0) {
+            FD_SET(diskdrives_inotify_fd, &read_fds);
+            if (diskdrives_inotify_fd > max_fd) max_fd = diskdrives_inotify_fd;
         }
 
         // Frame scheduling is now handled entirely by itn_render module
@@ -301,6 +309,11 @@ void handle_events(void) {
             itn_render_process_frame();
         }
 
+        // Handle diskdrives inotify events (mount/unmount, device plug/unplug)
+        if (diskdrives_inotify_fd >= 0 && FD_ISSET(diskdrives_inotify_fd, &read_fds)) {
+            diskdrives_process_events();
+        }
+
         // CRITICAL: Check periodic tasks on EVERY iteration, not just on select() timeout
         // This ensures menubar updates even when X events are flooding in (e.g., fullscreen video)
         time_t now = time(NULL);
@@ -326,11 +339,7 @@ void handle_events(void) {
             }
         }
 
-        // Check for drive changes every second
-        if (now - last_drive_check >= 1) {
-            last_drive_check = now;
-            diskdrives_poll();
-        }
+        // Drive monitoring now event-driven via inotify (above)
 
         // CRITICAL FIX: Check progress monitors on EVERY iteration, not just timeout
         // These functions use non-blocking I/O and return immediately if no data
