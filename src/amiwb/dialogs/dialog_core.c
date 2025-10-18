@@ -155,11 +155,9 @@ void destroy_dialog(Dialog *dialog) {
     // Font is managed by font_manager - don't close it!
     dialog->font = NULL;  // Just clear the reference
 
-    // Clean up user_data if it was allocated (About dialog uses this for SystemInfo)
-    if (dialog->user_data && dialog->dialog_type == DIALOG_ABOUT) {
-        free(dialog->user_data);
-        dialog->user_data = NULL;
-    }
+    // user_data is a borrowed reference (e.g., About dialog uses cached SystemInfo from about_sysinfo module)
+    // The owning module manages the lifetime - we just clear our reference
+    dialog->user_data = NULL;
 
     // Clean up canvas and memory
     if (dialog->canvas) {
