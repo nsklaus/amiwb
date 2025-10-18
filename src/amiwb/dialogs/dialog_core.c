@@ -24,6 +24,7 @@ static Dialog *g_dialogs = NULL;
 // Initialize dialog subsystem
 void init_dialogs(void) {
     g_dialogs = NULL;
+    dialog_base_init_checkerboard();  // Initialize cached checkerboard tile
 }
 
 // Clean up all dialogs
@@ -36,6 +37,7 @@ void cleanup_dialogs(void) {
         free(g_dialogs);
         g_dialogs = next;
     }
+    dialog_base_cleanup_checkerboard();  // Free cached checkerboard tile
 }
 
 // ============================================================================
@@ -153,6 +155,12 @@ void destroy_dialog(Dialog *dialog) {
     // Font is managed by font_manager - don't close it!
     dialog->font = NULL;  // Just clear the reference
 
+    // Clean up user_data if it was allocated (About dialog uses this for SystemInfo)
+    if (dialog->user_data && dialog->dialog_type == DIALOG_ABOUT) {
+        free(dialog->user_data);
+        dialog->user_data = NULL;
+    }
+
     // Clean up canvas and memory
     if (dialog->canvas) {
         itn_canvas_destroy(dialog->canvas);
@@ -253,6 +261,10 @@ void render_dialog_content(Canvas *canvas) {
 
         case DIALOG_DELETE_CONFIRM:
             dialog_delete_render_content(canvas, dialog);
+            break;
+
+        case DIALOG_ABOUT:
+            dialog_about_render_content(canvas, dialog);
             break;
 
         default:

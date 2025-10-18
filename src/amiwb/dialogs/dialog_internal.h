@@ -27,7 +27,8 @@ typedef enum {
     DIALOG_RENAME,
     DIALOG_DELETE_CONFIRM,
     DIALOG_EXECUTE_COMMAND,
-    DIALOG_PROGRESS
+    DIALOG_PROGRESS,
+    DIALOG_ABOUT
 } DialogType;
 
 // ============================================================================
@@ -85,10 +86,16 @@ bool dialog_core_is_dialog(Canvas *canvas);
 // dialog_base.c - Shared Rendering Primitives
 // ============================================================================
 
+// Initialize checkerboard pattern cache (called once at dialog system init)
+void dialog_base_init_checkerboard(void);
+
+// Cleanup checkerboard pattern cache (called at dialog system shutdown)
+void dialog_base_cleanup_checkerboard(void);
+
 // Draw inset box for input fields
 void dialog_base_draw_inset_box(Picture dest, int x, int y, int w, int h);
 
-// Draw checkerboard pattern for progress dialogs
+// Draw checkerboard pattern for progress dialogs (fast tiled version)
 void dialog_base_draw_checkerboard(Picture dest, int x, int y, int w, int h);
 
 // Calculate layout for dialog widgets
@@ -123,11 +130,12 @@ bool dialog_execute_handle_motion(Dialog *dialog, XMotionEvent *event);
 bool dialog_delete_handle_motion(Dialog *dialog, XMotionEvent *event);
 
 // ============================================================================
-// dialog_rename.c, dialog_execute.c, dialog_delete.c - Rendering
+// dialog_rename.c, dialog_execute.c, dialog_delete.c, dialog_about.c - Rendering
 // ============================================================================
 
 void dialog_rename_render_content(Canvas *canvas, Dialog *dialog);
 void dialog_execute_render_content(Canvas *canvas, Dialog *dialog);
 void dialog_delete_render_content(Canvas *canvas, Dialog *dialog);
+void dialog_about_render_content(Canvas *canvas, Dialog *dialog);
 
 #endif // DIALOG_INTERNAL_H

@@ -8,6 +8,8 @@
 #define TOOLKIT_CONFIG_H
 
 #include <X11/extensions/Xrender.h>
+/* Toolkit version */
+#define TOOLKIT_VERSION "0.1.1"
 
 /* Buffer sizes */
 #define NAME_SIZE 128           /* Buffer size for file names */

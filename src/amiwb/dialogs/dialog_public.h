@@ -39,6 +39,9 @@ void show_delete_confirmation(const char *message,
 void show_execute_dialog(void (*on_ok)(const char *command),
                         void (*on_cancel)(void));
 
+// Show about dialog - displays AmiWB and system information
+void show_about_dialog(void);
+
 // ============================================================================
 // Dialog Lifecycle - General
 // ============================================================================

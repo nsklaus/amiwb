@@ -102,8 +102,8 @@ bool dialogs_handle_button_press(XButtonEvent *event) {
     if (!dialog) return false;
 
 
-    // For delete confirmation dialogs, don't handle input box clicks since there's no input
-    if (dialog->dialog_type == DIALOG_DELETE_CONFIRM) {
+    // For dialogs with no input field (delete confirmation, about), handle buttons only
+    if (dialog->dialog_type == DIALOG_DELETE_CONFIRM || dialog->dialog_type == DIALOG_ABOUT) {
         // Handle button clicks using toolkit
         if (dialog->ok_button && button_handle_press(dialog->ok_button, event->x, event->y)) {
             redraw_canvas(canvas);

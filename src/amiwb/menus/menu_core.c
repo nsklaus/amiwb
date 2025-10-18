@@ -355,9 +355,9 @@ void init_menus(void) {
     init_menu_enabled(wb_submenu);  // Initialize all items as enabled
     // Parse the "#" shortcuts from menu items
     parse_menu_item_shortcuts(wb_submenu);
-    // Gray out Settings and About menu items (not implemented yet)
+    // Gray out Settings menu item (not implemented yet)
     wb_submenu->enabled[2] = false;  // Settings
-    wb_submenu->enabled[3] = false;  // About
+    // About dialog is now implemented - leave enabled
     wb_submenu->selected_item = -1;
     wb_submenu->parent_menu = menubar;
     wb_submenu->parent_index = 0;

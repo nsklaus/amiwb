@@ -470,8 +470,7 @@ void handle_menu_selection(Menu *menu, int item_index) {
             } else if (strcmp(item, "Settings") == 0) {
                 // TODO: Open settings dialog or file
             } else if (strcmp(item, "About") == 0) {
-                // TODO: Display about information
-
+                show_about_dialog();
             } else if (strcmp(item, "Suspend") == 0) {
                 handle_suspend_request();
             

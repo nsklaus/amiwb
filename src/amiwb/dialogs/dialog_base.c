@@ -10,6 +10,84 @@
 #include <string.h>
 
 // ============================================================================
+// Checkerboard Pattern Cache (Performance Optimization)
+// ============================================================================
+
+// Cache a small checkerboard tile that can be tiled infinitely
+// This avoids thousands of individual XRenderFillRectangle calls
+#define CHECKER_TILE_SIZE 32  // Large enough to avoid seams, small enough to cache
+static Pixmap g_checker_pixmap = None;
+static Picture g_checker_picture = None;
+static bool g_checker_initialized = false;
+
+// Initialize cached checkerboard tile (called once at dialog system init)
+void dialog_base_init_checkerboard(void) {
+    if (g_checker_initialized) return;
+
+    Display *dpy = itn_core_get_display();
+    if (!dpy) {
+        log_error("[ERROR] Cannot initialize checkerboard cache - no display");
+        return;
+    }
+
+    // Create pixmap for tile with 32-bit depth for ARGB transparency
+    g_checker_pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy),
+                                     CHECKER_TILE_SIZE, CHECKER_TILE_SIZE, 32);
+
+    XRenderPictFormat *fmt = XRenderFindStandardFormat(dpy, PictStandardARGB32);
+    if (!fmt) {
+        log_error("[ERROR] XRenderFindStandardFormat(ARGB32) failed for checkerboard");
+        XFreePixmap(dpy, g_checker_pixmap);
+        g_checker_pixmap = None;
+        return;
+    }
+
+    g_checker_picture = XRenderCreatePicture(dpy, g_checker_pixmap, fmt, 0, NULL);
+    if (g_checker_picture == None) {
+        log_error("[ERROR] XRenderCreatePicture failed for checkerboard");
+        XFreePixmap(dpy, g_checker_pixmap);
+        g_checker_pixmap = None;
+        return;
+    }
+
+    // Render the checkerboard pattern into the tile (2x2 pixel squares)
+    int checker_size = 2;
+    for (int row = 0; row < CHECKER_TILE_SIZE; row += checker_size) {
+        for (int col = 0; col < CHECKER_TILE_SIZE; col += checker_size) {
+            bool is_white = ((row / checker_size) + (col / checker_size)) % 2 == 0;
+            XRenderColor *color = is_white ? &WHITE : &GRAY;
+
+            int draw_w = (col + checker_size > CHECKER_TILE_SIZE) ? CHECKER_TILE_SIZE - col : checker_size;
+            int draw_h = (row + checker_size > CHECKER_TILE_SIZE) ? CHECKER_TILE_SIZE - row : checker_size;
+
+            XRenderFillRectangle(dpy, PictOpSrc, g_checker_picture, color,
+                               col, row, draw_w, draw_h);
+        }
+    }
+
+    g_checker_initialized = true;
+}
+
+// Cleanup cached checkerboard tile (called at dialog system shutdown)
+void dialog_base_cleanup_checkerboard(void) {
+    if (!g_checker_initialized) return;
+
+    Display *dpy = itn_core_get_display();
+    if (dpy) {
+        if (g_checker_picture != None) {
+            XRenderFreePicture(dpy, g_checker_picture);
+            g_checker_picture = None;
+        }
+        if (g_checker_pixmap != None) {
+            XFreePixmap(dpy, g_checker_pixmap);
+            g_checker_pixmap = None;
+        }
+    }
+
+    g_checker_initialized = false;
+}
+
+// ============================================================================
 // 3D Drawing Primitives
 // ============================================================================
 
@@ -33,27 +111,30 @@ void dialog_base_draw_inset_box(Picture dest, int x, int y, int w, int h) {
     XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, x+2, y+2, w-4, h-4);
 }
 
-// Draw checkerboard pattern for delete confirmation dialog
+// Draw checkerboard pattern for delete confirmation dialog (fast tiled version)
 void dialog_base_draw_checkerboard(Picture dest, int x, int y, int w, int h) {
+    if (!g_checker_initialized) {
+        log_error("[WARNING] Checkerboard cache not initialized, drawing solid gray fallback");
+        Display *dpy = itn_core_get_display();
+        XRenderFillRectangle(dpy, PictOpSrc, dest, &GRAY, x, y, w, h);
+        return;
+    }
+
     Display *dpy = itn_core_get_display();
 
-    // Use same checker size as scrollbars (2x2 pixels)
-    int checker_size = 2;
+    // Use XRender's RepeatNormal to tile the cached pattern
+    // This is 1000x faster than drawing thousands of individual 2x2 squares
+    XRenderPictureAttributes pa;
+    pa.repeat = RepeatNormal;  // Enable tiling/repeating
+    XRenderChangePicture(dpy, g_checker_picture, CPRepeat, &pa);
 
-    // Draw checkerboard pattern
-    for (int row = 0; row < h; row += checker_size) {
-        for (int col = 0; col < w; col += checker_size) {
-            // Alternate between white and gray based on position
-            bool is_white = ((row / checker_size) + (col / checker_size)) % 2 == 0;
-            XRenderColor *color = is_white ? &WHITE : &GRAY;
-
-            int draw_w = (col + checker_size > w) ? w - col : checker_size;
-            int draw_h = (row + checker_size > h) ? h - row : checker_size;
-
-            XRenderFillRectangle(dpy, PictOpSrc, dest, color,
-                               x + col, y + row, draw_w, draw_h);
-        }
-    }
+    // Composite the tiled pattern onto the destination
+    // Source offsets (x, y) control pattern alignment, dest offsets position the result
+    XRenderComposite(dpy, PictOpSrc, g_checker_picture, None, dest,
+                     0, 0,  // Source x, y (pattern alignment)
+                     0, 0,  // Mask (not used)
+                     x, y,  // Destination x, y
+                     w, h); // Width, height to fill
 }
 
 // ============================================================================
