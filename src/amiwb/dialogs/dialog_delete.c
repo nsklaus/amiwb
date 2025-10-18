@@ -61,6 +61,13 @@ void show_delete_confirmation(const char *message,
         return;  // Graceful degradation - safer to cancel delete than proceed without confirmation
     }
 
+    // Set size constraints and disable vertical resize (horizontal only)
+    dialog->canvas->min_width = 450;
+    dialog->canvas->min_height = 220;
+    dialog->canvas->max_height = 220;  // Force fixed height (min == max)
+    dialog->canvas->resize_x_allowed = true;
+    dialog->canvas->resize_y_allowed = false;  // Disable vertical resize
+
     // Set message text and callbacks
     if (strlen(message) >= NAME_SIZE) {
         log_error("[WARNING] Delete confirmation message truncated: %s", message);
