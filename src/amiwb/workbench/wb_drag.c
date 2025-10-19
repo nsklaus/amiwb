@@ -58,6 +58,10 @@ static FileIcon **dragged_icons = NULL;    // Array of selected icons being drag
 static int dragged_icons_count = 0;        // Number of icons in array
 static bool in_multi_icon_processing = false;  // Prevent cleanup during array iteration
 
+// Spatial layout support - preserve relative positions during multi-icon drops
+static int *icon_offset_x = NULL;  // Relative X offsets from clicked icon (reference)
+static int *icon_offset_y = NULL;  // Relative Y offsets from clicked icon (reference)
+
 // Drag state
 static int drag_start_x, drag_start_y;                  // Click position in icon
 static int drag_start_root_x, drag_start_root_y;        // Start position in root
@@ -197,6 +201,21 @@ static void collect_selected_icons(Canvas *source_canvas) {
     for (int i = 0; i < total_count; i++) {
         if (icons[i]->display_window == source_canvas->win && icons[i]->selected) {
             dragged_icons[dragged_icons_count++] = icons[i];
+        }
+    }
+
+    // Capture spatial offsets from clicked icon (reference point)
+    // This preserves the relative spatial arrangement of icons during drop
+    if (dragged_icons_count > 0 && dragged_icon) {
+        icon_offset_x = malloc(sizeof(int) * dragged_icons_count);
+        icon_offset_y = malloc(sizeof(int) * dragged_icons_count);
+
+        if (icon_offset_x && icon_offset_y) {
+            // Calculate offsets relative to the clicked icon
+            for (int i = 0; i < dragged_icons_count; i++) {
+                icon_offset_x[i] = dragged_icons[i]->x - dragged_icon->x;
+                icon_offset_y[i] = dragged_icons[i]->y - dragged_icon->y;
+            }
         }
     }
 }
@@ -913,6 +932,20 @@ static void perform_multi_icon_drop(Canvas *target, bool force_copy) {
         int place_x = 0, place_y = 0;
         calculate_drop_position(target, &place_x, &place_y);
 
+        // Calculate bounds for target canvas
+        int min_x, min_y, max_x, max_y;
+        if (target->type == DESKTOP) {
+            min_x = 20;
+            min_y = 200;  // Below Home icon
+            max_x = target->width - 110;
+            max_y = target->height - 100;
+        } else {
+            min_x = 10;
+            min_y = 10;
+            max_x = target->width - BORDER_WIDTH_RIGHT - 110;
+            max_y = target->height - BORDER_HEIGHT_BOTTOM - 100;
+        }
+
         for (int i = 0; i < dragged_icons_count; i++) {
             FileIcon *icon = dragged_icons[i];
             if (!icon) continue;
@@ -922,8 +955,18 @@ static void perform_multi_icon_drop(Canvas *target, bool force_copy) {
                 icon->display_window = saved_source_window;
             }
 
-            int icon_x = place_x + (i * 10);
-            int icon_y = place_y + (i * 10);
+            // Apply spatial offset to preserve relative positions
+            int icon_x = place_x;
+            int icon_y = place_y;
+            if (icon_offset_x && icon_offset_y) {
+                icon_x += icon_offset_x[i];
+                icon_y += icon_offset_y[i];
+            }
+
+            // Clamp to canvas bounds (prevent icons from going offscreen)
+            icon_x = max(min_x, min(icon_x, max_x));
+            icon_y = max(min_y, min(icon_y, max_y));
+
             move_icon(icon, icon_x, icon_y);
         }
 
@@ -945,6 +988,20 @@ static void perform_multi_icon_drop(Canvas *target, bool force_copy) {
     // Calculate base drop position
     int place_x = 0, place_y = 0;
     calculate_drop_position(target, &place_x, &place_y);
+
+    // Calculate bounds for target canvas (for spatial offset clamping)
+    int min_x, min_y, max_x, max_y;
+    if (target->type == DESKTOP) {
+        min_x = 20;
+        min_y = 200;  // Below Home icon
+        max_x = target->width - 110;
+        max_y = target->height - 100;
+    } else {
+        min_x = 10;
+        min_y = 10;
+        max_x = target->width - BORDER_WIDTH_RIGHT - 110;
+        max_y = target->height - BORDER_HEIGHT_BOTTOM - 100;
+    }
 
     // CRITICAL: Restore display_window for ALL icons BEFORE processing operations
     // Icons were hidden during drag (display_window = None)
@@ -987,9 +1044,17 @@ static void perform_multi_icon_drop(Canvas *target, bool force_copy) {
             }
         }
 
-        // Calculate individual icon drop position (offset for spacing)
-        int icon_x = place_x + (i * 10);
-        int icon_y = place_y + (i * 10);
+        // Apply spatial offset to preserve relative positions
+        int icon_x = place_x;
+        int icon_y = place_y;
+        if (icon_offset_x && icon_offset_y) {
+            icon_x += icon_offset_x[i];
+            icon_y += icon_offset_y[i];
+        }
+
+        // Clamp to canvas bounds (prevent icons from going offscreen)
+        icon_x = max(min_x, min(icon_x, max_x));
+        icon_y = max(min_y, min(icon_y, max_y));
 
         // Build destination path (use FULL_SIZE for path + "/" + filename combinations)
         char dst_path[FULL_SIZE];
@@ -1144,6 +1209,15 @@ void end_drag_icon(Canvas *canvas) {
             dragged_icons = NULL;
             dragged_icons_count = 0;
         }
+        // Cleanup spatial offset arrays
+        if (icon_offset_x) {
+            free(icon_offset_x);
+            icon_offset_x = NULL;
+        }
+        if (icon_offset_y) {
+            free(icon_offset_y);
+            icon_offset_y = NULL;
+        }
         return;
     }
 
@@ -1154,6 +1228,15 @@ void end_drag_icon(Canvas *canvas) {
             free(dragged_icons);
             dragged_icons = NULL;
             dragged_icons_count = 0;
+        }
+        // Cleanup spatial offset arrays
+        if (icon_offset_x) {
+            free(icon_offset_x);
+            icon_offset_x = NULL;
+        }
+        if (icon_offset_y) {
+            free(icon_offset_y);
+            icon_offset_y = NULL;
         }
         return;
     }
@@ -1169,6 +1252,16 @@ void end_drag_icon(Canvas *canvas) {
         free(dragged_icons);
         dragged_icons = NULL;
         dragged_icons_count = 0;
+
+        // Cleanup spatial offset arrays
+        if (icon_offset_x) {
+            free(icon_offset_x);
+            icon_offset_x = NULL;
+        }
+        if (icon_offset_y) {
+            free(icon_offset_y);
+            icon_offset_y = NULL;
+        }
 
         // Cleanup drag state
         dragged_icon = NULL;
@@ -1233,6 +1326,16 @@ void wb_drag_clear_dragged_icon(void) {
         dragged_icons = NULL;
         dragged_icons_count = 0;
     }
+
+    // Clear spatial offset arrays (same lifetime as dragged_icons)
+    if (icon_offset_x && !in_multi_icon_processing) {
+        free(icon_offset_x);
+        icon_offset_x = NULL;
+    }
+    if (icon_offset_y && !in_multi_icon_processing) {
+        free(icon_offset_y);
+        icon_offset_y = NULL;
+    }
 }
 
 void wb_drag_cleanup_window(void) {
@@ -1251,6 +1354,16 @@ void workbench_cleanup_drag_state(void) {
         free(dragged_icons);
         dragged_icons = NULL;
         dragged_icons_count = 0;
+    }
+
+    // Cleanup spatial offset arrays
+    if (icon_offset_x) {
+        free(icon_offset_x);
+        icon_offset_x = NULL;
+    }
+    if (icon_offset_y) {
+        free(icon_offset_y);
+        icon_offset_y = NULL;
     }
 
     if (dragged_icon && saved_source_window != None) {

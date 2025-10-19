@@ -3,12 +3,6 @@ a desktop and window manager for linux using x11 and xlib.
 it tries to reproduce the UX/UI of the amiga workbench
 as a workstation. 
 
-for those that had an amiga equipped with a gfx and a 060 cpu card, 
-you know what i'm talking about.
-it's more like draco/a4k 'amiga' rather than a500/cd32 'amiga'.
-the former was professionnal grade workstation using softwares like:
-tv-paint, adpro, art-effect, lightwave, imagine, movie-shop, samplitude, ...
-the later was more like a home gaming system. 
 look at screenshots dir.
 
 ### status: the base environment is complete. 
@@ -41,30 +35,21 @@ it handles clients (linux apps) and have its own file manager and app launcher.
 in other words: it's a desktop ..
 
 it have "on-demand" and "continuous" render modes as options:
-- in on-demand mode the desktop will render as little as possbile 
-(at idle, it's like 1 or 2 FPS, but the desktop is reactive,
- average rendering frame time is 0.05ms, as soon as you just blink, the FPS
-adapts to reach up to target fps if need be).
+- in on-demand mode the desktop will try to render as little as possbile 
+  (at idle, it's like 1 or 2 FPS, with average frame time 0.05ms ).
 - in continuous mode it always render at the target fps, like 60 or 120fps.
 
-on general usage, for me: 10-20 windows opened, browser with 20 tabs or such,
-terminal with 3-8 tabs, the desktop itself usualy take between 0 and >1% cpu time.
-the filemanager 'workbench' can display very large directories instantly.
-i have a dir with 2000 books (epubs, small files), workbench display that 
-instantly with all the icons (def_icons), and i can scroll through them without
-any slowdowns or stuttering, coughing, sneezing or whatever. it just flows.
+on general usage, the desktop itself usualy take between 0 and >1% cpu time.
 workbench can show files in "Icons" or "Names" modes and its windows can be made
 "spatial" or "lister".  
 ( spatial is: open a new window each time you open a dir.  
 lister is: reuse the same window, keep it, all the time ).  
 
 icons being used can be customised very easily. 
-you can make it all mwb, or all glowicons, for example.
 amiwb scans `/usr/local/share/amiwb/icons/def_icons/` at start.
 files like "def_zip.info" or "def_mp3.info" are automatically picked up and
 will be used as default icon for the filetype.
 and it looks for iconify icons in  `/usr/local/share/amiwb/icons/`
-or in `~/.config/amiwb/icons/` and `def_icons/`.
 general settings are in file `~/.config/amiwb/amiwbrc`.
 
 shortcuts, all use the "super" key. 
@@ -102,7 +87,6 @@ example:
     (classic, mwb, glowicons supported).
     the icon matching system works like on amiga: "xyz" dir will display image 
     from "xyz.info" icon next to it, while hidding the .info file itself. same for files. multiselection works. some menu actions do support it (most don't yet.)
-    for now, one icon only can be dragged around at a time.
     file execution works through xdg-open for now.
     def_icons system works, it's simple and based on file extensions for matching.
 
