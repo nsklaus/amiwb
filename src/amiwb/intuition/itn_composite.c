@@ -122,6 +122,10 @@ bool itn_composite_init_overlay(void) {
     // Pass 0 rectangles to create empty input region (input passes through)
     XShapeCombineRectangles(dpy, overlay_window, ShapeInput, 0, 0, NULL, 0, ShapeSet, 0);
 
+    // Select Expose events on overlay to detect VT switch screen invalidation
+    // Picom does this - Expose events fire when X server needs screen refresh
+    XSelectInput(dpy, overlay_window, ExposureMask);
+
     // Get standard formats
     format_32 = XRenderFindStandardFormat(dpy, PictStandardARGB32);
     format_24 = XRenderFindStandardFormat(dpy, PictStandardRGB24);
@@ -421,16 +425,16 @@ bool itn_composite_remove_override(Window win) {
                 // Clear all accumulated damage
                 XDamageSubtract(dpy, ow->damage, None, None);
 
-                // Drain ALL pending XDamageNotify events for THIS specific damage object
+                // Drain pending XDamageNotify events for THIS specific damage object
                 // This prevents BadMatch errors when event loop processes stale events
                 int damage_base = itn_core_get_damage_event_base();
                 XEvent ev;
                 while (XCheckTypedEvent(dpy, damage_base + XDamageNotify, &ev)) {
                     XDamageNotifyEvent *dev = (XDamageNotifyEvent *)&ev;
                     if (dev->damage != ow->damage) {
-                        // Not ours - put it back for event loop to process
+                        // Not ours - put it back and stop checking
                         XPutBackEvent(dpy, &ev);
-                        // Continue checking - there may be more events for our damage after this one
+                        break;  // CRITICAL: Prevents infinite loop (XPutBackEvent + continue = same event again)
                     }
                     // Event for our damage object - discard it (resource about to be destroyed)
                 }
@@ -471,9 +475,11 @@ void itn_composite_render_all(void) {
     XRenderColor black = {0, 0, 0, 0xffff};
     XRenderFillRectangle(dpy, PictOpSrc, back_buffer, &black, 0, 0, actual_width, actual_height);
 
-    // TODO: Render wallpaper if available
-    if (wallpaper_pict) {
-        XRenderComposite(dpy, PictOpSrc, wallpaper_pict, None, back_buffer,
+    // Render desktop wallpaper from RenderContext (loaded by render_load_wallpapers())
+    // This ensures wallpaper appears correctly after VT switch or hot-restart
+    RenderContext *render_ctx = get_render_context();
+    if (render_ctx && render_ctx->desk_picture) {
+        XRenderComposite(dpy, PictOpSrc, render_ctx->desk_picture, None, back_buffer,
                         0, 0, 0, 0, 0, 0, actual_width, actual_height);
     }
 

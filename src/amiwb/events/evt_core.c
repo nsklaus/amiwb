@@ -6,6 +6,7 @@
 #include "evt_internal.h"
 #include "../menus/menu_public.h"
 #include "../intuition/itn_public.h"
+#include "../intuition/itn_internal.h"
 #include "../workbench/wb_public.h"
 #include "../dialogs/dialog_public.h"
 #include "../render/rnd_public.h"

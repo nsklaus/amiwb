@@ -3,6 +3,8 @@
 // Routes window lifecycle events (map, unmap, destroy, expose) to intuition
 
 #include "evt_internal.h"
+#include "../intuition/itn_internal.h"  // For DAMAGE_CANVAS, SCHEDULE_FRAME macros
+#include "../render/rnd_public.h"       // For redraw_canvas
 #include <X11/Xlib.h>
 
 // ============================================================================
@@ -45,7 +47,27 @@ Canvas *resolve_event_canvas(Window w, int in_x, int in_y, int *out_x, int *out_
 
 // Dispatch window expose - forward to intuition so frames and canvases redraw
 void handle_expose(XExposeEvent *event) {
-    // Canvas lookup removed - was unused
+    // Check if this is an expose event on the compositor overlay window
+    // After VT switch, X server sends Expose to overlay, signaling screen needs full refresh
+    Window overlay = itn_composite_get_overlay_window();
+
+    if (overlay != None && event->window == overlay && event->count == 0) {
+        // Overlay window exposed (VT switch, screen resume, etc.)
+        // Force full screen refresh - desktop and menubar
+        Canvas *desktop = itn_canvas_get_desktop();
+        Canvas *menubar = get_menubar();
+
+        if (desktop) {
+            redraw_canvas(desktop);
+            DAMAGE_CANVAS(desktop);
+        }
+        if (menubar) {
+            redraw_canvas(menubar);
+            DAMAGE_CANVAS(menubar);
+        }
+        SCHEDULE_FRAME();
+    }
+
     intuition_handle_expose(event);
 }
 

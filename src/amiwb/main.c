@@ -232,7 +232,15 @@ int main(int argc, char *argv[]) {
         cleanup_intuition();
         return EXIT_FAILURE;
     }
-    
+
+    // Refresh desktop after compositor initialization (ensures clean state after hot-restart)
+    Canvas *desktop = itn_canvas_get_desktop();
+    if (desktop) {
+        redraw_canvas(desktop);
+        DAMAGE_CANVAS(desktop);
+        SCHEDULE_FRAME();
+    }
+
     // Start event loop
     handle_events();
     
