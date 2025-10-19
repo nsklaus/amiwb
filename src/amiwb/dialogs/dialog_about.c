@@ -200,22 +200,14 @@ void dialog_about_render_content(Canvas *canvas, Dialog *dialog) {
                      (FcChar8*)line, strlen(line));
     text_y += line_height;
 
-    // Line 9: iGPU (hide RAM if N/A)
-    if (strcmp(info->igpu_ram, "N/A") == 0) {
-        snprintf(line, sizeof(line), "  iGPU    : %s", info->igpu_name);
-    } else {
-        snprintf(line, sizeof(line), "  iGPU    : %s %s", info->igpu_name, info->igpu_ram);
-    }
+    // Line 9: iGPU (show model name only, no RAM)
+    snprintf(line, sizeof(line), "  iGPU    : %s", info->igpu_name);
     XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_x, text_y,
                      (FcChar8*)line, strlen(line));
     text_y += line_height;
 
-    // Line 10: dGPU (hide RAM if N/A)
-    if (strcmp(info->dgpu_ram, "N/A") == 0) {
-        snprintf(line, sizeof(line), "  dGPU    : %s", info->dgpu_name);
-    } else {
-        snprintf(line, sizeof(line), "  dGPU    : %s %s", info->dgpu_name, info->dgpu_ram);
-    }
+    // Line 10: dGPU (show model name only, no RAM)
+    snprintf(line, sizeof(line), "  dGPU    : %s", info->dgpu_name);
     XftDrawStringUtf8(canvas->xft_draw, &xft_text, font, text_x, text_y,
                      (FcChar8*)line, strlen(line));
     text_y += line_height;

@@ -804,6 +804,11 @@ void itn_events_handle_map(XMapEvent *event) {
     canvas->comp_mapped = true;
     canvas->comp_visible = true;
 
+    // Clear app_hidden flag - app is remapping its window (e.g., Sublime tab switch back)
+    if (canvas->app_hidden) {
+        canvas->app_hidden = 0;
+    }
+
     // Setup compositing if needed
     if (!canvas->comp_damage && itn_composite_is_active()) {
         itn_composite_setup_canvas(canvas);
@@ -835,6 +840,12 @@ void itn_events_handle_unmap(XUnmapEvent *event) {
         canvas = itn_canvas_find_by_client(event->window);
     }
     if (!canvas) return;
+
+    // Detect application-initiated unmapping (e.g., Sublime tab switching)
+    // If we didn't initiate the unmap (user_iconified not set), this is app behavior
+    if (!canvas->user_iconified && canvas->comp_mapped) {
+        canvas->app_hidden = 1;  // App is hiding its own window
+    }
 
     canvas->comp_mapped = false;
     canvas->comp_visible = false;

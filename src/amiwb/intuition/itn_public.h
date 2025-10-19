@@ -100,6 +100,10 @@ typedef struct Canvas {
     bool disable_scrollbars;
     bool show_title;  // Dynamic visibility based on available space (prevents collision with buttons)
 
+    // Window state tracking (distinguish unmapping sources)
+    unsigned int user_iconified : 1;  // User explicitly iconified (via iconify button or menu)
+    unsigned int app_hidden : 1;      // Application unmapped window (e.g., Sublime tab switching)
+
     // Text rendering
     XftDraw *xft_draw;
     XftColor xft_black;

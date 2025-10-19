@@ -109,7 +109,11 @@ void wb_icons_restore_iconified(FileIcon *icon) {
     canvas->comp_mapped = true;
     canvas->comp_visible = true;
 
-    XSync(dpy, False);
+    // Clear user iconified flag - window is being restored
+    canvas->user_iconified = 0;
+
+    // Flush output buffer (no round-trip wait needed - polling loop below will verify)
+    XFlush(dpy);
 
     // Prevent trailing click from deactivating
     suppress_desktop_deactivate_for_ms(200);

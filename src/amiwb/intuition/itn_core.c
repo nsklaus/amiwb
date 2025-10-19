@@ -462,7 +462,13 @@ int get_window_list(Canvas ***windows) {
     int total = itn_manager_get_count();
     for (int i = 0; i < total; i++) {
         Canvas *c = itn_manager_get_canvas(i);
-        if (c && (c->type == WINDOW || c->type == DIALOG)) {
+        if (!c || (c->type != WINDOW && c->type != DIALOG)) continue;
+
+        // Include window if:
+        // 1. User iconified it (needs to be restorable from window list)
+        // 2. Currently mapped AND not hidden by app (actually visible)
+        // Exclude: app_hidden windows (Sublime phantom tabs, etc.)
+        if (c->user_iconified || (c->comp_mapped && !c->app_hidden)) {
             window_list[count++] = c;
             if (count >= MAX_WINDOWS) break;  // Safety limit
         }

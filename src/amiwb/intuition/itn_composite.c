@@ -414,12 +414,28 @@ bool itn_composite_remove_override(Window win) {
             // Found it - remove from list
             *prev = ow->next;
 
-            // Clean up resources - CRITICAL: flush pending damage events first
-            // to prevent BadDamage/RenderBadPicture errors from tooltips/popups
+            // Clean up resources - CRITICAL: drain pending damage events BEFORE destroying
+            // Race condition: XDamageNotify events may be queued before resource destruction
+            // XSync() only flushes output, NOT input queue - must use XCheckTypedEvent()
             if (ow->damage) {
-                // Clear all accumulated damage and flush the event queue
+                // Clear all accumulated damage
                 XDamageSubtract(dpy, ow->damage, None, None);
-                XSync(dpy, False);  // Wait for all pending events to be processed
+
+                // Drain ALL pending XDamageNotify events for THIS specific damage object
+                // This prevents BadMatch errors when event loop processes stale events
+                int damage_base = itn_core_get_damage_event_base();
+                XEvent ev;
+                while (XCheckTypedEvent(dpy, damage_base + XDamageNotify, &ev)) {
+                    XDamageNotifyEvent *dev = (XDamageNotifyEvent *)&ev;
+                    if (dev->damage != ow->damage) {
+                        // Not ours - put it back for event loop to process
+                        XPutBackEvent(dpy, &ev);
+                        // Continue checking - there may be more events for our damage after this one
+                    }
+                    // Event for our damage object - discard it (resource about to be destroyed)
+                }
+
+                // NOW safe to destroy - no queued events reference this resource
                 XDamageDestroy(dpy, ow->damage);
             }
             if (ow->picture) XRenderFreePicture(dpy, ow->picture);

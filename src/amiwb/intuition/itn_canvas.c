@@ -702,17 +702,20 @@ void itn_canvas_cleanup_compositing(Canvas *canvas) {
 
         // Restore original error handler
         XSetErrorHandler(old_handler);
-        canvas->comp_damage = 0;
+        canvas->comp_damage = None;
     }
 
-    if (canvas->comp_picture) {
+    // Use None instead of 0 - must set to None after freeing to prevent double-free
+    if (canvas->comp_picture != None) {
         XRenderFreePicture(dpy, canvas->comp_picture);
-        canvas->comp_picture = 0;
+        canvas->comp_picture = None;
     }
 
-    if (canvas->comp_pixmap) {
+    // Use None instead of 0 to check - 0 is actually a valid (though unusual) X11 resource ID
+    // Must set to None after freeing to prevent double-free
+    if (canvas->comp_pixmap != None) {
         XFreePixmap(dpy, canvas->comp_pixmap);
-        canvas->comp_pixmap = 0;
+        canvas->comp_pixmap = None;
     }
 }
 
@@ -725,6 +728,10 @@ void iconify_canvas(Canvas *canvas) {
 
     // Check if this window owns the app menu before iconifying
     bool was_menu_owner = (canvas->client_win == get_app_menu_window());
+
+    // Mark as user-iconified BEFORE unmapping (for UnmapNotify handler to distinguish)
+    canvas->user_iconified = 1;
+    canvas->app_hidden = 0;  // Clear app hidden state (we're taking control)
 
     // Hide the window
     safe_unmap_window(dpy, canvas->win);

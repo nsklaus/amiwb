@@ -108,11 +108,16 @@ void itn_focus_cycle_next(void) {
     for (int i = 0; i < count; i++) {
         Canvas *c = itn_manager_get_canvas(i);
         if (c && (c->type == WINDOW || c->type == DIALOG)) {
-            if (c == g_active_canvas) {
-                current_index = window_count;
+            // Apply same filter as get_window_list():
+            // Include user-iconified (can be restored) OR visible non-hidden windows
+            // Exclude app-hidden windows (e.g., Sublime phantom tabs)
+            if (c->user_iconified || (c->comp_mapped && !c->app_hidden)) {
+                if (c == g_active_canvas) {
+                    current_index = window_count;
+                }
+                windows[window_count++] = c;
+                if (window_count >= MAX_WINDOWS) break;
             }
-            windows[window_count++] = c;
-            if (window_count >= MAX_WINDOWS) break;
         }
     }
 
@@ -160,11 +165,16 @@ void itn_focus_cycle_prev(void) {
     for (int i = 0; i < count; i++) {
         Canvas *c = itn_manager_get_canvas(i);
         if (c && (c->type == WINDOW || c->type == DIALOG)) {
-            if (c == g_active_canvas) {
-                current_index = window_count;
+            // Apply same filter as get_window_list():
+            // Include user-iconified (can be restored) OR visible non-hidden windows
+            // Exclude app-hidden windows (e.g., Sublime phantom tabs)
+            if (c->user_iconified || (c->comp_mapped && !c->app_hidden)) {
+                if (c == g_active_canvas) {
+                    current_index = window_count;
+                }
+                windows[window_count++] = c;
+                if (window_count >= MAX_WINDOWS) break;
             }
-            windows[window_count++] = c;
-            if (window_count >= MAX_WINDOWS) break;
         }
     }
 

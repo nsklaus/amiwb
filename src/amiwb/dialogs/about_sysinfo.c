@@ -186,6 +186,10 @@ static bool is_integrated_gpu(const char *pci_slot, unsigned long long vram_byte
     return false;
 }
 
+// Forward declaration for PCI database parser
+static int parse_pci_ids_database(unsigned int vendor_id, unsigned int device_id,
+                                   char *name_out, size_t name_size);
+
 // Get GPU model name from sysfs using vendor/device IDs
 // Direct sysfs read - NO subprocess overhead (vs popen lspci)
 // Returns: 0 on success, -1 on failure (falls back to driver name)
@@ -221,6 +225,11 @@ static int get_gpu_name_from_sysfs(int card_num, const char *pci_slot, const cha
         fclose(label_file);
     }
 
+    // Try PCI IDs database for full model name (e.g., "GeForce RTX 4050 Max-Q / Mobile")
+    if (parse_pci_ids_database(vendor_id, device_id, name_out, name_size) == 0) {
+        return 0;
+    }
+
     // Fallback: Generate name from vendor ID + driver name
     const char *vendor_name = NULL;
     switch (vendor_id) {
@@ -251,6 +260,179 @@ static int get_gpu_name_from_sysfs(int card_num, const char *pci_slot, const cha
     }
 
     return 0;
+}
+
+// Parse PCI IDs database to get GPU model name from vendor/device IDs
+// Format: vendor lines start at column 0, device lines start with tab
+// Example: "10de  NVIDIA Corporation" followed by "\t28e1  AD107M [GeForce RTX 4050 Max-Q / Mobile]"
+// Returns: 0 on success, -1 on failure
+static int parse_pci_ids_database(unsigned int vendor_id, unsigned int device_id,
+                                   char *name_out, size_t name_size) {
+    if (!name_out || name_size == 0) {
+        return -1;
+    }
+
+    // Try standard PCI IDs database paths (Fedora/RHEL, Debian, etc.)
+    const char *pci_ids_paths[] = {
+        "/usr/share/hwdata/pci.ids",
+        "/usr/share/misc/pci.ids",
+        NULL
+    };
+
+    FILE *fp = NULL;
+    for (int i = 0; pci_ids_paths[i] != NULL; i++) {
+        fp = fopen(pci_ids_paths[i], "r");
+        if (fp) break;
+    }
+
+    if (!fp) {
+        return -1;  // No PCI database found
+    }
+
+    // Search for vendor line (format: "10de  NVIDIA Corporation")
+    char vendor_line[16];
+    snprintf(vendor_line, sizeof(vendor_line), "%04x  ", vendor_id);
+
+    bool found_vendor = false;
+    char line[512];
+
+    while (fgets(line, sizeof(line), fp)) {
+        if (!found_vendor) {
+            // Look for vendor at start of line
+            if (strncmp(line, vendor_line, 6) == 0) {
+                found_vendor = true;
+            }
+        } else {
+            // Inside vendor section, look for device (format: "\t28e1  Device Name")
+            if (line[0] == '\t') {
+                // Check if this is our device
+                char device_line[16];
+                snprintf(device_line, sizeof(device_line), "\t%04x  ", device_id);
+
+                if (strncmp(line, device_line, 7) == 0) {
+                    // Found device! Extract name starting at position 7
+                    const char *device_name = line + 7;
+
+                    // Remove trailing newline
+                    size_t len = strlen(device_name);
+                    while (len > 0 && (device_name[len - 1] == '\n' || device_name[len - 1] == '\r')) {
+                        len--;
+                    }
+
+                    // Extract name from brackets if present (e.g., "AD107M [GeForce RTX 4050]" -> "GeForce RTX 4050")
+                    const char *bracket_start = strchr(device_name, '[');
+                    const char *bracket_end = strchr(device_name, ']');
+
+                    if (bracket_start && bracket_end && bracket_end > bracket_start) {
+                        // Copy name from inside brackets
+                        size_t bracket_len = bracket_end - bracket_start - 1;
+                        if (bracket_len > 0 && bracket_len < name_size) {
+                            strncpy(name_out, bracket_start + 1, bracket_len);
+                            name_out[bracket_len] = '\0';
+                            fclose(fp);
+                            return 0;
+                        }
+                    }
+
+                    // No brackets or extraction failed - use entire name
+                    if (len > 0 && len < name_size) {
+                        strncpy(name_out, device_name, len);
+                        name_out[len] = '\0';
+                        fclose(fp);
+                        return 0;
+                    }
+                }
+            } else if (line[0] != '#' && line[0] != '\t') {
+                // Hit next vendor section without finding our device
+                break;
+            }
+        }
+    }
+
+    fclose(fp);
+    return -1;  // Device not found in database
+}
+
+// Map Apple Silicon chip codes to marketing names
+// Based on https://github.com/AsahiLinux/docs/wiki/Codenames
+static const char *apple_chip_code_to_name(unsigned int code) {
+    switch (code) {
+        case 8103: return "Apple M1";
+        case 6000: return "Apple M1 Pro";
+        case 6001: return "Apple M1 Max";
+        case 6002: return "Apple M1 Ultra";
+        case 8112: return "Apple M2";
+        case 6020: return "Apple M2 Pro";
+        case 6021: return "Apple M2 Max";
+        case 6022: return "Apple M2 Ultra";
+        case 8122: return "Apple M3";
+        case 6030: return "Apple M3 Pro";
+        case 6031:
+        case 6034: return "Apple M3 Max";
+        case 8132: return "Apple M4";
+        case 6040: return "Apple M4 Pro";
+        case 6041: return "Apple M4 Max";
+        default: return NULL;
+    }
+}
+
+// Detect CPU name from device tree (ARM/Apple Silicon)
+// Reads /proc/device-tree/compatible for vendor,model pairs
+// Returns: 0 on success with name_out populated, -1 on failure
+static int detect_cpu_from_devicetree(char *name_out, size_t name_size) {
+    if (!name_out || name_size == 0) return -1;
+
+    FILE *fp = fopen("/proc/device-tree/compatible", "r");
+    if (!fp) return -1;
+
+    // Device tree compatible format: "vendor,model\0vendor,model\0..."
+    char buffer[512];
+    size_t bytes_read = fread(buffer, 1, sizeof(buffer) - 1, fp);
+    fclose(fp);
+
+    if (bytes_read == 0) return -1;
+    buffer[bytes_read] = '\0';
+
+    // Parse backwards to find first valid vendor,model pair
+    // Skip entries ending with "-platform" or "-soc" (not CPU identifiers)
+    for (size_t i = 0; i < bytes_read; ) {
+        size_t len = strlen(buffer + i);
+        if (len == 0) break;
+
+        char *comma = strchr(buffer + i, ',');
+        if (comma) {
+            *comma = '\0';  // Split vendor and model
+            const char *vendor = buffer + i;
+            const char *model = comma + 1;
+
+            // Skip platform/soc entries
+            if (strstr(model, "-platform") || strstr(model, "-soc")) {
+                i += len + 1;
+                continue;
+            }
+
+            // Apple Silicon detection
+            if (strcmp(vendor, "apple") == 0 && model[0] == 't') {
+                unsigned int chip_code = (unsigned int)strtoul(model + 1, NULL, 10);
+                const char *chip_name = apple_chip_code_to_name(chip_code);
+                if (chip_name) {
+                    snprintf(name_out, name_size, "%s", chip_name);
+                    return 0;
+                }
+                // Fallback: "Apple Silicon tXXXX"
+                snprintf(name_out, name_size, "Apple Silicon %s", model);
+                return 0;
+            }
+
+            // Other vendors: just use model name
+            snprintf(name_out, name_size, "%s", model);
+            return 0;
+        }
+
+        i += len + 1;  // Move to next entry
+    }
+
+    return -1;
 }
 
 // Strip GPU info from CPU name (e.g., "AMD Ryzen 7 8845HS w/ Radeon 780M Graphics" -> "AMD Ryzen 7 8845HS")
@@ -471,6 +653,13 @@ SystemInfo *about_sysinfo_gather(void) {
         // Strip GPU info from CPU name if present (e.g., "w/ Radeon 780M Graphics")
         if (found) {
             strip_gpu_from_cpu_name(info->cpu_name, igpu_from_cpu, sizeof(igpu_from_cpu));
+        }
+
+        // Fallback for ARM/Apple Silicon: Try device-tree if /proc/cpuinfo failed
+        if (!found) {
+            if (detect_cpu_from_devicetree(info->cpu_name, sizeof(info->cpu_name)) == 0) {
+                found = true;
+            }
         }
     }
 

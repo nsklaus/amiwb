@@ -2073,15 +2073,15 @@ const GLOBAL_STYLES = `
     border: 1px solid #000000 !important;
   }
   
-  /* Selection */
+  /* Selection - matches AmiWB workbench multi-select rectangle (RGB 153, 204, 255) */
   ::selection {
-    background-color: #000cda !important;
-    color: #FFFFFF !important;
+    background-color: rgb(153, 204, 255) !important;
+    color: #000000 !important;
   }
-  
+
   ::-moz-selection {
-    background-color: #000cda !important;
-    color: #FFFFFF !important;
+    background-color: rgb(153, 204, 255) !important;
+    color: #000000 !important;
   }
   
   /* Video overlays - preserve original backgrounds and images */

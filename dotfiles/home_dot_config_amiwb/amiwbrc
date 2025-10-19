@@ -56,7 +56,7 @@ render_mode = 0
 #   Common values: 30, 60, 120, 144
 #   Lower values use less power
 #   Only matters in continuous mode or during active interaction
-target_fps = 120
+target_fps = 60
 
 # Menu Addons
 # Comma-separated list of widgets to show in menubar 
@@ -68,9 +68,7 @@ target_fps = 120
 #   - temps:  Show laptop temp for sensor k10temp
 #   - fans:   Shows fans RPM 
 # Default: empty (no addons displayed)
-# Examples:
-#   menu_addons = clock
-#   menu_addons = cpu,memory,clock
+# Example:
 #   menu_addons = cpu,memory,temps,fans,clock
 menu_addons = clock
 
