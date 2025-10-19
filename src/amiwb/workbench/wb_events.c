@@ -228,7 +228,14 @@ void workbench_handle_button_press(XButtonEvent *event) {
         multiselect_active = false;
         multiselect_target_canvas = NULL;
 
-        select_icon(icon, canvas, event->state);
+        // Check if clicking on already-selected icon
+        bool ctrl = (event->state & ControlMask) != 0;
+        if (!icon->selected || ctrl) {
+            // Unselected icon or Ctrl modifier: call select_icon (handles toggle/exclusive)
+            select_icon(icon, canvas, event->state);
+        }
+        // Already-selected icon (no Ctrl): preserve selection for multi-drag
+
         start_drag_icon(icon, event->x, event->y);
         icon->last_click_time = event->time;
     } else {

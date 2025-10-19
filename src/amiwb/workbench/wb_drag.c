@@ -53,6 +53,11 @@ typedef struct {
 // Global drag icon (exposed for XDND)
 FileIcon *dragged_icon = NULL;
 
+// Multi-icon drag support (AWP - module-private state)
+static FileIcon **dragged_icons = NULL;    // Array of selected icons being dragged
+static int dragged_icons_count = 0;        // Number of icons in array
+static bool in_multi_icon_processing = false;  // Prevent cleanup during array iteration
+
 // Drag state
 static int drag_start_x, drag_start_y;                  // Click position in icon
 static int drag_start_root_x, drag_start_root_y;        // Start position in root
@@ -162,6 +167,39 @@ void refresh_canvas(Canvas *canvas) {
 // ============================================================================
 // Drag Helper Functions (Static - Module Private)
 // ============================================================================
+
+// Collect all selected icons from canvas into dragged_icons array
+static void collect_selected_icons(Canvas *source_canvas) {
+    if (!source_canvas) return;
+
+    FileIcon **icons = wb_icons_array_get();
+    int total_count = wb_icons_array_count();
+    if (!icons || total_count <= 0) return;
+
+    // Count selected icons on source canvas
+    int selected_count = 0;
+    for (int i = 0; i < total_count; i++) {
+        if (icons[i]->display_window == source_canvas->win && icons[i]->selected) {
+            selected_count++;
+        }
+    }
+
+    if (selected_count == 0) return;
+
+    // Allocate array for selected icons
+    dragged_icons = malloc(sizeof(FileIcon*) * selected_count);
+    if (!dragged_icons) {
+        return;
+    }
+
+    // Fill array with selected icons
+    dragged_icons_count = 0;
+    for (int i = 0; i < total_count; i++) {
+        if (icons[i]->display_window == source_canvas->win && icons[i]->selected) {
+            dragged_icons[dragged_icons_count++] = icons[i];
+        }
+    }
+}
 
 // Get desktop directory path
 static void get_desktop_directory(char *buf, size_t size) {
@@ -330,42 +368,71 @@ static void draw_drag_icon(void) {
     XRenderFillRectangle(dpy, PictOpSrc, target_picture, &clear,
                         0, 0, drag_win_w, drag_win_h);
 
-    // Center icon in drag window
-    int dx = (drag_win_w - dragged_icon->width) / 2;
-    int dy = (drag_win_h - dragged_icon->height - 20) / 2;
-
-    // Composite icon
-    if (dragged_icon->current_picture) {
-        XRenderComposite(dpy, PictOpOver,
-                        dragged_icon->current_picture, None, target_picture,
-                        0, 0, 0, 0, dx, dy,
-                        dragged_icon->width, dragged_icon->height);
+    // Determine how many icons to show (max 10 for visual clarity)
+    int icons_to_show = 1;
+    if (dragged_icons_count > 1) {
+        icons_to_show = dragged_icons_count < 10 ? dragged_icons_count : 10;
     }
 
-    // Draw label
-    if (dragged_icon->label) {
-        // Use drag window's actual visual and colormap (32-bit), not default (24-bit)
-        XftDraw *xft = XftDrawCreate(dpy, drag_win, drag_visual, drag_colormap);
-        if (xft) {
-            XftColor color;
-            XRenderColor rc = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
-            XftColorAllocValue(dpy, drag_visual, drag_colormap, &rc, &color);
+    // Render icons with stacking effect
+    for (int i = 0; i < icons_to_show; i++) {
+        FileIcon *icon = (i == 0) ? dragged_icon : dragged_icons[i];
+        if (!icon || !icon->current_picture) continue;
 
-            XftFont *font = get_font();
-            if (font) {
-                const char *text = dragged_icon->label;
+        // Stack offset: each icon offset by 3px right and 3px down for depth
+        int offset_x = i * 3;
+        int offset_y = i * 3;
+
+        // Center first icon, offset others
+        int dx = (drag_win_w - icon->width) / 2 + offset_x;
+        int dy = (drag_win_h - icon->height - 20) / 2 + offset_y;
+
+        // Composite icon
+        XRenderComposite(dpy, PictOpOver,
+                        icon->current_picture, None, target_picture,
+                        0, 0, 0, 0, dx, dy,
+                        icon->width, icon->height);
+    }
+
+    // Draw label (count for multiple, name for single)
+    XftDraw *xft = XftDrawCreate(dpy, drag_win, drag_visual, drag_colormap);
+    if (xft) {
+        XftColor color;
+        XRenderColor rc = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+        XftColorAllocValue(dpy, drag_visual, drag_colormap, &rc, &color);
+
+        XftFont *font = get_font();
+        if (font) {
+            const char *text = NULL;
+            char count_text[32];
+            int ty;
+
+            if (dragged_icons_count > 1) {
+                // Multiple icons: show count at bottom
+                snprintf(count_text, sizeof(count_text), "%d items", dragged_icons_count);
+                text = count_text;
+                ty = drag_win_h - 10;
+            } else if (dragged_icon->label) {
+                // Single icon: show name below icon (original position)
+                text = dragged_icon->label;
+                int dy = (drag_win_h - dragged_icon->height - 20) / 2;
+                ty = dy + dragged_icon->height + 15;
+            } else {
+                text = NULL;
+            }
+
+            if (text) {
                 int text_w = get_text_width(text);
                 int tx = (drag_win_w - text_w) / 2;
-                int ty = dy + dragged_icon->height + 15;
 
                 XftDrawStringUtf8(xft, &color, font, tx, ty,
                                  (const FcChar8*)text, strlen(text));
             }
-
-            XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
-                        DefaultColormap(dpy, DefaultScreen(dpy)), &color);
-            XftDrawDestroy(xft);
         }
+
+        XftColorFree(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
+                    DefaultColormap(dpy, DefaultScreen(dpy)), &color);
+        XftDrawDestroy(xft);
     }
 }
 
@@ -499,6 +566,9 @@ void start_drag_icon(FileIcon *icon, int x, int y) {
     dragging_floating = false;
     drag_active = false;
 
+    // Note: Icon collection moved to continue_drag_icon() after 10px threshold
+    // This prevents false positives on simple clicks
+
     Display *dpy = itn_core_get_display();
     int rx, ry, wx, wy;
     unsigned int mask;
@@ -521,10 +591,25 @@ void continue_drag_icon(XMotionEvent *event, Canvas *canvas) {
 
         // Activate drag
         drag_active = true;
-        if (dragged_icon && saved_source_window != None) {
-            dragged_icon->display_window = None;
-            if (drag_source_canvas) redraw_canvas(drag_source_canvas);
+
+        // Collect selected icons if dragging a selected icon (only when drag actually starts)
+        if (dragged_icon && dragged_icon->selected && drag_source_canvas) {
+            collect_selected_icons(drag_source_canvas);
         }
+
+        // Hide all icons in selection during drag
+        if (dragged_icons_count > 0) {
+            for (int i = 0; i < dragged_icons_count; i++) {
+                if (dragged_icons[i]) {
+                    dragged_icons[i]->display_window = None;
+                }
+            }
+        } else if (dragged_icon && saved_source_window != None) {
+            // Single icon drag
+            dragged_icon->display_window = None;
+        }
+
+        if (drag_source_canvas) redraw_canvas(drag_source_canvas);
     }
 
     // Create floating drag window
@@ -811,6 +896,192 @@ static void perform_cross_canvas_drop(Canvas *target) {
     }
 }
 
+// Helper: Process multi-icon drop operation (copy or move all selected icons)
+static void perform_multi_icon_drop(Canvas *target, bool force_copy) {
+    if (!dragged_icons || dragged_icons_count == 0) return;
+    if (!target) return;
+
+    // No drag occurred - just a click, do nothing
+    if (!drag_active) {
+        return;
+    }
+
+    bool is_same_canvas = (target == drag_source_canvas);
+
+    // Same-canvas repositioning (no Shift): just move icons, no file operations
+    if (is_same_canvas && !force_copy) {
+        int place_x = 0, place_y = 0;
+        calculate_drop_position(target, &place_x, &place_y);
+
+        for (int i = 0; i < dragged_icons_count; i++) {
+            FileIcon *icon = dragged_icons[i];
+            if (!icon) continue;
+
+            // Restore display_window (was set to None during drag)
+            if (saved_source_window != None) {
+                icon->display_window = saved_source_window;
+            }
+
+            int icon_x = place_x + (i * 10);
+            int icon_y = place_y + (i * 10);
+            move_icon(icon, icon_x, icon_y);
+        }
+
+        refresh_canvas(target);
+        return;
+    }
+
+    // File operations: same-canvas duplication (Shift) OR cross-canvas move/copy
+    // Determine destination directory
+    char dst_dir[PATH_SIZE];
+    if (target->type == DESKTOP) {
+        get_desktop_directory(dst_dir, sizeof(dst_dir));
+    } else if (target->type == WINDOW && target->path) {
+        snprintf(dst_dir, sizeof(dst_dir), "%s", target->path);
+    } else {
+        return;  // Invalid target
+    }
+
+    // Calculate base drop position
+    int place_x = 0, place_y = 0;
+    calculate_drop_position(target, &place_x, &place_y);
+
+    // CRITICAL: Restore display_window for ALL icons BEFORE processing operations
+    // Icons were hidden during drag (display_window = None)
+    // If operations fail, icons must be visible again in source window
+    for (int i = 0; i < dragged_icons_count; i++) {
+        if (dragged_icons[i] && saved_source_window != None) {
+            dragged_icons[i]->display_window = saved_source_window;
+        }
+    }
+
+    // Protect dragged_icons array from being freed during iteration
+    // (destroy_icon can trigger cleanup if destroying the clicked icon)
+    in_multi_icon_processing = true;
+
+    // Process each icon in selection (synchronous moves, async for cross-filesystem)
+    for (int i = 0; i < dragged_icons_count; i++) {
+        FileIcon *icon = dragged_icons[i];
+        if (!icon || !icon->path || !*icon->path) {
+            continue;
+        }
+
+        // Skip prime icons (System "/" and Home directory)
+        const char *home = getenv("HOME");
+        bool is_prime = (strcmp(icon->path, "/") == 0 || (home && strcmp(icon->path, home) == 0));
+        if (is_prime) {
+            continue;
+        }
+
+        // Skip iconified windows (not regular files/directories)
+        if (icon->type == TYPE_ICONIFIED) {
+            continue;
+        }
+
+        // Safety check: prevent moving directory into itself
+        if (icon->type == TYPE_DRAWER && !force_copy) {
+            size_t src_len = strlen(icon->path);
+            if (strncmp(dst_dir, icon->path, src_len) == 0 &&
+                (dst_dir[src_len] == '/' || dst_dir[src_len] == '\0')) {
+                continue;
+            }
+        }
+
+        // Calculate individual icon drop position (offset for spacing)
+        int icon_x = place_x + (i * 10);
+        int icon_y = place_y + (i * 10);
+
+        // Build destination path (use FULL_SIZE for path + "/" + filename combinations)
+        char dst_path[FULL_SIZE];
+
+        if (force_copy) {
+            // Copy operation - use progress system
+            const char *basename_ptr = strrchr(icon->path, '/');
+            const char *filename = basename_ptr ? basename_ptr + 1 : icon->path;
+
+            if (is_same_canvas) {
+                snprintf(dst_path, sizeof(dst_path), "%s/copy_%s", dst_dir, filename);
+            } else {
+                snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_dir, filename);
+            }
+
+            // Prepare icon metadata
+            ProgressMessage icon_meta = {0};
+            icon_meta.create_icon = true;
+            icon_meta.icon_x = icon_x;
+            icon_meta.icon_y = icon_y;
+            icon_meta.target_window = target->win;
+            snprintf(icon_meta.dest_path, sizeof(icon_meta.dest_path), "%s", dst_path);
+            snprintf(icon_meta.dest_dir, sizeof(icon_meta.dest_dir), "%s", dst_dir);
+
+            wb_progress_perform_operation_ex(FILE_OP_COPY, icon->path, dst_path, NULL, &icon_meta);
+        } else {
+            // Move operation - try synchronous move first
+            int moved = wb_fileops_move_ex(icon->path, dst_dir, dst_path, sizeof(dst_path),
+                                          target, icon_x, icon_y);
+
+            if (moved == 0) {
+                // Synchronous move succeeded
+                char src_path_abs[PATH_SIZE];
+                snprintf(src_path_abs, sizeof(src_path_abs), "%s", icon->path);
+
+                destroy_icon(icon);
+                move_sidecar_info_file(src_path_abs, dst_dir, dst_path);
+                create_icon_for_dropped_file(dst_path, target, icon_x, icon_y);
+                remove_desktop_icon_if_applicable(src_path_abs);
+            } else if (moved == 2) {
+                // Cross-filesystem - use async progress system
+                char src_path_abs[PATH_SIZE];
+                snprintf(src_path_abs, sizeof(src_path_abs), "%s", icon->path);
+
+                ProgressMessage icon_meta = {0};
+                icon_meta.create_icon = true;
+                icon_meta.icon_x = icon_x;
+                icon_meta.icon_y = icon_y;
+                icon_meta.target_window = target->win;
+                snprintf(icon_meta.dest_path, sizeof(icon_meta.dest_path), "%s", dst_path);
+                snprintf(icon_meta.dest_dir, sizeof(icon_meta.dest_dir), "%s", dst_dir);
+
+                // Check for sidecar .info file
+                char src_info[FULL_SIZE];
+                snprintf(src_info, sizeof(src_info), "%s.info", src_path_abs);
+                if (check_if_file_exists(src_info)) {
+                    if (strlen(dst_path) + 5 + 1 <= sizeof(icon_meta.sidecar_dst)) {
+                        icon_meta.has_sidecar = true;
+                        snprintf(icon_meta.sidecar_src, sizeof(icon_meta.sidecar_src), "%s", src_info);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+                        snprintf(icon_meta.sidecar_dst, sizeof(icon_meta.sidecar_dst), "%s.info", dst_path);
+#pragma GCC diagnostic pop
+                    }
+                }
+
+                wb_progress_perform_operation_ex(FILE_OP_MOVE, src_path_abs, dst_path, NULL, &icon_meta);
+                destroy_icon(icon);
+            }
+            // else: moved == -1 (failure), icon stays in source with display_window restored
+        }
+    }
+
+    // Processing complete - allow cleanup now
+    in_multi_icon_processing = false;
+
+    // Manually clean up the multi-icon array (since wb_drag_clear_dragged_icon was blocked)
+    if (dragged_icons) {
+        free(dragged_icons);
+        dragged_icons = NULL;
+        dragged_icons_count = 0;
+    }
+
+    // Refresh canvases
+    if (drag_source_canvas) {
+        refresh_canvas(drag_source_canvas);
+    }
+    if (target && target != drag_source_canvas) {
+        refresh_canvas(target);
+    }
+}
+
 // Helper: Perform same-canvas drop or handle invalid drop
 static void perform_same_canvas_drop(Canvas *target) {
     if (!dragged_icon) {
@@ -840,6 +1111,14 @@ static void perform_same_canvas_drop(Canvas *target) {
 void end_drag_icon(Canvas *canvas) {
     Display *dpy = itn_core_get_display();
 
+    // Detect Shift key at drop time for copy-instead-of-move modifier
+    Window root_ret, child_ret;
+    int root_x, root_y, win_x, win_y;
+    unsigned int mask;
+    XQueryPointer(dpy, DefaultRootWindow(dpy), &root_ret, &child_ret,
+                  &root_x, &root_y, &win_x, &win_y, &mask);
+    bool shift_held = (mask & ShiftMask) != 0;
+
     // Save drag window position before destroying
     saved_drag_win_x = 0;
     saved_drag_win_y = 0;
@@ -859,18 +1138,47 @@ void end_drag_icon(Canvas *canvas) {
             xdnd_send_leave(dpy, canvas ? canvas->win : None, xdnd_ctx.current_target);
             xdnd_ctx.current_target = None;
         }
+        // Cleanup multi-icon array if allocated
+        if (dragged_icons) {
+            free(dragged_icons);
+            dragged_icons = NULL;
+            dragged_icons_count = 0;
+        }
         return;
     }
 
     // Handle XDND drop
     if (handle_xdnd_drop(canvas)) {
+        // Cleanup multi-icon array
+        if (dragged_icons) {
+            free(dragged_icons);
+            dragged_icons = NULL;
+            dragged_icons_count = 0;
+        }
         return;
     }
 
     // Get target canvas
     Canvas *target = canvas_under_pointer();
 
-    // Handle special icon types
+    // Handle multi-icon drop if selection exists
+    if (dragged_icons_count > 0) {
+        perform_multi_icon_drop(target, shift_held);
+
+        // Cleanup multi-icon array
+        free(dragged_icons);
+        dragged_icons = NULL;
+        dragged_icons_count = 0;
+
+        // Cleanup drag state
+        dragged_icon = NULL;
+        drag_source_canvas = NULL;
+        saved_source_window = None;
+        drag_active = false;
+        return;
+    }
+
+    // Handle special icon types (single-icon only)
     if (handle_iconified_window_drop(target)) {
         return;
     }
@@ -879,7 +1187,7 @@ void end_drag_icon(Canvas *canvas) {
         return;
     }
 
-    // Handle cross-canvas or same-canvas drops
+    // Handle cross-canvas or same-canvas drops (single-icon only)
     perform_cross_canvas_drop(target);
     perform_same_canvas_drop(target);
 
@@ -916,6 +1224,15 @@ FileIcon *wb_drag_get_dragged_icon(void) {
 
 void wb_drag_clear_dragged_icon(void) {
     dragged_icon = NULL;
+
+    // Also clear multi-icon array (unless we're in the middle of processing it)
+    // During multi-icon drop, destroy_icon() can be called on the clicked icon,
+    // which would trigger this cleanup and free the array we're iterating through
+    if (dragged_icons && !in_multi_icon_processing) {
+        free(dragged_icons);
+        dragged_icons = NULL;
+        dragged_icons_count = 0;
+    }
 }
 
 void wb_drag_cleanup_window(void) {
@@ -928,6 +1245,13 @@ void wb_drag_cleanup_window(void) {
 
 void workbench_cleanup_drag_state(void) {
     destroy_drag_window();
+
+    // Cleanup multi-icon array
+    if (dragged_icons) {
+        free(dragged_icons);
+        dragged_icons = NULL;
+        dragged_icons_count = 0;
+    }
 
     if (dragged_icon && saved_source_window != None) {
         dragged_icon->display_window = saved_source_window;
