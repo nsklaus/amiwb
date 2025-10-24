@@ -54,15 +54,15 @@ static bool is_virtual_fs(const char *fs_type) {
 static bool should_skip_mount(const char *mount_point) {
     // Always show these
     if (strcmp(mount_point, "/") == 0) return false;
-    
+
     // Show /home mount (will be converted to user's home)
     if (strcmp(mount_point, "/home") == 0) return false;
-    
+
     const char *home = getenv("HOME");
     if (home && strcmp(mount_point, home) == 0) return false;
-    
+
     // Show anything in /media, /run/media, or /mnt
-    if (strstr(mount_point, "/media/") || strstr(mount_point, "/run/media/") || 
+    if (strstr(mount_point, "/media/") || strstr(mount_point, "/run/media/") ||
         strstr(mount_point, "/mnt/"))
         return false;
     

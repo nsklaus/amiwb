@@ -178,25 +178,30 @@ void icon_cleanup(Canvas *canvas) {
         // Desktop: vertical column layout
         int step_x = 110;
         int step_y = 80;
-        int first_slot_y = 200;  // Below Home icon
-        
+        int first_slot_y = 280;  // Below Home icon (shifted for Ram Disk)
+
         int x = start_x;
         int y = first_slot_y;
-        
+
         for (int i2 = 0; i2 < count; ++i2) {
             FileIcon *ic = list[i2];
-            
-            // Fixed positions for System and Home
-            if (strcmp(ic->label, "System") == 0) {
+
+            // Fixed positions for device icons (Ram Disk, System, Home)
+            if (strcmp(ic->label, "Ram Disk") == 0) {
                 int column_center_offset = (step_x - ic->width) / 2;
                 if (column_center_offset < 0) column_center_offset = 0;
                 ic->x = 20 + column_center_offset;
                 ic->y = 40;
-            } else if (strcmp(ic->label, "Home") == 0) {
+            } else if (strcmp(ic->label, "System") == 0) {
                 int column_center_offset = (step_x - ic->width) / 2;
                 if (column_center_offset < 0) column_center_offset = 0;
                 ic->x = 20 + column_center_offset;
                 ic->y = 120;
+            } else if (strcmp(ic->label, "Home") == 0) {
+                int column_center_offset = (step_x - ic->width) / 2;
+                if (column_center_offset < 0) column_center_offset = 0;
+                ic->x = 20 + column_center_offset;
+                ic->y = 200;
             } else {
                 // Column layout for all other icons
                 int column_center_offset = (step_x - ic->width) / 2;

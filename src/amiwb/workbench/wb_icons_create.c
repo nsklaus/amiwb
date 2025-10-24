@@ -144,7 +144,7 @@ static void find_next_desktop_slot(Canvas *desk, int *ox, int *oy, int icon_widt
     const int sx = 20, step_x = 110, step_y = 80;
 
     // Calculate start position: Home icon top + 80px gap
-    int first_iconified_y = 120 + 80;
+    int first_iconified_y = 200 + 80;
 
     // Find next free slot by trying each column, then each row within that column
     for (int col_x = sx; col_x < desk->width - 64; col_x += step_x) {
