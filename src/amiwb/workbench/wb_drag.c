@@ -936,7 +936,7 @@ static void perform_multi_icon_drop(Canvas *target, bool force_copy) {
         int min_x, min_y, max_x, max_y;
         if (target->type == DESKTOP) {
             min_x = 20;
-            min_y = 200;  // Below Home icon
+            min_y = MENUBAR_HEIGHT + 10;  // Just below menubar (user-controlled placement)
             max_x = target->width - 110;
             max_y = target->height - 100;
         } else {
@@ -993,7 +993,7 @@ static void perform_multi_icon_drop(Canvas *target, bool force_copy) {
     int min_x, min_y, max_x, max_y;
     if (target->type == DESKTOP) {
         min_x = 20;
-        min_y = 200;  // Below Home icon
+        min_y = MENUBAR_HEIGHT + 10;  // Just below menubar (user-controlled placement)
         max_x = target->width - 110;
         max_y = target->height - 100;
     } else {
