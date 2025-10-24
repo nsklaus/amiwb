@@ -49,10 +49,10 @@ icons being used can be customised very easily.
 amiwb scans `/usr/local/share/amiwb/icons/def_icons/` at start.
 files like "def_zip.info" or "def_mp3.info" are automatically picked up and
 will be used as default icon for the filetype.
-and it looks for iconify icons in  `/usr/local/share/amiwb/icons/`
-general settings are in file `~/.config/amiwb/amiwbrc`.
+and it looks for iconify icons in  `/usr/local/share/amiwb/icons/`.  
+the general settings are in file `~/.config/amiwb/amiwbrc`.
 
-shortcuts, all use the "super" key. 
+shortcuts, all use the "super" key. (check the menus).  
 example: 
 - `super+shift+R` hot-restarts amiwb
 - `super+E` calls the "execute command" dialog
@@ -86,17 +86,18 @@ example:
     show amiga icons, both normal and selected images. 
     (classic, mwb, glowicons supported).
     the icon matching system works like on amiga: "xyz" dir will display image 
-    from "xyz.info" icon next to it, while hidding the .info file itself. same for files. multiselection works. some menu actions do support it (most don't yet.)
+    from "xyz.info" icon next to it, while hidding the .info file itself. same for 
+    files. multiselection works. some menu actions do support it (most don't yet.)
     file execution works through xdg-open for now.
     def_icons system works, it's simple and based on file extensions for matching.
 
 - auto mount external drives as device icons on the desktop 
-- background pictures for desktop and windows, both can do optional tiling  
+- background pictures for desktop and windows, both can do optional tiling
 - it handles: fullscreen for apps,
 - auto resize and adapt itself upon X resolutions changes
 
 - file operations:
-    copy, move, dnd (with progress dialog and preserve extended attributes for comments)  
+    copy, move, dnd (with progress dialog and preserve extended attributes for comments)
     delete (with warning dialog)
     rename (rename dialog) 
     execute (execute dialog, with file completion)

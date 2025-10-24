@@ -4,6 +4,7 @@
 #include "itn_drag.h"
 #include "itn_internal.h"
 #include "../config.h"
+#include "../workbench/wb_spatial.h"
 #include <X11/Xlib.h>
 
 // Module-private state (no longer extern - encapsulated)
@@ -97,6 +98,13 @@ void itn_drag_end(void) {
 
     Display *dpy = itn_core_get_display();
     if (!dpy) return;
+
+    // Save window geometry for spatial mode (workbench windows only)
+    if (dragging_canvas->type == WINDOW && dragging_canvas->path) {
+        wb_spatial_save_geometry(dragging_canvas->path,
+                                dragging_canvas->x, dragging_canvas->y,
+                                dragging_canvas->width, dragging_canvas->height);
+    }
 
     // Release pointer grab
     XUngrabPointer(dpy, CurrentTime);

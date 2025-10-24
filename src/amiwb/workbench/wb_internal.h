@@ -426,4 +426,14 @@ bool wb_archive_is_supported(const char *path);
 // Extract archive to canvas directory
 int wb_archive_extract(const char *path, Canvas *canvas);
 
+// ============================================================================
+// wb_spatial.c - Spatial Window Geometry Management
+// ============================================================================
+
+// Load window geometry from xattr, fallback to cascade if not found
+bool wb_spatial_load_geometry(const char *dir_path, int *x, int *y, int *width, int *height);
+
+// Save window geometry to xattr (called on drag/resize/close)
+void wb_spatial_save_geometry(const char *dir_path, int x, int y, int width, int height);
+
 #endif // WB_INTERNAL_H

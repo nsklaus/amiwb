@@ -5,6 +5,7 @@
 #include "itn_internal.h"
 #include "../workbench/wb_public.h"
 #include "../workbench/wb_internal.h"
+#include "../workbench/wb_spatial.h"
 #include "../menus/menu_public.h"
 #include "../menus/menu_internal.h"
 #include "../dialogs/dialog_public.h"
@@ -448,6 +449,14 @@ Canvas *create_canvas(const char *path, int x, int y, int width,
 // OWNERSHIP: Frees all Canvas X11 resources (Window, XftDraw, compositing), and canvas struct
 void itn_canvas_destroy(Canvas *canvas) {
     if (!canvas || canvas->type == DESKTOP) return;
+
+    // Save window geometry for spatial mode (workbench windows only)
+    if (canvas->type == WINDOW && canvas->path) {
+        wb_spatial_save_geometry(canvas->path,
+                                canvas->x, canvas->y,
+                                canvas->width, canvas->height);
+    }
+
     clear_canvas_icons(canvas);
 
     // If destroying a fullscreen window, restore menubar

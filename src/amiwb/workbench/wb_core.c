@@ -3,6 +3,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include "wb_internal.h"
+#include "wb_spatial.h"
 #include "../config.h"
 #include "../render/rnd_public.h"
 #include "../intuition/itn_internal.h"
@@ -126,8 +127,12 @@ void open_directory(FileIcon *icon, Canvas *current_canvas) {
         return;
     }
 
-    // Create new window
-    Canvas *new_canvas = create_canvas(icon->path, 150, 100, 400, 300, WINDOW);
+    // Load spatial geometry or use cascade fallback
+    int x, y, width, height;
+    wb_spatial_load_geometry(icon->path, &x, &y, &width, &height);
+
+    // Create new window with loaded/calculated geometry
+    Canvas *new_canvas = create_canvas(icon->path, x, y, width, height, WINDOW);
     if (new_canvas) {
         refresh_canvas_from_directory(new_canvas, icon->path);
         redraw_canvas(new_canvas);

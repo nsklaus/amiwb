@@ -3,6 +3,7 @@
 
 #include "../config.h"
 #include "itn_internal.h"
+#include "../workbench/wb_spatial.h"
 #include <X11/Xlib.h>
 
 // Resize state
@@ -141,6 +142,13 @@ void itn_resize_finish(void) {
     // Final update with pixmap recreation
     if (resize_target->comp_pixmap) {
         itn_composite_update_canvas_pixmap(resize_target);
+    }
+
+    // Save window geometry for spatial mode (workbench windows only)
+    if (resize_target->type == WINDOW && resize_target->path) {
+        wb_spatial_save_geometry(resize_target->path,
+                                resize_target->x, resize_target->y,
+                                resize_target->width, resize_target->height);
     }
 
     // Release pointer grab
