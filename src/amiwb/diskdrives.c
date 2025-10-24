@@ -774,6 +774,18 @@ DriveManager* get_drive_manager(void) {
     return &drive_manager;
 }
 
+// Find DiskDrive by FileIcon pointer
+DiskDrive* diskdrives_find_by_icon(FileIcon *icon) {
+    if (!icon) return NULL;
+
+    for (int i = 0; i < drive_manager.drive_count; i++) {
+        if (drive_manager.drives[i].icon == icon) {
+            return &drive_manager.drives[i];
+        }
+    }
+    return NULL;
+}
+
 // Get inotify file descriptor for event loop integration
 // Returns -1 if inotify initialization failed
 // Following same pattern as itn_render_get_timer_fd() (AWP - standardization)

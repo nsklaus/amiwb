@@ -5,14 +5,17 @@
 #include "../render/rnd_public.h"
 #include "../config.h"
 #include "../intuition/itn_internal.h"
+#include "../diskdrives.h"
 #include "../../toolkit/button/button.h"
 #include "../../toolkit/inputfield/inputfield.h"
 #include "../../toolkit/listview/listview.h"
+#include "../../toolkit/progressbar/progressbar.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/Xft/Xft.h>
 #include <X11/keysym.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/xattr.h>
 #include <sys/wait.h>
 #include <pwd.h>
@@ -30,10 +33,12 @@ static IconInfoDialog *g_iconinfo_dialogs = NULL;
 
 // Forward declarations
 static void load_file_info(IconInfoDialog *dialog);
+static void load_device_info(IconInfoDialog *dialog);
 static Picture create_2x_icon(FileIcon *icon);
 static void format_file_size(off_t size, char *buffer, size_t bufsize);
 static void format_permissions(mode_t mode, char *buffer, size_t bufsize);
 static void save_file_changes(IconInfoDialog *dialog);
+static void render_device_layout(IconInfoDialog *dialog, Canvas *canvas, Display *dpy, Picture dest, XftDraw *xft);
 
 // Initialize icon info subsystem
 void init_iconinfo(void) {
@@ -61,14 +66,17 @@ void show_icon_info_dialog(FileIcon *icon) {
     }
     
     dialog->icon = icon;
-    
+
+    // Determine dialog height based on icon type
+    int dialog_height = (icon->type == TYPE_DEVICE) ? DEVICE_INFO_HEIGHT : FILE_INFO_HEIGHT;
+
     // Create canvas window (as DIALOG type for proper window management)
-    dialog->canvas = create_canvas(NULL, 100, 100, ICONINFO_WIDTH, ICONINFO_HEIGHT, DIALOG);
+    dialog->canvas = create_canvas(NULL, 100, 100, ICONINFO_WIDTH, dialog_height, DIALOG);
 
     // Set minimum window size to initial size
     if (dialog->canvas) {
         dialog->canvas->min_width = ICONINFO_WIDTH;
-        dialog->canvas->min_height = ICONINFO_HEIGHT;
+        dialog->canvas->min_height = dialog_height;
         dialog->canvas->resize_x_allowed = true;
         dialog->canvas->resize_y_allowed = true;
     }
@@ -155,9 +163,15 @@ void show_icon_info_dialog(FileIcon *icon) {
         snprintf(dialog->app_field->name, sizeof(dialog->app_field->name), "Run with");
     }
     
-    // Load file information
-    load_file_info(dialog);
-    
+    // Load information based on icon type (AWP - INTEGRATE)
+    if (icon->type == TYPE_DEVICE) {
+        dialog->is_device = true;
+        load_device_info(dialog);
+    } else {
+        dialog->is_device = false;
+        load_file_info(dialog);
+    }
+
     // Add to dialog list
     dialog->next = g_iconinfo_dialogs;
     g_iconinfo_dialogs = dialog;
@@ -296,10 +310,59 @@ static void load_file_info(IconInfoDialog *dialog) {
     }
 }
 
+// Load device information into dialog (for TYPE_DEVICE icons)
+static void load_device_info(IconInfoDialog *dialog) {
+    if (!dialog || !dialog->icon) return;
+
+    // Find corresponding DiskDrive using diskdrives API (AWP - REUSE)
+    DiskDrive *drive = diskdrives_find_by_icon(dialog->icon);
+    if (!drive) {
+        log_error("[ERROR] Device icon has no corresponding DiskDrive");
+        return;
+    }
+
+    // Copy device information from DiskDrive struct
+    snprintf(dialog->device_path, sizeof(dialog->device_path), "%s", drive->device);
+    snprintf(dialog->mount_point, sizeof(dialog->mount_point), "%s", drive->mount_point);
+    snprintf(dialog->fs_type, sizeof(dialog->fs_type), "%s", drive->fs_type);
+
+    // Determine access mode using access() - what the user can actually do
+    bool can_read = (access(drive->mount_point, R_OK) == 0);
+    bool can_write = (access(drive->mount_point, W_OK) == 0);
+
+    if (can_read && can_write) {
+        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "read/write");
+    } else if (can_read) {
+        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "read-only");
+    } else if (can_write) {
+        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "write-only");
+    } else {
+        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "no access");
+    }
+
+    // Get disk space using statvfs()
+    struct statvfs stat;
+    if (statvfs(drive->mount_point, &stat) == 0) {
+        // f_blocks = total blocks, f_bavail = blocks available to non-root user
+        dialog->total_bytes = (off_t)stat.f_blocks * (off_t)stat.f_frsize;
+        dialog->free_bytes = (off_t)stat.f_bavail * (off_t)stat.f_frsize;
+    } else {
+        log_error("[WARNING] statvfs failed for %s: %s", drive->mount_point, strerror(errno));
+        dialog->total_bytes = 0;
+        dialog->free_bytes = 0;
+    }
+}
+
 // Save changes made in the dialog
 static void save_file_changes(IconInfoDialog *dialog) {
     if (!dialog || !dialog->icon) return;
-    
+
+    // For device icons, we don't save changes (would require root for label changes)
+    // TODO: Implement udisksctl-based label changing if needed
+    if (dialog->is_device) {
+        return;
+    }
+
     bool needs_refresh = false;
     
     // 1. Check if filename changed and rename if needed
@@ -804,12 +867,18 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
     if (dialog->get_size_button) button_destroy(dialog->get_size_button);
     if (dialog->ok_button) button_destroy(dialog->ok_button);
     if (dialog->cancel_button) button_destroy(dialog->cancel_button);
-    
+
+    // Destroy progress bar (for device icons)
+    if (dialog->usage_bar) progressbar_destroy(dialog->usage_bar);
+
+    // Destroy listview
+    if (dialog->comment_list) listview_destroy(dialog->comment_list);
+
     // Destroy canvas
     if (dialog->canvas) {
         itn_canvas_destroy(dialog->canvas);
     }
-    
+
     free(dialog);
 }
 
@@ -840,10 +909,21 @@ void close_icon_info_dialog_by_canvas(Canvas *canvas) {
         if (dialog->comment_field) inputfield_destroy(dialog->comment_field);
         if (dialog->path_field) inputfield_destroy(dialog->path_field);
         if (dialog->app_field) inputfield_destroy(dialog->app_field);
-        
+
+        // Destroy buttons
+        if (dialog->get_size_button) button_destroy(dialog->get_size_button);
+        if (dialog->ok_button) button_destroy(dialog->ok_button);
+        if (dialog->cancel_button) button_destroy(dialog->cancel_button);
+
+        // Destroy progress bar (for device icons)
+        if (dialog->usage_bar) progressbar_destroy(dialog->usage_bar);
+
+        // Destroy listview
+        if (dialog->comment_list) listview_destroy(dialog->comment_list);
+
         // Don't destroy canvas here - intuition.c will do it
         dialog->canvas = NULL;
-        
+
         free(dialog);
     }
 }
@@ -884,6 +964,136 @@ void iconinfo_check_size_calculations(void) {
         }
         dialog = dialog->next;
     }
+}
+
+// Render device-specific layout (for TYPE_DEVICE icons)
+static void render_device_layout(IconInfoDialog *dialog, Canvas *canvas, Display *dpy, Picture dest, XftDraw *xft) {
+    int content_w = canvas->width - BORDER_WIDTH_LEFT - BORDER_WIDTH_RIGHT_CLIENT;
+
+    int x = ICONINFO_MARGIN + BORDER_WIDTH_LEFT;
+    int y = ICONINFO_MARGIN + BORDER_HEIGHT_TOP + ICONINFO_ICON_SIZE + ICONINFO_SPACING * 2;
+    int field_width = content_w - (2 * ICONINFO_MARGIN);
+
+    XftColor color;
+    XftFont *font = get_font();
+
+    if (!xft || !font) return;
+
+    // Allocate text color (black)
+    XftColorAllocValue(dpy, canvas->visual, canvas->colormap,
+                      &(XRenderColor){0, 0, 0, 0xffff}, &color);
+
+    // Name field (editable label)
+    XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                     (XftChar8 *)"Name", 4);
+    if (dialog->name_field) {
+        dialog->name_field->x = x + ICONINFO_LABEL_WIDTH;
+        dialog->name_field->y = y;
+        dialog->name_field->width = field_width - ICONINFO_LABEL_WIDTH;
+        inputfield_render(dialog->name_field, dest, dpy, xft);
+    }
+    y += 25;
+
+    // Type (filesystem type)
+    char type_label[64];
+    snprintf(type_label, sizeof(type_label), "Type     : %s", dialog->fs_type);
+    XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                     (XftChar8 *)type_label, strlen(type_label));
+    y += 25;
+
+    // Device path
+    char device_label[FULL_SIZE];
+    snprintf(device_label, sizeof(device_label), "Device   : %s", dialog->device_path);
+    XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                     (XftChar8 *)device_label, strlen(device_label));
+    y += 25;
+
+    // Mount point
+    char mount_label[FULL_SIZE];
+    snprintf(mount_label, sizeof(mount_label), "Mount    : %s", dialog->mount_point);
+    XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                     (XftChar8 *)mount_label, strlen(mount_label));
+    y += 25;
+
+    // Access mode
+    char access_label[128];
+    snprintf(access_label, sizeof(access_label), "Access   : %s", dialog->access_mode);
+    XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                     (XftChar8 *)access_label, strlen(access_label));
+    y += 25;
+
+    // Total space
+    char total_text[64];
+    format_file_size(dialog->total_bytes, total_text, sizeof(total_text));
+    char total_label[128];
+    snprintf(total_label, sizeof(total_label), "Total    : %s", total_text);
+    XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                     (XftChar8 *)total_label, strlen(total_label));
+    y += 25;
+
+    // Usage with progress bar
+    XftDrawStringUtf8(xft, &color, font, x, y + 15,
+                     (XftChar8 *)"Usage", 5);
+
+    // Create/update progress bar (AWP - REUSE toolkit widget)
+    if (!dialog->usage_bar && dialog->total_bytes > 0) {
+        int bar_x = x + ICONINFO_LABEL_WIDTH;
+        int bar_width = field_width - ICONINFO_LABEL_WIDTH;
+        dialog->usage_bar = progressbar_create(bar_x, y, bar_width, 20, font);
+        if (dialog->usage_bar) {
+            // Calculate used percentage
+            float used_percent = 0.0f;
+            if (dialog->total_bytes > 0) {
+                off_t used_bytes = dialog->total_bytes - dialog->free_bytes;
+                used_percent = ((float)used_bytes / (float)dialog->total_bytes) * 100.0f;
+            }
+            progressbar_set_percent(dialog->usage_bar, used_percent);
+            progressbar_set_show_percentage(dialog->usage_bar, true);  // Show percentage inside bar
+        }
+    }
+
+    // Render progress bar
+    if (dialog->usage_bar) {
+        int bar_x = x + ICONINFO_LABEL_WIDTH;
+        int bar_width = field_width - ICONINFO_LABEL_WIDTH;
+        dialog->usage_bar->x = bar_x;
+        dialog->usage_bar->y = y;
+        dialog->usage_bar->width = bar_width;
+        progressbar_render(dialog->usage_bar, dest, dpy, xft);
+    }
+
+    y += 25;
+
+    // Free color
+    XftColorFree(dpy, canvas->visual, canvas->colormap, &color);
+
+    // Draw OK and Cancel buttons at bottom (same for both file and device)
+    int button_y = canvas->height - BORDER_HEIGHT_BOTTOM - ICONINFO_BUTTON_HEIGHT - ICONINFO_MARGIN;
+    int ok_x = canvas->width / 2 - ICONINFO_BUTTON_WIDTH - 20;
+    int cancel_x = canvas->width / 2 + 20;
+
+    // Create/update OK button
+    if (!dialog->ok_button) {
+        dialog->ok_button = button_create(ok_x, button_y,
+                                         ICONINFO_BUTTON_WIDTH, ICONINFO_BUTTON_HEIGHT, "OK", font);
+    } else {
+        dialog->ok_button->x = ok_x;
+        dialog->ok_button->y = button_y;
+        dialog->ok_button->pressed = dialog->ok_pressed;
+    }
+
+    // Create/update Cancel button
+    if (!dialog->cancel_button) {
+        dialog->cancel_button = button_create(cancel_x, button_y,
+                                             ICONINFO_BUTTON_WIDTH, ICONINFO_BUTTON_HEIGHT, "Cancel", font);
+    } else {
+        dialog->cancel_button->x = cancel_x;
+        dialog->cancel_button->y = button_y;
+        dialog->cancel_button->pressed = dialog->cancel_pressed;
+    }
+
+    button_render(dialog->ok_button, dest, dpy, xft);
+    button_render(dialog->cancel_button, dest, dpy, xft);
 }
 
 // Render the icon info dialog content
@@ -944,16 +1154,23 @@ void render_iconinfo_content(Canvas *canvas) {
     
     // Get XftDraw for text rendering
     XftDraw *xft = canvas->xft_draw;
-    
+
+    // Dispatch to device or file layout (AWP - INTEGRATE conditional logic)
+    if (dialog->is_device) {
+        render_device_layout(dialog, canvas, dpy, dest, xft);
+        return;
+    }
+
+    // File layout continues below (existing code)
     // Layout constants
     int x = ICONINFO_MARGIN + BORDER_WIDTH_LEFT;
     int y = ICONINFO_MARGIN + BORDER_HEIGHT_TOP;
     int field_width = content_w - (2 * ICONINFO_MARGIN);
-    
+
     // Position for text fields (to the right of icon - now using smaller icon)
     int text_x = icon_x + icon_size + ICONINFO_SPACING * 2;
     int text_y = icon_y;
-    
+
     // Draw "Filename:" label and input field
     if (xft) {
         XftColor color;

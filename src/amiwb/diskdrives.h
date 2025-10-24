@@ -42,5 +42,6 @@ void eject_drive(FileIcon *icon);           // Handle eject request for drive ic
 // Query functions
 bool is_drive_removable(const char *mount_point);
 DriveManager* get_drive_manager(void);
+DiskDrive* diskdrives_find_by_icon(FileIcon *icon);  // Find drive by icon pointer
 
 #endif

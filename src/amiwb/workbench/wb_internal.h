@@ -97,7 +97,8 @@ Canvas* wb_progress_monitor_create_window(ProgressMonitor *monitor, const char *
 
 // Dialog dimensions
 #define ICONINFO_WIDTH 350
-#define ICONINFO_HEIGHT 500
+#define FILE_INFO_HEIGHT 500
+#define DEVICE_INFO_HEIGHT 380
 
 // Layout constants
 #define ICONINFO_MARGIN 15
@@ -160,6 +161,16 @@ struct IconInfoDialog {
     bool is_directory;          // True if icon represents a directory
     pid_t size_calc_pid;        // Child process PID
     int size_pipe_fd;           // Pipe for receiving results
+
+    // Device-specific fields (for TYPE_DEVICE icons)
+    bool is_device;                  // True if icon->type == TYPE_DEVICE
+    char device_path[PATH_SIZE];     // e.g., /dev/nvme0n1p3
+    char mount_point[PATH_SIZE];     // e.g., /run/media/user/Movies
+    char fs_type[32];                // e.g., ext4
+    char access_mode[32];            // "read-only", "read/write", etc.
+    ProgressBar *usage_bar;          // Disk usage visualization widget
+    off_t total_bytes;               // Total disk space
+    off_t free_bytes;                // Free disk space
 
     // Linked list for multiple dialogs
     struct IconInfoDialog *next;
