@@ -114,11 +114,16 @@ typedef struct IconInfoDialog IconInfoDialog;
 // Icon Information Dialog structure (full definition - internal to workbench)
 struct IconInfoDialog {
     Canvas *canvas;               // Dialog window
-    FileIcon *icon;              // Icon being inspected
 
-    // Display elements
-    Picture icon_2x;             // Scaled 2x icon for display
-    int icon_display_size;       // Calculated display size (2x original)
+    // Icon snapshot (copied at dialog open for independence from icon lifecycle)
+    Picture icon_picture;            // Copy of icon's normal_picture
+    Picture icon_selected_picture;   // Copy of icon's selected_picture
+    int icon_width;                  // Icon dimensions
+    int icon_height;
+    char icon_label[NAME_SIZE];      // Icon label (for display/editing)
+    char icon_path[PATH_SIZE];       // Icon path (for file operations)
+    IconType icon_type;              // Icon type (file/drawer/device/iconified)
+    bool showing_selected;           // Toggle state: false=normal, true=selected
 
     // Editable fields (toolkit InputFields)
     struct InputField *name_field;      // Filename (editable)

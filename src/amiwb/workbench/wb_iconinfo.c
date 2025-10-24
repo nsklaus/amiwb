@@ -33,8 +33,7 @@ static IconInfoDialog *g_iconinfo_dialogs = NULL;
 
 // Forward declarations
 static void load_file_info(IconInfoDialog *dialog);
-static void load_device_info(IconInfoDialog *dialog);
-static Picture create_2x_icon(FileIcon *icon);
+static void load_device_info(IconInfoDialog *dialog, FileIcon *icon);
 static void format_file_size(off_t size, char *buffer, size_t bufsize);
 static void format_permissions(mode_t mode, char *buffer, size_t bufsize);
 static void save_file_changes(IconInfoDialog *dialog);
@@ -65,7 +64,69 @@ void show_icon_info_dialog(FileIcon *icon) {
         return;
     }
     
-    dialog->icon = icon;
+    // Snapshot icon data for independence from icon lifecycle (AWP - module ownership)
+    dialog->icon_type = icon->type;
+    dialog->icon_width = icon->width;
+    dialog->icon_height = icon->height;
+    snprintf(dialog->icon_label, sizeof(dialog->icon_label), "%s", icon->label);
+    snprintf(dialog->icon_path, sizeof(dialog->icon_path), "%s", icon->path);
+    dialog->showing_selected = false;  // Start with normal picture
+
+    // Copy icon pictures (independent copies that survive icon destruction)
+    Display *dpy = itn_core_get_display();
+    if (!dpy) {
+        dialog->icon_picture = None;
+        dialog->icon_selected_picture = None;
+    } else {
+        XRenderPictFormat *fmt = XRenderFindStandardFormat(dpy, PictStandardARGB32);
+        if (!fmt) {
+            log_error("[ERROR] XRenderFindStandardFormat(ARGB32) failed");
+            dialog->icon_picture = None;
+            dialog->icon_selected_picture = None;
+        } else {
+            // Copy normal picture
+            if (icon->normal_picture != None) {
+                Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy),
+                                             icon->width, icon->height, 32);
+                if (pixmap == None) {
+                    log_error("[ERROR] XCreatePixmap failed for normal icon");
+                    dialog->icon_picture = None;
+                } else {
+                    dialog->icon_picture = XRenderCreatePicture(dpy, pixmap, fmt, 0, NULL);
+                    if (dialog->icon_picture == None) {
+                        log_error("[ERROR] XRenderCreatePicture failed for normal icon");
+                    } else {
+                        XRenderComposite(dpy, PictOpSrc, icon->normal_picture, None, dialog->icon_picture,
+                                        0, 0, 0, 0, 0, 0, icon->width, icon->height);
+                    }
+                    XFreePixmap(dpy, pixmap);
+                }
+            } else {
+                dialog->icon_picture = None;
+            }
+
+            // Copy selected picture
+            if (icon->selected_picture != None) {
+                Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy),
+                                             icon->width, icon->height, 32);
+                if (pixmap == None) {
+                    log_error("[ERROR] XCreatePixmap failed for selected icon");
+                    dialog->icon_selected_picture = None;
+                } else {
+                    dialog->icon_selected_picture = XRenderCreatePicture(dpy, pixmap, fmt, 0, NULL);
+                    if (dialog->icon_selected_picture == None) {
+                        log_error("[ERROR] XRenderCreatePicture failed for selected icon");
+                    } else {
+                        XRenderComposite(dpy, PictOpSrc, icon->selected_picture, None, dialog->icon_selected_picture,
+                                        0, 0, 0, 0, 0, 0, icon->width, icon->height);
+                    }
+                    XFreePixmap(dpy, pixmap);
+                }
+            } else {
+                dialog->icon_selected_picture = None;
+            }
+        }
+    }
 
     // Determine dialog height based on icon type
     int dialog_height = (icon->type == TYPE_DEVICE) ? DEVICE_INFO_HEIGHT : FILE_INFO_HEIGHT;
@@ -91,14 +152,10 @@ void show_icon_info_dialog(FileIcon *icon) {
     dialog->canvas->title_change = NULL;
     dialog->canvas->bg_color = GRAY;
     dialog->canvas->disable_scrollbars = true;
-    
-    // Create 2x scaled icon
-    dialog->icon_2x = create_2x_icon(icon);
-    dialog->icon_display_size = ICONINFO_ICON_SIZE * 2;
-    
+
     // Create input fields (accounting for window borders)
-    // Align with "Size:" label which is at icon_x + 128 + 20 = approx 163
-    int field_x = ICONINFO_MARGIN + dialog->icon_display_size + 20;  // Same x as "Size:" label
+    // Align with "Size:" label which is at icon_x + ICONINFO_ICON_SIZE + 20
+    int field_x = ICONINFO_MARGIN + ICONINFO_ICON_SIZE + 20;  // Same x as "Size:" label
     int field_width = ICONINFO_WIDTH - field_x - ICONINFO_MARGIN;  // End before right edge
     int y_pos = BORDER_HEIGHT_TOP + ICONINFO_MARGIN - 1;  // Slightly above to avoid icon frame
     
@@ -111,7 +168,7 @@ void show_icon_info_dialog(FileIcon *icon) {
         log_error("[WARNING] Failed to create name field");
     }
     
-    y_pos = BORDER_HEIGHT_TOP + dialog->icon_display_size + 40;  // Below icon
+    y_pos = BORDER_HEIGHT_TOP + ICONINFO_ICON_SIZE + 40;  // Below icon
     
     // Comment field (editable) - same x alignment as name field
     dialog->comment_field = inputfield_create(field_x,  // Same x as name field and "Size:" 
@@ -164,12 +221,13 @@ void show_icon_info_dialog(FileIcon *icon) {
     }
     
     // Load information based on icon type (AWP - INTEGRATE)
-    if (icon->type == TYPE_DEVICE) {
+    // All data is snapshot at dialog open - no dependencies on original icon after this
+    if (dialog->icon_type == TYPE_DEVICE) {
         dialog->is_device = true;
-        load_device_info(dialog);
+        load_device_info(dialog, icon);  // Snapshot device data now
     } else {
         dialog->is_device = false;
-        load_file_info(dialog);
+        load_file_info(dialog);  // Snapshot file data now
     }
 
     // Add to dialog list
@@ -183,10 +241,10 @@ void show_icon_info_dialog(FileIcon *icon) {
 
 // Load file information into dialog
 static void load_file_info(IconInfoDialog *dialog) {
-    if (!dialog || !dialog->icon) return;
+    if (!dialog) return;
     
     struct stat st;
-    if (stat(dialog->icon->path, &st) == 0) {
+    if (stat(dialog->icon_path, &st) == 0) {
         // Check if directory
         dialog->is_directory = S_ISDIR(st.st_mode);
         
@@ -244,7 +302,7 @@ static void load_file_info(IconInfoDialog *dialog) {
     
     // Try to read comment from extended attributes
     char comment[PATH_SIZE] = {0};  // Larger buffer for multiple lines
-    ssize_t len = getxattr(dialog->icon->path, "user.comment", comment, sizeof(comment) - 1);
+    ssize_t len = getxattr(dialog->icon_path, "user.comment", comment, sizeof(comment) - 1);
     if (len > 0) {
         comment[len] = '\0';
         // Split comment by newlines and add to listview
@@ -264,7 +322,7 @@ static void load_file_info(IconInfoDialog *dialog) {
     if (!dialog->is_directory && dialog->app_field) {
         // Get MIME type for the file
         char cmd[PATH_SIZE * 2];
-        snprintf(cmd, sizeof(cmd), "xdg-mime query filetype '%s' 2>/dev/null", dialog->icon->path);
+        snprintf(cmd, sizeof(cmd), "xdg-mime query filetype '%s' 2>/dev/null", dialog->icon_path);
         
         FILE *fp = popen(cmd, "r");
         if (fp) {
@@ -311,11 +369,12 @@ static void load_file_info(IconInfoDialog *dialog) {
 }
 
 // Load device information into dialog (for TYPE_DEVICE icons)
-static void load_device_info(IconInfoDialog *dialog) {
-    if (!dialog || !dialog->icon) return;
+// Snapshots all device data at dialog open - icon parameter only used for initial lookup
+static void load_device_info(IconInfoDialog *dialog, FileIcon *icon) {
+    if (!dialog || !icon) return;
 
     // Find corresponding DiskDrive using diskdrives API (AWP - REUSE)
-    DiskDrive *drive = diskdrives_find_by_icon(dialog->icon);
+    DiskDrive *drive = diskdrives_find_by_icon(icon);
     if (!drive) {
         log_error("[ERROR] Device icon has no corresponding DiskDrive");
         return;
@@ -355,7 +414,7 @@ static void load_device_info(IconInfoDialog *dialog) {
 
 // Save changes made in the dialog
 static void save_file_changes(IconInfoDialog *dialog) {
-    if (!dialog || !dialog->icon) return;
+    if (!dialog) return;
 
     // For device icons, we don't save changes (would require root for label changes)
     // TODO: Implement udisksctl-based label changing if needed
@@ -364,26 +423,28 @@ static void save_file_changes(IconInfoDialog *dialog) {
     }
 
     bool needs_refresh = false;
-    
+
     // 1. Check if filename changed and rename if needed
     if (dialog->name_field) {
         const char *new_name = inputfield_get_text(dialog->name_field);
-        if (new_name && strcmp(new_name, dialog->icon->label) != 0) {
+        if (new_name && strcmp(new_name, dialog->icon_label) != 0) {
             // Build new path
             char new_path[PATH_SIZE];
-            char *last_slash = strrchr(dialog->icon->path, '/');
+            char *last_slash = strrchr(dialog->icon_path, '/');
             if (last_slash) {
-                size_t dir_len = last_slash - dialog->icon->path;
-                snprintf(new_path, sizeof(new_path), "%.*s/%s", 
-                        (int)dir_len, dialog->icon->path, new_name);
-                
+                size_t dir_len = last_slash - dialog->icon_path;
+                snprintf(new_path, sizeof(new_path), "%.*s/%s",
+                        (int)dir_len, dialog->icon_path, new_name);
+
                 // Rename the file
-                if (rename(dialog->icon->path, new_path) == 0) {
-                    // Rename successful - silent success per logging rules
+                if (rename(dialog->icon_path, new_path) == 0) {
+                    // Rename successful - update dialog snapshot with new path and label
+                    snprintf(dialog->icon_path, sizeof(dialog->icon_path), "%s", new_path);
+                    snprintf(dialog->icon_label, sizeof(dialog->icon_label), "%s", new_name);
                     needs_refresh = true;
                 } else {
-                    log_error("[WARNING] Failed to rename '%s' to '%s': %s", 
-                             dialog->icon->path, new_path, strerror(errno));
+                    log_error("[WARNING] Failed to rename '%s' to '%s': %s",
+                             dialog->icon_path, new_path, strerror(errno));
                 }
             }
         }
@@ -410,24 +471,24 @@ static void save_file_changes(IconInfoDialog *dialog) {
         
         // Set the comment xattr
         if (offset > 0) {
-            if (setxattr(dialog->icon->path, "user.comment", combined_comment, 
+            if (setxattr(dialog->icon_path, "user.comment", combined_comment,
                         offset, 0) == -1) {
                 log_error("[WARNING] Failed to set comment xattr: %s", strerror(errno));
             }
         }
     } else {
         // Remove comment if no items in list
-        removexattr(dialog->icon->path, "user.comment");
+        removexattr(dialog->icon_path, "user.comment");
     }
-    
+
     // 3. Update default application (xdg-mime) for files only
     if (!dialog->is_directory && dialog->app_field) {
         const char *app = inputfield_get_text(dialog->app_field);
         if (app && *app) {
             // Get MIME type for the file
             char cmd[PATH_SIZE * 2];
-            snprintf(cmd, sizeof(cmd), "xdg-mime query filetype '%s' 2>/dev/null", 
-                    dialog->icon->path);
+            snprintf(cmd, sizeof(cmd), "xdg-mime query filetype '%s' 2>/dev/null",
+                    dialog->icon_path);
             
             FILE *fp = popen(cmd, "r");
             if (fp) {
@@ -497,60 +558,6 @@ static void format_permissions(mode_t mode, char *buffer, size_t bufsize) {
 }
 
 // Create 2x scaled icon picture
-static Picture create_2x_icon(FileIcon *icon) {
-    if (!icon) {
-        log_error("[WARNING] create_2x_icon called with NULL icon");
-        return None;
-    }
-    
-    Display *dpy = itn_core_get_display();
-    if (!dpy) {
-        log_error("[ERROR] create_2x_icon: NULL display");
-        return None;
-    }
-    
-    int size = ICONINFO_ICON_SIZE * 2;
-
-    // Create pixmap for 2x icon with 32-bit depth for ARGB transparency
-    // CRITICAL: Pixmap depth MUST match Picture format depth to avoid BadMatch
-    Pixmap pixmap = XCreatePixmap(dpy, DefaultRootWindow(dpy),
-                                 size, size,
-                                 32);  // 32-bit depth for ARGB32 format
-
-    XRenderPictFormat *fmt = XRenderFindStandardFormat(dpy, PictStandardARGB32);
-    if (!fmt) {
-        log_error("[ERROR] XRenderFindStandardFormat(ARGB32) failed");
-        XFreePixmap(dpy, pixmap);
-        return None;
-    }
-
-    Picture dest = XRenderCreatePicture(dpy, pixmap, fmt, 0, NULL);
-    if (dest == None) {
-        log_error("[ERROR] XRenderCreatePicture failed for 2x icon");
-        XFreePixmap(dpy, pixmap);
-        return None;
-    }
-    
-    // Clear with transparent
-    XRenderColor clear = {0, 0, 0, 0};
-    XRenderFillRectangle(dpy, PictOpSrc, dest, &clear, 0, 0, size, size);
-    
-    // Just composite the icon without transform - XRender will scale automatically
-    Picture src = icon->selected ? icon->selected_picture : icon->normal_picture;
-    if (src != None) {
-        // Source is ICONINFO_ICON_SIZE, dest is size (2x)
-        // This should scale the icon up by 2x
-        XRenderComposite(dpy, PictOpOver, src, None, dest,
-                        0, 0, 0, 0, 0, 0, size, size);
-    } else {
-        log_error("[WARNING] Icon has no picture (normal=%ld, selected=%ld)", 
-                  (long)icon->normal_picture, (long)icon->selected_picture);
-    }
-    
-    XFreePixmap(dpy, pixmap);
-    return dest;
-}
-
 // Event handlers
 bool iconinfo_handle_key_press(XKeyEvent *event) {
     if (!event) return false;
@@ -669,7 +676,22 @@ bool iconinfo_handle_button_press(XButtonEvent *event) {
         redraw_canvas(canvas);
         return true;
     }
-    
+
+    // Check icon display area for toggle between normal/selected pictures
+    int content_x = BORDER_WIDTH_LEFT;
+    int content_y = BORDER_HEIGHT_TOP;
+    int icon_x = content_x + ICONINFO_MARGIN;
+    int icon_y = content_y + ICONINFO_MARGIN;
+    int icon_size = ICONINFO_ICON_SIZE;
+
+    if (event->x >= icon_x && event->x < icon_x + icon_size &&
+        event->y >= icon_y && event->y < icon_y + icon_size) {
+        // Toggle between normal and selected picture
+        dialog->showing_selected = !dialog->showing_selected;
+        redraw_canvas(canvas);
+        return true;
+    }
+
     // Handle input field clicks for focus and cursor positioning
     bool field_clicked = false;
     
@@ -756,9 +778,9 @@ bool iconinfo_handle_button_release(XButtonEvent *event) {
             dialog->get_size_pressed = false;
             dialog->calculating_size = true;
             snprintf(dialog->size_text, sizeof(dialog->size_text), "Calculating...");
-            
+
             // Start the calculation process
-            dialog->size_calc_pid = calculate_directory_size(dialog->icon->path, &dialog->size_pipe_fd);
+            dialog->size_calc_pid = calculate_directory_size(dialog->icon_path, &dialog->size_pipe_fd);
             if (dialog->size_calc_pid < 0) {
                 snprintf(dialog->size_text, sizeof(dialog->size_text), "Error");
                 dialog->calculating_size = false;
@@ -852,11 +874,14 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
         prev = &(*prev)->next;
     }
     
-    // Free resources
-    if (dialog->icon_2x != None) {
-        XRenderFreePicture(itn_core_get_display(), dialog->icon_2x);
+    // Free snapshot pictures (independent copies)
+    if (dialog->icon_picture != None) {
+        XRenderFreePicture(itn_core_get_display(), dialog->icon_picture);
     }
-    
+    if (dialog->icon_selected_picture != None) {
+        XRenderFreePicture(itn_core_get_display(), dialog->icon_selected_picture);
+    }
+
     // Destroy input fields
     if (dialog->name_field) inputfield_destroy(dialog->name_field);
     if (dialog->comment_field) inputfield_destroy(dialog->comment_field);
@@ -885,46 +910,12 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
 // Close dialog by canvas (called from intuition.c when window is closed)
 void close_icon_info_dialog_by_canvas(Canvas *canvas) {
     if (!canvas) return;
-    
+
     IconInfoDialog *dialog = get_iconinfo_for_canvas(canvas);
     if (dialog) {
-        
-        // Remove from list
-        IconInfoDialog **prev = &g_iconinfo_dialogs;
-        while (*prev) {
-            if (*prev == dialog) {
-                *prev = dialog->next;
-                    break;
-            }
-            prev = &(*prev)->next;
-        }
-        
-        // Free resources
-        if (dialog->icon_2x != None) {
-            XRenderFreePicture(itn_core_get_display(), dialog->icon_2x);
-        }
-        
-        // Destroy input fields
-        if (dialog->name_field) inputfield_destroy(dialog->name_field);
-        if (dialog->comment_field) inputfield_destroy(dialog->comment_field);
-        if (dialog->path_field) inputfield_destroy(dialog->path_field);
-        if (dialog->app_field) inputfield_destroy(dialog->app_field);
-
-        // Destroy buttons
-        if (dialog->get_size_button) button_destroy(dialog->get_size_button);
-        if (dialog->ok_button) button_destroy(dialog->ok_button);
-        if (dialog->cancel_button) button_destroy(dialog->cancel_button);
-
-        // Destroy progress bar (for device icons)
-        if (dialog->usage_bar) progressbar_destroy(dialog->usage_bar);
-
-        // Destroy listview
-        if (dialog->comment_list) listview_destroy(dialog->comment_list);
-
-        // Don't destroy canvas here - intuition.c will do it
+        // Don't destroy canvas - intuition.c will do it (AWP - REUSE cleanup logic)
         dialog->canvas = NULL;
-
-        free(dialog);
+        close_icon_info_dialog(dialog);
     }
 }
 
@@ -1133,23 +1124,23 @@ void render_iconinfo_content(Canvas *canvas) {
     
     // Center the icon in the smaller sunken rectangle
     // Most icons are smaller than 64x64, so they'll fit nicely centered
-    int centered_x = icon_x + (icon_size - dialog->icon->width) / 2;
-    int centered_y = icon_y + (icon_size - dialog->icon->height) / 2;
-    
+    int centered_x = icon_x + (icon_size - dialog->icon_width) / 2;
+    int centered_y = icon_y + (icon_size - dialog->icon_height) / 2;
+
     // If icon is larger than the rectangle, we need to scale or clip
     // For now, we'll just center and let it overflow (could add scaling later)
-    if (dialog->icon->width > icon_size || dialog->icon->height > icon_size) {
+    if (dialog->icon_width > icon_size || dialog->icon_height > icon_size) {
         // Icon is too big - center it anyway, it will be clipped by the rectangle visually
-        centered_x = icon_x + (icon_size - dialog->icon->width) / 2;
-        centered_y = icon_y + (icon_size - dialog->icon->height) / 2;
+        centered_x = icon_x + (icon_size - dialog->icon_width) / 2;
+        centered_y = icon_y + (icon_size - dialog->icon_height) / 2;
     }
-    
-    // Render the icon centered
-    Picture src = dialog->icon->normal_picture;
+
+    // Render the icon centered (using snapshot picture, toggle between normal/selected)
+    Picture src = dialog->showing_selected ? dialog->icon_selected_picture : dialog->icon_picture;
     if (src != None) {
         XRenderComposite(dpy, PictOpOver, src, None, dest,
-                        0, 0, 0, 0, centered_x, centered_y, 
-                        dialog->icon->width, dialog->icon->height);
+                        0, 0, 0, 0, centered_x, centered_y,
+                        dialog->icon_width, dialog->icon_height);
     }
     
     // Get XftDraw for text rendering
