@@ -129,6 +129,8 @@ install: $(TOOLKIT_LIB) $(AMIWB_EXEC)
 	cp -r fonts/* /usr/local/share/amiwb/fonts/ 2>/dev/null || true
 	mkdir -p /usr/local/share/amiwb/dotfiles
 	cp -r dotfiles/* /usr/local/share/amiwb/dotfiles/ 2>/dev/null || true
+	# Fix permissions on all installed resources (files readable, directories accessible)
+	chmod -R a+rX /usr/local/share/amiwb/
 	# Install default config files to user's home directory if they don't exist
 	@if [ -n "$$SUDO_USER" ]; then \
 		USER_HOME=$$(getent passwd $$SUDO_USER | cut -d: -f6); \

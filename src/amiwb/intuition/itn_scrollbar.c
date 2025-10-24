@@ -111,6 +111,7 @@ static bool handle_scrollbar_click(Canvas *canvas, XButtonEvent *event, bool is_
         int new_scroll = calculate_scroll_from_mouse_click(track_start, track_length, max_scroll, click_coordinate);
         if (is_vertical) canvas->scroll_y = new_scroll;
         else canvas->scroll_x = new_scroll;
+        redraw_canvas(canvas);  // Follow same pattern as arrow buttons and knob drag
         DAMAGE_CANVAS(canvas);
         SCHEDULE_FRAME();
     }
