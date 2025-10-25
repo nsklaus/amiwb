@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/statvfs.h>
@@ -603,9 +604,20 @@ pid_t calculate_device_stats(const char *mount_point, const char *fs_type, int *
     close(pipefd[1]); // Close write end
     *pipe_fd = pipefd[0]; // Return read end
 
-    // Make pipe non-blocking
+    // Make pipe non-blocking (with error handling to prevent blocking pipe)
     int flags = fcntl(*pipe_fd, F_GETFL, 0);
-    fcntl(*pipe_fd, F_SETFL, flags | O_NONBLOCK);
+    if (flags == -1) {
+        log_error("[ERROR] Failed to get pipe flags: %s", strerror(errno));
+        close(pipefd[0]);  // Close read end (write end already closed at line 604)
+        kill(pid, SIGTERM);
+        return -1;
+    }
+    if (fcntl(*pipe_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        log_error("[ERROR] Failed to set pipe non-blocking: %s", strerror(errno));
+        close(pipefd[0]);  // Close read end (write end already closed at line 604)
+        kill(pid, SIGTERM);
+        return -1;
+    }
 
     return pid;
 }
@@ -626,7 +638,7 @@ bool read_device_stats_result(int pipe_fd, DeviceStats *stats) {
     } else if (bytes_read == 0) {
         // End of pipe - child finished but no data
         close(pipe_fd);
-        log_error("[WARNING] Device stats calculation completed with no data");
+        log_error("[ERROR] Device stats calculation completed with no data");
         return false;
     } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
         // Not ready yet - keep pipe open

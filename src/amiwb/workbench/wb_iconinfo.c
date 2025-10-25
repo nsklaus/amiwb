@@ -28,6 +28,9 @@
 #include <errno.h>
 #include <libgen.h>
 
+// Device stats update interval (seconds) - event-driven heartbeat for live device updates
+#define DEVICE_STATS_UPDATE_INTERVAL 2
+
 // Global dialog list
 static IconInfoDialog *g_iconinfo_dialogs = NULL;
 
@@ -958,14 +961,21 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
 
     // Clean up device stats calculation if in progress
     if (dialog->calculating_device_stats && dialog->device_stats_pid > 0) {
-        // Close pipe first
+        // Close pipe first (defensive: set to -1 to prevent double-close)
         if (dialog->device_stats_pipe_fd >= 0) {
             close(dialog->device_stats_pipe_fd);
+            dialog->device_stats_pipe_fd = -1;
         }
-        // Kill child process
+        // Kill child process (non-blocking cleanup to avoid UI freeze)
         kill(dialog->device_stats_pid, SIGTERM);
-        // Reap it to avoid zombies
-        waitpid(dialog->device_stats_pid, NULL, 0);
+
+        // Non-blocking reap attempt
+        int status;
+        pid_t result = waitpid(dialog->device_stats_pid, &status, WNOHANG);
+        if (result == 0) {
+            // Child still running, escalate to SIGKILL (guaranteed immediate termination)
+            kill(dialog->device_stats_pid, SIGKILL);
+        }
     }
 
     // Destroy canvas
@@ -1003,7 +1013,7 @@ static void trigger_device_stats_calculation(IconInfoDialog *dialog) {
     if (dialog->calculating_device_stats) return;  // Already calculating
 
     time_t now = time(NULL);
-    if (now - dialog->last_device_update < 2) return;  // Rate limit: 2 seconds
+    if (now - dialog->last_device_update < DEVICE_STATS_UPDATE_INTERVAL) return;  // Rate limit
 
     dialog->last_device_update = now;
 
@@ -1062,7 +1072,6 @@ void iconinfo_check_updates(void) {
                     // Calculation complete - update dialog fields
                     dialog->total_bytes = stats.total_bytes;
                     dialog->free_bytes = stats.free_bytes;
-                    dialog->calculating_device_stats = false;
 
                     // Update progress bar widget only if percentage changed
                     if (dialog->usage_bar) {
@@ -1079,13 +1088,14 @@ void iconinfo_check_updates(void) {
                         }
                     }
 
-                    // Reap the child process BEFORE clearing the PID
+                    // Reap the child process first to avoid race condition
                     int status;
                     waitpid(dialog->device_stats_pid, &status, WNOHANG);
 
-                    // Now clear the tracking variables
+                    // Now clear the tracking variables (after reaping)
                     dialog->device_stats_pid = -1;
                     dialog->device_stats_pipe_fd = -1;
+                    dialog->calculating_device_stats = false;  // Clear flag AFTER reaping to prevent race
 
                     // Redraw to show the updated stats
                     if (dialog->canvas) {
