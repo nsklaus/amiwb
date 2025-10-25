@@ -74,12 +74,14 @@ void open_directory(FileIcon *icon, Canvas *current_canvas) {
     if (!get_spatial_mode() && current_canvas && current_canvas->type == WINDOW) {
         char *new_path = strdup(icon->path);
 
-        // Update window title (use drive label if it's a device mount point)
+        // Update window title (use drive label only for exact mount point match)
         const char *dir_name;
         DiskDrive *drive = diskdrives_find_by_path(new_path);
-        if (drive) {
-            dir_name = drive->label;  // Use drive label (e.g., "Ram Disk", "System", "Home")
+        if (drive && strcmp(new_path, drive->mount_point) == 0) {
+            // Exact mount point match - use drive label (e.g., "Ram Disk", "System", "Home")
+            dir_name = drive->label;
         } else {
+            // Subdirectory or no match - extract directory name from path
             dir_name = strrchr(new_path, '/');
             if (dir_name) dir_name++;
             else dir_name = new_path;

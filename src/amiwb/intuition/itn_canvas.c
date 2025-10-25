@@ -124,9 +124,11 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
     if (path) {
         const char *basename;
         DiskDrive *drive = diskdrives_find_by_path(path);
-        if (drive) {
-            basename = drive->label;  // Use drive label (e.g., "Ram Disk", "System", "Home")
+        if (drive && strcmp(path, drive->mount_point) == 0) {
+            // Exact mount point match - use drive label (e.g., "Ram Disk", "System", "Home", "Movies", etc.)
+            basename = drive->label;
         } else {
+            // Subdirectory or no match - extract directory name from path
             basename = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
         }
         c->title_base = strdup(basename);
