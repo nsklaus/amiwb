@@ -42,7 +42,7 @@ AMIWB_EXEC = amiwb
 TOOLKIT_LIB = libamiwb.so
 
 # Default target
-all: $(TOOLKIT_LIB) $(AMIWB_EXEC)
+all: $(TOOLKIT_LIB) $(AMIWB_EXEC) reqasl editpad
 
 # Toolkit shared library
 $(TOOLKIT_LIB): $(TOOLKIT_OBJS)
@@ -51,6 +51,16 @@ $(TOOLKIT_LIB): $(TOOLKIT_OBJS)
 # amiwb window manager
 $(AMIWB_EXEC): $(AMIWB_OBJS) $(TOOLKIT_LIB)
 	$(CC) $(AMIWB_OBJS) -L. -lamiwb $(LIBS) -Wl,-rpath,'$$ORIGIN' -Wl,-rpath,/usr/local/lib -o $@
+
+# ReqASL file requester (depends on toolkit library)
+reqasl: $(TOOLKIT_LIB)
+	@echo "Building ReqASL..."
+	$(MAKE) -C src/reqasl
+
+# EditPad text editor (depends on toolkit library)
+editpad: $(TOOLKIT_LIB)
+	@echo "Building EditPad..."
+	$(MAKE) -C src/editpad
 
 # Pattern rules for object files
 $(AMIWB_DIR)/%.o: $(AMIWB_DIR)/%.c
@@ -101,9 +111,11 @@ $(TOOLKIT_DIR)/textview/%.o: $(TOOLKIT_DIR)/textview/%.c
 # Clean
 clean:
 	rm -f $(AMIWB_OBJS) $(TOOLKIT_OBJS) $(AMIWB_EXEC) $(TOOLKIT_LIB)
+	$(MAKE) -C src/reqasl clean
+	$(MAKE) -C src/editpad clean
 
 # Install
-install: $(TOOLKIT_LIB) $(AMIWB_EXEC)
+install: $(TOOLKIT_LIB) $(AMIWB_EXEC) reqasl editpad
 	# Install toolkit shared library and headers
 	mkdir -p /usr/local/lib
 	cp $(TOOLKIT_LIB) /usr/local/lib/libamiwb.so.new
@@ -120,6 +132,10 @@ install: $(TOOLKIT_LIB) $(AMIWB_EXEC)
 	mkdir -p /usr/local/bin
 	cp $(AMIWB_EXEC) /usr/local/bin/amiwb.new
 	mv /usr/local/bin/amiwb.new /usr/local/bin/amiwb
+	# Install ReqASL file requester
+	$(MAKE) -C src/reqasl install
+	# Install EditPad text editor
+	$(MAKE) -C src/editpad install
 	# Install resources
 	mkdir -p /usr/local/share/amiwb/icons
 	cp -r icons/* /usr/local/share/amiwb/icons/ 2>/dev/null || true
@@ -156,15 +172,17 @@ install: $(TOOLKIT_LIB) $(AMIWB_EXEC)
 			chown -R $$USER:$$USER "$$CONFIG_DIR" 2>/dev/null || true; \
 		fi; \
 	fi
-	@echo "AmiWB and toolkit installed"
+	@echo "AmiWB, toolkit, ReqASL, and EditPad installed"
 
 # Uninstall
 uninstall:
 	rm -f /usr/local/bin/amiwb
 	rm -f /usr/local/lib/libamiwb.so
+	$(MAKE) -C src/reqasl uninstall
+	$(MAKE) -C src/editpad uninstall
 	ldconfig
 	rm -rf /usr/local/include/amiwb
 	rm -rf /usr/local/share/amiwb
-	@echo "AmiWB uninstalled"
+	@echo "AmiWB, ReqASL, and EditPad uninstalled"
 
-.PHONY: all clean install uninstall
+.PHONY: all clean install uninstall reqasl editpad

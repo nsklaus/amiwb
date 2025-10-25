@@ -31,7 +31,8 @@ typedef struct ReqASL {
     Display *display;
     XftFont *font;
     XftDraw *xft_draw;
-    
+    Picture picture;            // XRender picture for window
+
     // Current directory and files
     char current_path[PATH_SIZE];
     FileEntry **entries;

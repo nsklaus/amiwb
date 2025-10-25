@@ -375,16 +375,16 @@ ReqASL* reqasl_create(Display *display) {
     Window root = RootWindow(display, screen);
     
     XSetWindowAttributes attrs;
-    // Use gray background (approximate Amiga gray)
-    attrs.background_pixel = 0xa0a0a2;  // GRAY from config.h
+    // Disable X11 auto-clear to prevent flickering (matching TextView pattern)
+    attrs.background_pixmap = None;
     attrs.border_pixel = BlackPixel(display, screen);
-    attrs.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | 
+    attrs.event_mask = ExposureMask | KeyPressMask | ButtonPressMask |
                        ButtonReleaseMask | PointerMotionMask | StructureNotifyMask;
-    
+
     req->window = XCreateWindow(display, root,
                                100, 100, req->width, req->height,
                                1, CopyFromParent, InputOutput, CopyFromParent,
-                               CWBackPixel | CWBorderPixel | CWEventMask,
+                               CWBackPixmap | CWBorderPixel | CWEventMask,
                                &attrs);
     
     // Don't set window title here - it will be set by reqasl_set_title() later
@@ -438,6 +438,15 @@ ReqASL* reqasl_create(Display *display) {
     // Set initial menu data using the update function to ensure consistency
     reqasl_update_menu_data(req);
 
+    // Create XRender picture for window (for widget rendering)
+    XRenderPictFormat *fmt = XRenderFindStandardFormat(display, PictStandardRGB24);
+    req->picture = XRenderCreatePicture(display, req->window, fmt, 0, NULL);
+
+    // Create XftDraw for window (direct rendering, no backing pixmap)
+    req->xft_draw = XftDrawCreate(display, req->window,
+                                 DefaultVisual(display, DefaultScreen(display)),
+                                 DefaultColormap(display, DefaultScreen(display)));
+
     return req;
 }
 
@@ -458,9 +467,13 @@ void reqasl_destroy(ReqASL *req) {
     if (req->file_field) {
         inputfield_destroy(req->file_field);
     }
-    
+
+    // Cleanup window rendering resources
     if (req->xft_draw) {
         XftDrawDestroy(req->xft_draw);
+    }
+    if (req->picture) {
+        XRenderFreePicture(req->display, req->picture);
     }
     
     // Font is managed by font_manager - don't close it!
@@ -1390,28 +1403,16 @@ static void remove_user_place(ReqASL *req, const char *path) {
 }
 
 static void draw_window(ReqASL *req) {
-    if (!req || !req->window) return;
-    
-    // Debug output for window dimensions
-    // Window dimensions set
-    
-    // Get window drawable
-    Pixmap pixmap = XCreatePixmap(req->display, req->window, 
-                                 req->width, req->height,
-                                 DefaultDepth(req->display, DefaultScreen(req->display)));
-    
-    // Create render picture
-    XRenderPictFormat *fmt = XRenderFindStandardFormat(req->display, PictStandardRGB24);
-    Picture dest = XRenderCreatePicture(req->display, pixmap, fmt, 0, NULL);
-    
-    // Create temporary XftDraw for this pixmap
-    XftDraw *temp_xft_draw = XftDrawCreate(req->display, pixmap,
-                                           DefaultVisual(req->display, DefaultScreen(req->display)),
-                                           DefaultColormap(req->display, DefaultScreen(req->display)));
-    
-    // Clear background
+    if (!req || !req->window || !req->picture) return;
+
+    // Draw directly to window (following TextView flicker-free pattern)
+    // background_pixmap = None prevents X11 auto-clear, we manually fill here
+    Picture dest = req->picture;
+    XftDraw *temp_xft_draw = req->xft_draw;
+
+    // Manually fill background (since X11 auto-clear is disabled)
     XRenderColor gray = GRAY;
-    XRenderFillRectangle(req->display, PictOpSrc, dest, &gray, 
+    XRenderFillRectangle(req->display, PictOpSrc, dest, &gray,
                         0, 0, req->width, req->height);
     
     // Draw ListView widget
@@ -1567,19 +1568,8 @@ static void draw_window(ReqASL *req) {
         .font = req->font
     };
     button_render(&cancel_btn, dest, req->display, temp_xft_draw);
-    
-    // Copy to window
-    GC gc = XCreateGC(req->display, req->window, 0, NULL);
-    XCopyArea(req->display, pixmap, req->window, gc, 
-             0, 0, req->width, req->height, 0, 0);
-    
-    // Cleanup
-    XFreeGC(req->display, gc);
-    XftDrawDestroy(temp_xft_draw);
-    XRenderFreePicture(req->display, dest);
-    XFreePixmap(req->display, pixmap);
 
-    // Draw multiselection rectangle on top (after window is drawn)
+    // Draw multiselection rectangle on top (after content is drawn)
     draw_selection_rect(req);
 
     XFlush(req->display);
@@ -2822,9 +2812,11 @@ req->open_button_pressed = true;
                             inputfield_scroll_to_end(req->file_field);
                         }
                     }
-                    
-                    // Redraw everything with new layout
-                    draw_window(req);
+
+                    // Standard X11 resize pattern: Don't draw on ConfigureNotify
+                    // X11 will send Expose events after resize - let those trigger the redraw
+                    // This prevents double-drawing (ConfigureNotify + Expose) during drag-resize
+                    // Double-drawing causes flickering - single Expose draw is smooth
                 }
             }
             return true;

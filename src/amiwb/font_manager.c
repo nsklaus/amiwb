@@ -43,7 +43,7 @@ bool font_manager_init(Display *dpy) {
     }
 
     if (!dpy) {
-        fprintf(stderr, "[FONT] ERROR: Display is NULL\n");
+        log_error("[FONT] ERROR: Display is NULL");
         return false;
     }
 
@@ -52,10 +52,10 @@ bool font_manager_init(Display *dpy) {
     // Get font path
     char *font_path = get_font_path();
     if (!font_path) {
-        fprintf(stderr, "[FONT] FATAL: Cannot find font file %s\n", SYSFONT);
-        fprintf(stderr, "[FONT] Searched in:\n");
-        fprintf(stderr, "  - %s/%s/\n", getenv("HOME"), RESOURCE_DIR_USER);
-        fprintf(stderr, "  - %s/\n", RESOURCE_DIR_SYSTEM);
+        log_error("[FONT] FATAL: Cannot find font file %s", SYSFONT);
+        log_error("[FONT] Searched in:");
+        log_error("  - %s/%s/", getenv("HOME"), RESOURCE_DIR_USER);
+        log_error("  - %s/", RESOURCE_DIR_SYSTEM);
         return false;
     }
 
@@ -72,13 +72,13 @@ bool font_manager_init(Display *dpy) {
     // Load the font
     the_font = XftFontOpenPattern(dpy, pattern);
     if (!the_font) {
-        fprintf(stderr, "[FONT] FATAL: Failed to load font from %s\n", font_path);
+        log_error("[FONT] FATAL: Failed to load font from %s", font_path);
         FcPatternDestroy(pattern);
         return false;
     }
 
-    printf("[FONT] Successfully loaded: %s (size 12)\n", font_path);
-    printf("[FONT] Metrics: ascent=%d, descent=%d, height=%d\n",
+    log_error("[FONT] Successfully loaded: %s (size 12)", font_path);
+    log_error("[FONT] Metrics: ascent=%d, descent=%d, height=%d",
            the_font->ascent, the_font->descent, the_font->height);
 
     return true;
@@ -86,7 +86,7 @@ bool font_manager_init(Display *dpy) {
 
 XftFont* font_manager_get(void) {
     if (!the_font) {
-        fprintf(stderr, "[FONT] WARNING: Font requested but not initialized\n");
+        log_error("[FONT] WARNING: Font requested but not initialized");
     }
     return the_font;
 }
@@ -99,14 +99,14 @@ void font_manager_cleanup(bool is_restarting) {
     if (is_restarting) {
         // During hot-restart, DO NOT free the font
         // XCloseDisplay will handle cleanup to avoid crash
-        printf("[FONT] Hot-restart: Skipping font cleanup (XCloseDisplay will handle it)\n");
+        log_error("[FONT] Hot-restart: Skipping font cleanup (XCloseDisplay will handle it)");
         the_font = NULL;
         font_display = NULL;
     } else {
         // Normal shutdown - clean up properly
         if (font_display) {
             XftFontClose(font_display, the_font);
-            printf("[FONT] Font resources freed\n");
+            log_error("[FONT] Font resources freed");
         }
         the_font = NULL;
         font_display = NULL;

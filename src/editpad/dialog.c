@@ -50,15 +50,15 @@ Dialog* dialog_create(Display *display, Window parent, DialogType type) {
     
     // Create window attributes
     XSetWindowAttributes attrs;
-    attrs.background_pixel = WhitePixel(display, screen);
+    attrs.background_pixmap = None;  // Disable X11 auto-clear (prevents flickering)
     attrs.border_pixel = BlackPixel(display, screen);
-    attrs.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | 
+    attrs.event_mask = ExposureMask | KeyPressMask | ButtonPressMask |
                        ButtonReleaseMask | PointerMotionMask | StructureNotifyMask;
-    
+
     dialog->window = XCreateWindow(display, root,
         0, 0, dialog->width, dialog->height,
         0, CopyFromParent, InputOutput, CopyFromParent,
-        CWBackPixel | CWBorderPixel | CWEventMask, &attrs);
+        CWBackPixmap | CWBorderPixel | CWEventMask, &attrs);
     
     if (!dialog->window) {
         free(dialog->title);
@@ -88,13 +88,13 @@ Dialog* dialog_create(Display *display, Window parent, DialogType type) {
     Atom app_type_atom = XInternAtom(display, "_AMIWB_APP_TYPE", False);
     XChangeProperty(display, dialog->window, app_type_atom, XA_STRING, 8,
                    PropModeReplace, (unsigned char *)"EDITPAD", 7);
-    
+
     // Set window type to dialog
     Atom window_type = XInternAtom(display, "_NET_WM_WINDOW_TYPE", False);
     Atom dialog_type = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DIALOG", False);
     XChangeProperty(display, dialog->window, window_type, XA_ATOM, 32,
                    PropModeReplace, (unsigned char*)&dialog_type, 1);
-    
+
     // Set WM_DELETE_WINDOW protocol so we get notified when user clicks close
     Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(display, dialog->window, &wm_delete, 1);
@@ -461,9 +461,11 @@ void dialog_handle_expose(Dialog *dialog) {
 // Draw the dialog
 void dialog_draw(Dialog *dialog) {
     if (!dialog || !dialog->xft_draw || !dialog->picture) return;
-    
-    // Fill background with gray
-    XftDrawRect(dialog->xft_draw, &dialog->bg_color, 0, 0, dialog->width, dialog->height);
+
+    // Fill background with gray (matching ReqASL/TextView pattern)
+    XRenderColor gray = {0xa0a0, 0xa2a2, 0xa0a0, 0xffff};
+    XRenderFillRectangle(dialog->display, PictOpSrc, dialog->picture, &gray,
+                        0, 0, dialog->width, dialog->height);
     
     // Draw widgets
     for (int i = 0; i < dialog->field_count; i++) {

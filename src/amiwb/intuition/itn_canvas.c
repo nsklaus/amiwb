@@ -190,11 +190,10 @@ static Bool setup_visual_and_window(Canvas *c, CanvasType t,
     // AllocNone means we don't pre-allocate any specific colors
     attrs.colormap          = XCreateColormap(ctx->dpy, itn_core_get_root(), c->visual, AllocNone);
     attrs.border_pixel      = 0;      // Border color (0 = black)
-    attrs.background_pixel  = 0;      // Background color (0 = black)
-    attrs.background_pixmap = None;   // No background image
+    attrs.background_pixmap = None;   // Disable X11 auto-clear (prevents resize flicker)
     // mask: Tells X11 which attributes we're actually setting
     // CW = "Change Window" - each flag indicates an attribute to use
-    unsigned long mask = CWColormap | CWBorderPixel | CWBackPixel | CWBackPixmap;
+    unsigned long mask = CWColormap | CWBorderPixel | CWBackPixmap;
 
     int win_x = (t == DESKTOP) ? 0 : x;
     int win_y = (t == DESKTOP) ? MENUBAR_HEIGHT : y;
