@@ -2,7 +2,7 @@
 #define CONFIG_H
 
 // AmiWB version
-#define AMIWB_VERSION "0.1.5"
+#define AMIWB_VERSION "0.1.6"
 
 #include <stdio.h>
 #include <stdlib.h>

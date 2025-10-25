@@ -224,9 +224,18 @@ void show_icon_info_dialog(FileIcon *icon) {
     // All data is snapshot at dialog open - no dependencies on original icon after this
     if (dialog->icon_type == TYPE_DEVICE) {
         dialog->is_device = true;
+        dialog->is_device_dialog = true;  // Enable live updates for device stats
+        dialog->last_device_update = 0;   // Force immediate first update
+
+        // Initialize device stats calculation fields (fork+pipe pattern)
+        dialog->calculating_device_stats = false;
+        dialog->device_stats_pid = -1;
+        dialog->device_stats_pipe_fd = -1;
+
         load_device_info(dialog, icon);  // Snapshot device data now
     } else {
         dialog->is_device = false;
+        dialog->is_device_dialog = false;  // No live updates for files
         load_file_info(dialog);  // Snapshot file data now
     }
 
@@ -368,6 +377,53 @@ static void load_file_info(IconInfoDialog *dialog) {
     }
 }
 
+// Load Ram Disk information into dialog (special case - not in DiskDrive array)
+static void load_ramdisk_info(IconInfoDialog *dialog) {
+    if (!dialog) return;
+
+    // Set Ram Disk specific values
+    snprintf(dialog->fs_type, sizeof(dialog->fs_type), "tmpfs");
+    snprintf(dialog->device_path, sizeof(dialog->device_path), "/dev/shm/");
+    snprintf(dialog->mount_point, sizeof(dialog->mount_point), "/dev/shm/amiwb-ramdisk/");
+
+    // Get permissions using stat()
+    struct stat st;
+    if (stat("/dev/shm/amiwb-ramdisk", &st) == 0) {
+        format_permissions(st.st_mode, dialog->access_mode, sizeof(dialog->access_mode));
+    } else {
+        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "unknown");
+    }
+
+    // Get available RAM capacity from /proc/meminfo (matches menubar display)
+    FILE *fp = fopen("/proc/meminfo", "r");
+    if (fp) {
+        char line[256];
+        unsigned long mem_available_kb = 0;
+
+        // Parse /proc/meminfo for MemAvailable
+        while (fgets(line, sizeof(line), fp)) {
+            if (sscanf(line, "MemAvailable: %lu kB", &mem_available_kb) == 1) {
+                break;
+            }
+        }
+        fclose(fp);
+
+        // Total: current available system RAM (dynamic, realistic capacity)
+        dialog->total_bytes = (off_t)mem_available_kb * 1024;
+
+        // Used: calculate actual bytes in ramdisk directory
+        int file_count = 0;
+        off_t used_bytes = 0;
+        count_files_and_bytes("/dev/shm/amiwb-ramdisk", &file_count, &used_bytes);
+
+        // Free: total - used (how much more can be safely used)
+        dialog->free_bytes = dialog->total_bytes - used_bytes;
+    } else {
+        dialog->total_bytes = 0;
+        dialog->free_bytes = 0;
+    }
+}
+
 // Load device information into dialog (for TYPE_DEVICE icons)
 // Snapshots all device data at dialog open - icon parameter only used for initial lookup
 static void load_device_info(IconInfoDialog *dialog, FileIcon *icon) {
@@ -375,6 +431,13 @@ static void load_device_info(IconInfoDialog *dialog, FileIcon *icon) {
 
     // Find corresponding DiskDrive using diskdrives API (AWP - REUSE)
     DiskDrive *drive = diskdrives_find_by_icon(icon);
+
+    // Check if this is Ram Disk (tmpfs filesystem)
+    if (drive && strcmp(drive->fs_type, "tmpfs") == 0) {
+        load_ramdisk_info(dialog);
+        return;
+    }
+
     if (!drive) {
         log_error("[ERROR] Device icon has no corresponding DiskDrive");
         return;
@@ -385,18 +448,12 @@ static void load_device_info(IconInfoDialog *dialog, FileIcon *icon) {
     snprintf(dialog->mount_point, sizeof(dialog->mount_point), "%s", drive->mount_point);
     snprintf(dialog->fs_type, sizeof(dialog->fs_type), "%s", drive->fs_type);
 
-    // Determine access mode using access() - what the user can actually do
-    bool can_read = (access(drive->mount_point, R_OK) == 0);
-    bool can_write = (access(drive->mount_point, W_OK) == 0);
-
-    if (can_read && can_write) {
-        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "read/write");
-    } else if (can_read) {
-        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "read-only");
-    } else if (can_write) {
-        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "write-only");
+    // Get permissions using stat() to show actual mode (like files/directories)
+    struct stat st;
+    if (stat(drive->mount_point, &st) == 0) {
+        format_permissions(st.st_mode, dialog->access_mode, sizeof(dialog->access_mode));
     } else {
-        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "no access");
+        snprintf(dialog->access_mode, sizeof(dialog->access_mode), "unknown");
     }
 
     // Get disk space using statvfs()
@@ -899,6 +956,18 @@ void close_icon_info_dialog(IconInfoDialog *dialog) {
     // Destroy listview
     if (dialog->comment_list) listview_destroy(dialog->comment_list);
 
+    // Clean up device stats calculation if in progress
+    if (dialog->calculating_device_stats && dialog->device_stats_pid > 0) {
+        // Close pipe first
+        if (dialog->device_stats_pipe_fd >= 0) {
+            close(dialog->device_stats_pipe_fd);
+        }
+        // Kill child process
+        kill(dialog->device_stats_pid, SIGTERM);
+        // Reap it to avoid zombies
+        waitpid(dialog->device_stats_pid, NULL, 0);
+    }
+
     // Destroy canvas
     if (dialog->canvas) {
         itn_canvas_destroy(dialog->canvas);
@@ -927,10 +996,35 @@ void cleanup_all_iconinfo_dialogs(void) {
     }
 }
 
+// Trigger device stats calculation (non-blocking, fork+pipe pattern)
+// Event-driven: only triggers when device dialog is visible, no background polling
+static void trigger_device_stats_calculation(IconInfoDialog *dialog) {
+    if (!dialog || !dialog->is_device_dialog) return;
+    if (dialog->calculating_device_stats) return;  // Already calculating
+
+    time_t now = time(NULL);
+    if (now - dialog->last_device_update < 2) return;  // Rate limit: 2 seconds
+
+    dialog->last_device_update = now;
+
+    // Start async calculation (fork+pipe, non-blocking)
+    int pipe_fd;
+    pid_t pid = calculate_device_stats(dialog->mount_point, dialog->fs_type, &pipe_fd);
+
+    if (pid > 0) {
+        dialog->calculating_device_stats = true;
+        dialog->device_stats_pid = pid;
+        dialog->device_stats_pipe_fd = pipe_fd;
+    }
+}
+
 // Process monitoring for directory size calculation
-void iconinfo_check_size_calculations(void) {
+// Check all IconInfo dialogs for pending updates (called from event loop every iteration)
+// Handles both directory size calculations and live device stat updates
+void iconinfo_check_updates(void) {
     IconInfoDialog *dialog = g_iconinfo_dialogs;
     while (dialog) {
+        // Check directory size calculations (for file/drawer dialogs)
         if (dialog->calculating_size && dialog->size_calc_pid > 0) {
             // Check if calculation is complete
             off_t size = read_directory_size_result(dialog->size_pipe_fd);
@@ -950,9 +1044,59 @@ void iconinfo_check_size_calculations(void) {
                 // Redraw to show the result
                 if (dialog->canvas) {
                     redraw_canvas(dialog->canvas);
+                    DAMAGE_CANVAS(dialog->canvas);
+                    SCHEDULE_FRAME();
                 }
             }
         }
+
+        // Check device stats for live updates (event-driven, only when dialog open)
+        if (dialog->is_device_dialog) {
+            // Trigger calculation if not already running (rate-limited every 2s)
+            trigger_device_stats_calculation(dialog);
+
+            // Check if calculation is complete (non-blocking)
+            if (dialog->calculating_device_stats && dialog->device_stats_pid > 0) {
+                DeviceStats stats;
+                if (read_device_stats_result(dialog->device_stats_pipe_fd, &stats)) {
+                    // Calculation complete - update dialog fields
+                    dialog->total_bytes = stats.total_bytes;
+                    dialog->free_bytes = stats.free_bytes;
+                    dialog->calculating_device_stats = false;
+
+                    // Update progress bar widget only if percentage changed
+                    if (dialog->usage_bar) {
+                        float used_percent = 0.0f;
+                        if (dialog->total_bytes > 0) {
+                            off_t used_bytes = dialog->total_bytes - dialog->free_bytes;
+                            used_percent = ((float)used_bytes / (float)dialog->total_bytes) * 100.0f;
+                        }
+
+                        // Only update widget if value changed (avoid unnecessary redraws)
+                        if (dialog->usage_bar->percent != used_percent) {
+                            progressbar_set_percent(dialog->usage_bar, used_percent);
+                            progressbar_set_show_percentage(dialog->usage_bar, true);
+                        }
+                    }
+
+                    // Reap the child process BEFORE clearing the PID
+                    int status;
+                    waitpid(dialog->device_stats_pid, &status, WNOHANG);
+
+                    // Now clear the tracking variables
+                    dialog->device_stats_pid = -1;
+                    dialog->device_stats_pipe_fd = -1;
+
+                    // Redraw to show the updated stats
+                    if (dialog->canvas) {
+                        redraw_canvas(dialog->canvas);
+                        DAMAGE_CANVAS(dialog->canvas);
+                        SCHEDULE_FRAME();
+                    }
+                }
+            }
+        }
+
         dialog = dialog->next;
     }
 }

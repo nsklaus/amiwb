@@ -65,6 +65,14 @@ typedef void (*size_callback_t)(off_t size, void *userdata);
 pid_t calculate_directory_size(const char *path, int *pipe_fd); // Start size calculation, returns child PID and pipe FD
 off_t read_directory_size_result(int pipe_fd);                 // Read result from pipe when ready
 
+// Device stats calculation (non-blocking via fork)
+typedef struct {
+    off_t total_bytes;
+    off_t free_bytes;
+} DeviceStats;
+pid_t calculate_device_stats(const char *mount_point, const char *fs_type, int *pipe_fd); // Start stats calculation, returns child PID and pipe FD
+bool read_device_stats_result(int pipe_fd, DeviceStats *stats);  // Read result from pipe when ready, returns true if data ready
+
 // Progress monitor polling (called from event loop)
 void workbench_check_progress_monitors(void);
 
@@ -96,8 +104,8 @@ void cleanup_all_iconinfo_dialogs(void);
 void init_iconinfo(void);
 void cleanup_iconinfo(void);
 
-// Icon info process monitoring for directory size calculation
-void iconinfo_check_size_calculations(void);
+// Icon info process monitoring for directory size calculation and live device updates
+void iconinfo_check_updates(void);
 
 // Cache invalidation for performance optimization
 void invalidate_pointer_cache(void);

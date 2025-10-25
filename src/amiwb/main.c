@@ -10,7 +10,6 @@
 #include "config.h"
 #include "amiwbrc.h"  // For config loading
 #include "diskdrives.h"
-#include "wb_ramdisk.h"
 #include "xdnd.h"
 #include <X11/Xlib.h>
 #include <stdio.h> // For fprintf
@@ -218,10 +217,7 @@ int main(int argc, char *argv[]) {
     xdnd_init(itn_core_get_display());
 
     // Initialize disk drives detection
-    diskdrives_init();
-
-    // Initialize RAM disk (tmpfs-based temporary storage)
-    ramdisk_init();
+    diskdrives_init();  // Includes Ram Disk initialization
 
     // Initialize events
     init_events();
@@ -258,8 +254,7 @@ int main(int argc, char *argv[]) {
     cleanup_menus();
     cleanup_dialogs();
     cleanup_iconinfo();
-    ramdisk_cleanup();
-    diskdrives_cleanup();
+    diskdrives_cleanup();  // Includes Ram Disk cleanup
     cleanup_workbench();
     xdnd_shutdown(itn_core_get_display());
     // Clean up render resources BEFORE closing Display (Xft fonts need display)

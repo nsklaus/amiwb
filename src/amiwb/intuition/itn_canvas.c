@@ -10,6 +10,7 @@
 #include "../menus/menu_internal.h"
 #include "../dialogs/dialog_public.h"
 #include "../dialogs/dialog_public.h"
+#include "../diskdrives.h"
 #include <X11/Xlib.h>
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xdamage.h>
@@ -121,7 +122,13 @@ static void init_canvas_metadata(Canvas *c, const char *path, CanvasType t,
 
     // Extract and duplicate the title base (filename from path)
     if (path) {
-        const char *basename = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
+        const char *basename;
+        DiskDrive *drive = diskdrives_find_by_path(path);
+        if (drive) {
+            basename = drive->label;  // Use drive label (e.g., "Ram Disk", "System", "Home")
+        } else {
+            basename = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
+        }
         c->title_base = strdup(basename);
         if (!c->title_base) {
             log_error("[ERROR] strdup failed for canvas title_base: %s - will use 'Untitled'", basename);

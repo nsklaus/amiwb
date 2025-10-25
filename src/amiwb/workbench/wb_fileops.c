@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/statvfs.h>
 #include <dirent.h>
 #include <sys/xattr.h>
 #include <libgen.h>
@@ -516,5 +517,124 @@ off_t read_directory_size_result(int pipe_fd) {
         log_error("[ERROR] Failed to read from pipe: %s", strerror(errno));
         close(pipe_fd);
         return 0;
+    }
+}
+
+// ============================================================================
+// Device Stats Calculation (async with IPC)
+// ============================================================================
+
+// Calculate device statistics asynchronously (fork+pipe pattern)
+// For tmpfs: reads /proc/meminfo + counts files in ramdisk
+// For regular drives: uses statvfs()
+// Returns pid of child process, writes pipe_fd for non-blocking read
+pid_t calculate_device_stats(const char *mount_point, const char *fs_type, int *pipe_fd) {
+    if (!mount_point || !fs_type || !pipe_fd) {
+        log_error("[ERROR] calculate_device_stats: NULL parameters");
+        return -1;
+    }
+
+    // Create pipe for communication
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        log_error("[ERROR] Failed to create pipe for device stats calculation: %s", strerror(errno));
+        return -1;
+    }
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        log_error("[ERROR] Failed to fork for device stats calculation: %s", strerror(errno));
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+
+    if (pid == 0) {
+        // Child process - calculate device stats
+        close(pipefd[0]); // Close read end
+
+        DeviceStats stats = {0};
+
+        // Special case: tmpfs (RAM disk) - dynamic total capacity
+        if (strcmp(fs_type, "tmpfs") == 0) {
+            // Read /proc/meminfo to get MemAvailable (matches menubar RAM display)
+            FILE *fp = fopen("/proc/meminfo", "r");
+            if (fp) {
+                char line[256];
+                unsigned long mem_available_kb = 0;
+
+                while (fgets(line, sizeof(line), fp)) {
+                    if (sscanf(line, "MemAvailable: %lu kB", &mem_available_kb) == 1) {
+                        break;
+                    }
+                }
+                fclose(fp);
+
+                // Total: available system RAM (dynamic capacity)
+                stats.total_bytes = (off_t)mem_available_kb * 1024;
+
+                // Used: actual bytes in ramdisk directory
+                int file_count = 0;
+                off_t used_bytes = 0;
+                count_files_and_bytes(mount_point, &file_count, &used_bytes);
+
+                // Free: total - used
+                stats.free_bytes = stats.total_bytes - used_bytes;
+            }
+        } else {
+            // Regular drives: use statvfs() for filesystem stats
+            struct statvfs vfs;
+            if (statvfs(mount_point, &vfs) == 0) {
+                stats.total_bytes = (off_t)vfs.f_blocks * (off_t)vfs.f_frsize;
+                stats.free_bytes = (off_t)vfs.f_bavail * (off_t)vfs.f_frsize;
+            }
+        }
+
+        // Write result to pipe
+        if (write(pipefd[1], &stats, sizeof(stats)) != sizeof(stats)) {
+            log_error("[ERROR] Failed to write device stats to pipe");
+        }
+
+        close(pipefd[1]);
+        _exit(0);
+    }
+
+    // Parent process
+    close(pipefd[1]); // Close write end
+    *pipe_fd = pipefd[0]; // Return read end
+
+    // Make pipe non-blocking
+    int flags = fcntl(*pipe_fd, F_GETFL, 0);
+    fcntl(*pipe_fd, F_SETFL, flags | O_NONBLOCK);
+
+    return pid;
+}
+
+// Read device stats result from pipe (non-blocking)
+// Returns true if data ready and stats filled, false if not ready yet
+bool read_device_stats_result(int pipe_fd, DeviceStats *stats) {
+    if (pipe_fd < 0 || !stats) {
+        return false;
+    }
+
+    ssize_t bytes_read = read(pipe_fd, stats, sizeof(DeviceStats));
+
+    if (bytes_read == sizeof(DeviceStats)) {
+        // Success - data ready
+        close(pipe_fd);
+        return true;
+    } else if (bytes_read == 0) {
+        // End of pipe - child finished but no data
+        close(pipe_fd);
+        log_error("[WARNING] Device stats calculation completed with no data");
+        return false;
+    } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        // Not ready yet - keep pipe open
+        return false;
+    } else {
+        // Error
+        log_error("[ERROR] Failed to read device stats from pipe: %s", strerror(errno));
+        close(pipe_fd);
+        return false;
     }
 }

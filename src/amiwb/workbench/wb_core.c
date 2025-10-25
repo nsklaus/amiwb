@@ -8,6 +8,7 @@
 #include "../render/rnd_public.h"
 #include "../intuition/itn_internal.h"
 #include "../events/evt_public.h"
+#include "../diskdrives.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -73,10 +74,16 @@ void open_directory(FileIcon *icon, Canvas *current_canvas) {
     if (!get_spatial_mode() && current_canvas && current_canvas->type == WINDOW) {
         char *new_path = strdup(icon->path);
 
-        // Update window title
-        const char *dir_name = strrchr(new_path, '/');
-        if (dir_name) dir_name++;
-        else dir_name = new_path;
+        // Update window title (use drive label if it's a device mount point)
+        const char *dir_name;
+        DiskDrive *drive = diskdrives_find_by_path(new_path);
+        if (drive) {
+            dir_name = drive->label;  // Use drive label (e.g., "Ram Disk", "System", "Home")
+        } else {
+            dir_name = strrchr(new_path, '/');
+            if (dir_name) dir_name++;
+            else dir_name = new_path;
+        }
 
         // Free old paths
         if (current_canvas->path) free(current_canvas->path);

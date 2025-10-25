@@ -346,7 +346,7 @@ void handle_events(void) {
         // These functions use non-blocking I/O and return immediately if no data
         // Without this, progress monitors never appear because select() rarely times out
         workbench_check_progress_monitors();
-        iconinfo_check_size_calculations();
+        iconinfo_check_updates();  // Handles both size calculations and device stat updates
         intuition_check_arrow_scroll_repeat();
     }  // End of while (running)
 }

@@ -18,6 +18,10 @@
 #include "render/rnd_public.h"
 #include "config.h"
 
+// Ram Disk constants (centralized magic strings)
+#define RAMDISK_PATH "/dev/shm/amiwb-ramdisk"
+#define RAMDISK_LABEL "Ram Disk"
+
 static DriveManager drive_manager = {0};
 
 // Event-driven monitoring (inotify) - Module-private state (AWP)
@@ -202,10 +206,81 @@ static void add_new_drive(const char *device, const char *mount_point, const cha
     }
     
     drive_manager.drive_count++;
-    
+
     // Arrange all icons properly using workbench's column layout
     icon_cleanup(desktop);
-    
+
+    // Refresh desktop to show new icon
+    if (desktop) {
+        redraw_canvas(desktop);
+    }
+}
+
+// Add Ram Disk to drive manager (integrated into diskdrives system - AWP INTEGRATE)
+static void add_ramdisk_drive(void) {
+    if (drive_manager.drive_count >= MAX_DRIVES) return;
+
+    // Create directory if it doesn't exist (on hot-restart, directory may already exist with files)
+    struct stat st;
+    if (stat(RAMDISK_PATH, &st) != 0) {
+        if (mkdir(RAMDISK_PATH, 0700) != 0) {
+            log_error("[ERROR] Failed to create ramdisk directory: %s - %s", RAMDISK_PATH, strerror(errno));
+            return;  // Ram disk disabled if directory creation fails
+        }
+    }
+
+    DiskDrive *drive = &drive_manager.drives[drive_manager.drive_count];
+    snprintf(drive->device, sizeof(drive->device), "ramdisk");
+    snprintf(drive->mount_point, sizeof(drive->mount_point), "%s", RAMDISK_PATH);
+    snprintf(drive->label, sizeof(drive->label), "%s", RAMDISK_LABEL);
+    snprintf(drive->fs_type, sizeof(drive->fs_type), "tmpfs");
+    drive->is_removable = false;  // Ram disk is not physically removable
+    drive->is_mounted = true;
+
+    // Get desktop canvas
+    Canvas *desktop = itn_canvas_get_desktop();
+    if (!desktop) return;
+
+    // Create icon using ramdisk.info (not harddisk.info)
+    create_icon("/usr/local/share/amiwb/icons/ramdisk.info", desktop, 0, 0);
+
+    // Get the icon we just created
+    FileIcon **icons = wb_icons_array_get();
+    int count = wb_icons_array_count();
+    if (count > 0) {
+        FileIcon *icon = icons[count - 1];
+
+        // Set icon metadata
+        char *old_path = icon->path;
+        char *old_label = icon->label;
+
+        icon->path = strdup(RAMDISK_PATH);
+        if (!icon->path) {
+            log_error("[ERROR] strdup failed for ramdisk path - keeping old path");
+            icon->path = old_path;
+        } else {
+            if (old_path) free(old_path);
+        }
+
+        icon->label = strdup(RAMDISK_LABEL);
+        if (!icon->label) {
+            log_error("[ERROR] strdup failed for ramdisk label - keeping old label");
+            icon->label = old_label;
+        } else {
+            if (old_label) free(old_label);
+        }
+
+        icon->type = TYPE_DEVICE;
+        drive->icon = icon;
+    } else {
+        log_error("[ERROR] Failed to get icon for Ram Disk");
+    }
+
+    drive_manager.drive_count++;
+
+    // Arrange all icons properly (Ram Disk will be positioned at Y=40 by wb_layout.c)
+    icon_cleanup(desktop);
+
     // Refresh desktop to show new icon
     if (desktop) {
         redraw_canvas(desktop);
@@ -627,6 +702,9 @@ void diskdrives_init(void) {
 
     // Do initial scan (before events start arriving)
     scan_mounted_drives();
+
+    // Add Ram Disk (integrated into diskdrives system - AWP INTEGRATE principle)
+    add_ramdisk_drive();
 }
 
 // Check if device was ejected and shouldn't be remounted
@@ -661,6 +739,13 @@ void diskdrives_cleanup(void) {
     if (inotify_fd >= 0) {
         close(inotify_fd);
         inotify_fd = -1;
+    }
+
+    // Clean up Ram Disk directory (AWP REUSE - using wb_fileops_remove_recursive)
+    DiskDrive *ramdisk = diskdrives_find_by_label(RAMDISK_LABEL);
+    if (ramdisk) {
+        wb_fileops_remove_recursive(ramdisk->mount_point);
+        // Silent success per logging rules - only errors are logged
     }
 
     // Don't destroy icons here - they're workbench icons that will be cleaned up
@@ -784,6 +869,53 @@ DiskDrive* diskdrives_find_by_icon(FileIcon *icon) {
         }
     }
     return NULL;
+}
+
+// Find drive by label (e.g., "Ram Disk", "Home", "System")
+DiskDrive* diskdrives_find_by_label(const char *label) {
+    if (!label) return NULL;
+
+    for (int i = 0; i < drive_manager.drive_count; i++) {
+        if (strcmp(drive_manager.drives[i].label, label) == 0) {
+            return &drive_manager.drives[i];
+        }
+    }
+    return NULL;
+}
+
+// Find drive by mount point or path (checks if path is mount point or within it)
+DiskDrive* diskdrives_find_by_path(const char *path) {
+    if (!path) return NULL;
+
+    // First check for exact mount point match
+    for (int i = 0; i < drive_manager.drive_count; i++) {
+        if (strcmp(drive_manager.drives[i].mount_point, path) == 0) {
+            return &drive_manager.drives[i];
+        }
+    }
+
+    // If no exact match, check if path is within a mount point
+    // This handles cases like passing "/home/klaus/file.txt" to find the "/home" drive
+    size_t longest_match = 0;
+    DiskDrive *best_match = NULL;
+
+    for (int i = 0; i < drive_manager.drive_count; i++) {
+        const char *mount = drive_manager.drives[i].mount_point;
+        size_t mount_len = strlen(mount);
+
+        // Check if path starts with this mount point
+        if (strncmp(path, mount, mount_len) == 0) {
+            // Ensure it's a proper path prefix (not just substring match)
+            if (path[mount_len] == '\0' || path[mount_len] == '/') {
+                if (mount_len > longest_match) {
+                    longest_match = mount_len;
+                    best_match = &drive_manager.drives[i];
+                }
+            }
+        }
+    }
+
+    return best_match;
 }
 
 // Get inotify file descriptor for event loop integration

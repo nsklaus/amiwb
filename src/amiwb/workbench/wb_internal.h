@@ -177,6 +177,15 @@ struct IconInfoDialog {
     off_t total_bytes;               // Total disk space
     off_t free_bytes;                // Free disk space
 
+    // Live updates for device icons (event-driven, no background work when closed)
+    time_t last_device_update;       // Last device stat refresh timestamp
+    bool is_device_dialog;           // True if showing device/ramdisk info
+
+    // Device stats calculation (async fork+pipe pattern, like directory size)
+    bool calculating_device_stats;   // Currently calculating device stats
+    pid_t device_stats_pid;          // Child process PID for stats calculation
+    int device_stats_pipe_fd;        // Pipe for receiving device stats results
+
     // Linked list for multiple dialogs
     struct IconInfoDialog *next;
 };
@@ -206,8 +215,8 @@ void cleanup_all_iconinfo_dialogs(void);
 void init_iconinfo(void);
 void cleanup_iconinfo(void);
 
-// Process monitoring for directory size calculation
-void iconinfo_check_size_calculations(void);
+// Process monitoring for directory size calculation and live device updates
+void iconinfo_check_updates(void);
 
 // ============================================================================
 // wb_deficons.c - Default Icons System
