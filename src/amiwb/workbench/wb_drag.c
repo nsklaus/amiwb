@@ -932,18 +932,18 @@ static void perform_multi_icon_drop(Canvas *target, bool force_copy) {
         int place_x = 0, place_y = 0;
         calculate_drop_position(target, &place_x, &place_y);
 
-        // Calculate bounds for target canvas
+        // Calculate bounds for target canvas (use content size for scrollable windows)
         int min_x, min_y, max_x, max_y;
         if (target->type == DESKTOP) {
             min_x = 20;
             min_y = MENUBAR_HEIGHT + 10;  // Just below menubar (user-controlled placement)
-            max_x = target->width - 110;
-            max_y = target->height - 100;
+            max_x = target->content_width - 110;
+            max_y = target->content_height - 100;
         } else {
             min_x = 10;
             min_y = 10;
-            max_x = target->width - BORDER_WIDTH_RIGHT - 110;
-            max_y = target->height - BORDER_HEIGHT_BOTTOM - 100;
+            max_x = target->content_width - BORDER_WIDTH_RIGHT - 110;
+            max_y = target->content_height - BORDER_HEIGHT_BOTTOM - 100;
         }
 
         for (int i = 0; i < dragged_icons_count; i++) {
@@ -989,18 +989,18 @@ static void perform_multi_icon_drop(Canvas *target, bool force_copy) {
     int place_x = 0, place_y = 0;
     calculate_drop_position(target, &place_x, &place_y);
 
-    // Calculate bounds for target canvas (for spatial offset clamping)
+    // Calculate bounds for target canvas (use content size for scrollable windows)
     int min_x, min_y, max_x, max_y;
     if (target->type == DESKTOP) {
         min_x = 20;
         min_y = MENUBAR_HEIGHT + 10;  // Just below menubar (user-controlled placement)
-        max_x = target->width - 110;
-        max_y = target->height - 100;
+        max_x = target->content_width - 110;
+        max_y = target->content_height - 100;
     } else {
         min_x = 10;
         min_y = 10;
-        max_x = target->width - BORDER_WIDTH_RIGHT - 110;
-        max_y = target->height - BORDER_HEIGHT_BOTTOM - 100;
+        max_x = target->content_width - BORDER_WIDTH_RIGHT - 110;
+        max_y = target->content_height - BORDER_HEIGHT_BOTTOM - 100;
     }
 
     // CRITICAL: Restore display_window for ALL icons BEFORE processing operations
