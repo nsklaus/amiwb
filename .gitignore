@@ -44,8 +44,8 @@ valgrind_new.log
 amiwb.log
 amiwb_lldb.log
 docs/
-/editpad
-/reqasl
+src/editpad/editpad
+src/reqasl/reqasl
 *.log
 
 # Debug files

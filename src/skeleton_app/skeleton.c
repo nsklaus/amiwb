@@ -40,14 +40,27 @@ SkeletonApp *skeleton_create(Display *display) {
     gray_color.flags = DoRed | DoGreen | DoBlue;
     XAllocColor(display, colormap, &gray_color);
 
-    /* Create main window with gray background */
+    /* Create main window with gray background - FLICKER-FREE setup */
     Window root = DefaultRootWindow(display);
-    app->main_window = XCreateSimpleWindow(display, root,
-                                          100, 100,  /* x, y */
-                                          app->width, app->height,
-                                          0,  /* border width */
-                                          BlackPixel(display, 0),  /* border */
-                                          gray_color.pixel);        /* background */
+
+    /* Configure window attributes for flicker-free rendering */
+    XSetWindowAttributes attrs;
+    attrs.background_pixmap = None;  /* CRITICAL: Prevents X11 auto-clear on Expose
+                                         Without this, X11 clears window to background color
+                                         on EVERY Expose, causing white flashes during resize */
+    attrs.background_pixel = gray_color.pixel;  /* Gray background color */
+    attrs.event_mask = ExposureMask | KeyPressMask | ButtonPressMask |
+                       ButtonReleaseMask | StructureNotifyMask;
+
+    app->main_window = XCreateWindow(display, root,
+                                     100, 100,  /* x, y */
+                                     app->width, app->height,
+                                     0,  /* border width */
+                                     CopyFromParent,  /* depth */
+                                     InputOutput,     /* class */
+                                     CopyFromParent,  /* visual */
+                                     CWBackPixel | CWBackPixmap | CWEventMask,
+                                     &attrs);
 
     /* Set window title */
     XStoreName(display, app->main_window, APP_NAME);
@@ -56,9 +69,15 @@ SkeletonApp *skeleton_create(Display *display) {
     Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(display, app->main_window, &wm_delete, 1);
 
-    /* Select input events */
-    XSelectInput(display, app->main_window,
-                ExposureMask | KeyPressMask | ButtonPressMask | ButtonReleaseMask);
+    /* Set minimum window size to prevent layout breaking */
+    XSizeHints *size_hints = XAllocSizeHints();
+    if (size_hints) {
+        size_hints->flags = PMinSize;
+        size_hints->min_width = 250;   /* Minimum usable width for widgets */
+        size_hints->min_height = 120;  /* Minimum usable height */
+        XSetWMNormalHints(display, app->main_window, size_hints);
+        XFree(size_hints);
+    }
 
     /* Register menus with AmiWB */
     menus_init(display, app->main_window);
@@ -83,33 +102,33 @@ SkeletonApp *skeleton_create(Display *display) {
     XFlush(display);
     XSync(display, False);
 
-    /* Create rendering resources after window is mapped */
-    app->pixmap = XCreatePixmap(display, app->main_window,
-                               app->width, app->height,
-                               DefaultDepth(display, DefaultScreen(display)));
-
-    /* Create XRender Picture */
-    XRenderPictFormat *fmt = XRenderFindStandardFormat(display, PictStandardRGB24);
-    app->picture = XRenderCreatePicture(display, app->pixmap, fmt, 0, NULL);
-
-    /* Create XftDraw for text rendering */
+    /* Create rendering resources after window is mapped
+     * IMPORTANT: Under AmiWB compositor, draw DIRECTLY to window
+     * The compositor handles double buffering at the frame window level
+     * Client apps should NOT use their own pixmap buffers
+     */
     Visual *visual = DefaultVisual(display, DefaultScreen(display));
+    XRenderPictFormat *fmt = XRenderFindVisualFormat(display, visual);
+    XRenderPictureAttributes pa = {0};
+    app->picture = XRenderCreatePicture(display, app->main_window, fmt, 0, &pa);
+
+    /* Create XftDraw for text rendering - directly from window */
     Colormap cmap = DefaultColormap(display, DefaultScreen(display));
-    app->xft_draw = XftDrawCreate(display, app->pixmap, visual, cmap);
+    app->xft_draw = XftDrawCreate(display, app->main_window, visual, cmap);
 
     log_message("Application window created");
     return app;
 }
 
 void skeleton_draw(SkeletonApp *app) {
-    if (!app || !app->pixmap) return;
+    if (!app || !app->picture) return;
 
-    /* Clear the pixmap with gray background */
+    /* Clear window background with gray (render directly to window via picture) */
     XRenderColor render_gray = GRAY;
     XRenderFillRectangle(app->display, PictOpSrc, app->picture,
                          &render_gray, 0, 0, app->width, app->height);
 
-    /* Draw widgets */
+    /* Draw widgets directly to window */
     if (app->example_button) {
         button_render(app->example_button, app->picture, app->display, app->xft_draw);
     }
@@ -119,11 +138,10 @@ void skeleton_draw(SkeletonApp *app) {
                          app->xft_draw);
     }
 
-    /* Copy pixmap to window */
-    XCopyArea(app->display, app->pixmap, app->main_window,
-             DefaultGC(app->display, DefaultScreen(app->display)),
-             0, 0, app->width, app->height, 0, 0);
-
+    /* Flush to ensure rendering commands are sent to X server
+     * No XCopyArea needed - we rendered directly to the window
+     * Compositor handles the final compositing
+     */
     XFlush(app->display);
 }
 
@@ -138,15 +156,12 @@ void skeleton_destroy(SkeletonApp *app) {
         inputfield_destroy(app->example_input);
     }
 
-    /* Destroy rendering resources */
+    /* Destroy rendering resources (created from window, not pixmap) */
     if (app->xft_draw) {
         XftDrawDestroy(app->xft_draw);
     }
     if (app->picture) {
         XRenderFreePicture(app->display, app->picture);
-    }
-    if (app->pixmap) {
-        XFreePixmap(app->display, app->pixmap);
     }
 
     if (app->main_window) {

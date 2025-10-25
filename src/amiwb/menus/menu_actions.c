@@ -256,12 +256,13 @@ static void cancel_pending_deletes(void) {
 
 static void open_file_or_directory(FileIcon *icon) {
     if (!icon) return;
-    
+
     // Handle different icon types
-    if (icon->type == TYPE_DRAWER) {
-        // Directories (including System and Home) - open within AmiWB
+    if (icon->type == TYPE_DRAWER || icon->type == TYPE_DEVICE) {
+        // Directories and device drives - open within AmiWB
+        // Device icons have path set to mount point (/, /home/klaus, /run/media/klaus/Games)
         if (!icon->path) return;
-        
+
         // Check if window for this path already exists
         Canvas *existing = find_window_by_path(icon->path);
         if (existing) {
@@ -269,7 +270,7 @@ static void open_file_or_directory(FileIcon *icon) {
             XRaiseWindow(itn_core_get_display(), existing->win);
             redraw_canvas(existing);
         } else {
-            // Create new window for directory
+            // Create new window for directory/drive
             Canvas *new_window = create_canvas(icon->path, 100, 100, 640, 480, WINDOW);
             if (new_window) {
                 refresh_canvas_from_directory(new_window, icon->path);

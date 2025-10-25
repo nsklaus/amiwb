@@ -98,7 +98,19 @@ Dialog* dialog_create(Display *display, Window parent, DialogType type) {
     // Set WM_DELETE_WINDOW protocol so we get notified when user clicks close
     Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(display, dialog->window, &wm_delete, 1);
-    
+
+    // Set minimum window size for find dialog to prevent layout breaking
+    if (type == DIALOG_FIND) {
+        XSizeHints *size_hints = XAllocSizeHints();
+        if (size_hints) {
+            size_hints->flags = PMinSize;
+            size_hints->min_width = 350;   // Minimum usable width for 2 fields + 4 buttons
+            size_hints->min_height = 145;  // Minimum height for 2 rows of widgets
+            XSetWMNormalHints(display, dialog->window, size_hints);
+            XFree(size_hints);
+        }
+    }
+
     // Create rendering resources
     XRenderPictFormat *format = XRenderFindVisualFormat(display, DefaultVisual(display, screen));
     if (format) {
@@ -315,9 +327,89 @@ bool dialog_handle_event(Dialog *dialog, XEvent *event) {
             return dialog_handle_button_release(dialog, &event->xbutton);
             
         case ConfigureNotify:
-            // Update dialog size if window was resized
-            dialog->width = event->xconfigure.width;
-            dialog->height = event->xconfigure.height;
+            // Handle window resize
+            {
+                int new_width = event->xconfigure.width;
+                int new_height = event->xconfigure.height;
+
+                // Check if size actually changed
+                if (new_width != dialog->width || new_height != dialog->height) {
+                    // Update internal dimensions
+                    dialog->width = new_width;
+                    dialog->height = new_height;
+
+                    // Update widget layout based on new size
+                    // This prevents widgets from staying at old positions/sizes during resize
+                    // (which causes white flashing as window grows faster than widgets)
+                    if (dialog->type == DIALOG_FIND) {
+                        // Find dialog layout constants (must match find.c layout)
+                        const int field_x = 80;        // Left edge of input fields
+                        const int button_width = 60;   // Button width (fixed)
+                        const int button_spacing = 5;  // Gap between buttons
+                        const int margin_right = 10;   // Space between field and buttons
+                        const int find_y = 20;         // Y position of find row
+                        const int replace_y = 55;      // Y position of replace row
+
+                        // Calculate new field width (grow/shrink with window)
+                        // Formula: new_width - left_margin - buttons_width - spacing - right_margin
+                        int buttons_width = 2 * button_width + button_spacing;
+                        int new_field_width = new_width - field_x - buttons_width - margin_right - margin_right;
+
+                        // Enforce minimum field width for usability
+                        if (new_field_width < 100) new_field_width = 100;
+
+                        // Calculate new buttons X position (aligned with field right edge)
+                        int buttons_x = field_x + new_field_width + margin_right;
+
+                        // Update InputField widgets (fields 0 and 1 are find and replace)
+                        if (dialog->field_count >= 2) {
+                            // Find field (index 0)
+                            if (dialog->fields[0]) {
+                                inputfield_update_size(dialog->fields[0], new_field_width);
+                                // Y position stays at find_y (no vertical resize)
+                            }
+
+                            // Replace field (index 1)
+                            if (dialog->fields[1]) {
+                                inputfield_update_size(dialog->fields[1], new_field_width);
+                                // Y position stays at replace_y (no vertical resize)
+                            }
+                        }
+
+                        // Update Button widgets (buttons are: Next, Prev, Once, All)
+                        if (dialog->button_count >= 4) {
+                            // Next button (index 0) - first button in find row
+                            if (dialog->buttons[0]) {
+                                dialog->buttons[0]->x = buttons_x;
+                                dialog->buttons[0]->y = find_y;
+                            }
+
+                            // Prev button (index 1) - second button in find row
+                            if (dialog->buttons[1]) {
+                                dialog->buttons[1]->x = buttons_x + button_width + button_spacing;
+                                dialog->buttons[1]->y = find_y;
+                            }
+
+                            // Once button (index 2) - first button in replace row
+                            if (dialog->buttons[2]) {
+                                dialog->buttons[2]->x = buttons_x;
+                                dialog->buttons[2]->y = replace_y;
+                            }
+
+                            // All button (index 3) - second button in replace row
+                            if (dialog->buttons[3]) {
+                                dialog->buttons[3]->x = buttons_x + button_width + button_spacing;
+                                dialog->buttons[3]->y = replace_y;
+                            }
+                        }
+                    }
+
+                    // Standard X11 resize pattern: Don't draw on ConfigureNotify
+                    // X11 will send Expose events after resize - let those trigger the redraw
+                    // This prevents double-drawing (ConfigureNotify + Expose) during drag-resize
+                    // Double-drawing causes flickering - single Expose draw is smooth
+                }
+            }
             return true;
             
         case ClientMessage:

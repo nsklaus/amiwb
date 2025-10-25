@@ -91,36 +91,53 @@ static int find_drive_by_mount(const char *mount_point) {
 }
 
 // Check if device is removable
-static bool check_removable(const char *device) {
+static bool check_removable(const char *device, const char *mount_point) {
+    // Two-tier removable detection:
+    // 1. Check sysfs /sys/block/*/removable (works for USB flash drives, SD cards)
+    // 2. Check mount path /run/media/* (works for USB HDDs mounted by udisks2)
+    //
+    // Why both? USB hard drives report removable=0 in sysfs (unlike flash drives),
+    // but udisks2 correctly identifies them as removable and mounts under /run/media/
+
+    // Tier 1: Check sysfs removable flag
     // Extract base device name (e.g., sda from /dev/sda1)
     char base_device[NAME_SIZE];  // Device name only
     snprintf(base_device, sizeof(base_device), "%s", device);
-    
+
     // Remove partition number
     char *p = base_device + strlen(base_device) - 1;
     while (p > base_device && *p >= '0' && *p <= '9') p--;
     if (p > base_device) *(p+1) = '\0';
-    
+
     // Remove /dev/ prefix
     char *dev_name = strrchr(base_device, '/');
     if (!dev_name) dev_name = base_device;
     else dev_name++;
-    
+
     // Check removable flag in sysfs
     char path[PATH_SIZE];  // Filesystem path
     snprintf(path, sizeof(path), "/sys/block/%s/removable", dev_name);
-    
+
     FILE *f = fopen(path, "r");
-    if (!f) return false;
-    
-    char val[2];
-    bool removable = false;
-    if (fgets(val, sizeof(val), f)) {
-        removable = (val[0] == '1');
+    if (f) {
+        char val[2];
+        if (fgets(val, sizeof(val), f)) {
+            if (val[0] == '1') {
+                fclose(f);
+                return true;  // Sysfs says removable (USB flash, SD card, etc.)
+            }
+        }
+        fclose(f);
     }
-    fclose(f);
-    
-    return removable;
+
+    // Tier 2: Check mount path pattern
+    // udisks2 ONLY mounts removable media under /run/media/$USER/*
+    // This catches USB HDDs that report removable=0 in sysfs
+    if (strncmp(mount_point, "/run/media/", 11) == 0) {
+        return true;  // Mounted by udisks2 as removable media
+    }
+
+    return false;  // Not removable by either method
 }
 
 
@@ -154,8 +171,8 @@ static void add_new_drive(const char *device, const char *mount_point, const cha
         snprintf(drive->label, sizeof(drive->label), "Drive%d", drive_manager.drive_count);
     }
     
-    // Check if removable
-    drive->is_removable = check_removable(device);
+    // Check if removable (two-tier: sysfs + mount path)
+    drive->is_removable = check_removable(device, mount_point);
     drive->is_mounted = true;
     
     // Get desktop canvas
@@ -288,9 +305,11 @@ static void add_ramdisk_drive(void) {
 }
 
 // Remove drives that no longer exist
+// Only auto-remove REMOVABLE drives (USB, SD cards, etc.)
+// Permanent drives (System, Home, Ram Disk) are never auto-removed
 static void remove_missing_drives(bool *found) {
     for (int i = 0; i < drive_manager.drive_count; i++) {
-        if (!found[i] && drive_manager.drives[i].is_mounted) {
+        if (!found[i] && drive_manager.drives[i].is_removable && drive_manager.drives[i].is_mounted) {
             DiskDrive *drive = &drive_manager.drives[i];
             
             // Drive removed - silent per logging rules
@@ -405,7 +424,7 @@ static void scan_mounted_drives(void) {
 
     fclose(mounts);
 
-    // Remove drives that disappeared
+    // Remove drives that disappeared (only removable drives can be auto-removed)
     remove_missing_drives(found);
 
     drive_manager.last_poll = time(NULL);
@@ -868,6 +887,7 @@ DiskDrive* diskdrives_find_by_icon(FileIcon *icon) {
             return &drive_manager.drives[i];
         }
     }
+
     return NULL;
 }
 

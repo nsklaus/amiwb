@@ -8,10 +8,38 @@
 #include "../workbench/wb_internal.h"
 #include "../font_manager.h"
 #include "../events/evt_public.h"
+#include "../diskdrives.h"
+#include "../config.h"
+#include <strings.h>  // For strcasecmp
 
 // ============================================================================
 // Dropdown Menu Creation and Display
 // ============================================================================
+
+// Check if file path has archive extension
+static bool is_archive_file(const char *path) {
+    if (!path) return false;
+
+    // Find last dot in path for extension
+    const char *ext = strrchr(path, '.');
+    if (!ext || ext == path) return false;
+
+    // Move past the dot
+    ext++;
+
+    // Check common archive extensions (case-insensitive)
+    return (strcasecmp(ext, "zip") == 0 ||
+            strcasecmp(ext, "rar") == 0 ||
+            strcasecmp(ext, "7z") == 0 ||
+            strcasecmp(ext, "tar") == 0 ||
+            strcasecmp(ext, "gz") == 0 ||
+            strcasecmp(ext, "bz2") == 0 ||
+            strcasecmp(ext, "xz") == 0 ||
+            strcasecmp(ext, "lha") == 0 ||
+            strcasecmp(ext, "lzh") == 0 ||
+            strcasecmp(ext, "tgz") == 0 ||
+            strcasecmp(ext, "tbz2") == 0);
+}
 
 // Show dropdown menu
 // Create and show a dropdown for the given menubar item at x,y.
@@ -82,12 +110,41 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
         // Check restrictions for Copy, Rename, and Delete
         bool can_modify = false;  // For Copy and Rename
         if (selected) {
-            // Can't modify (copy/rename/delete) System, Home, or iconified windows
+            // Can't modify (copy/rename): System, Home, iconified windows, OR any device drive
             if (strcmp(selected->label, "System") != 0 &&
                 strcmp(selected->label, "Home") != 0 &&
-                selected->type != TYPE_ICONIFIED) {
+                selected->type != TYPE_ICONIFIED &&
+                selected->type != TYPE_DEVICE) {
                 can_modify = true;
-                can_delete = true;  // Delete has same restrictions as modify
+            }
+
+            // Can't delete: System, Home, iconified windows, OR any device drive
+            if (strcmp(selected->label, "System") != 0 &&
+                strcmp(selected->label, "Home") != 0 &&
+                selected->type != TYPE_ICONIFIED &&
+                selected->type != TYPE_DEVICE) {
+                can_delete = true;
+            }
+        }
+
+        // Check if Eject is allowed (only for removable drives)
+        bool can_eject = false;
+        if (selected) {
+            DiskDrive *drive = diskdrives_find_by_icon(selected);
+            // Eject only allowed for removable drives (USB, SD cards, etc.)
+            // Not allowed for permanent drives (System, Home, Ram Disk) or non-drives
+            if (drive && drive->is_removable) {
+                can_eject = true;
+            }
+        }
+
+        // Check if Extract is allowed (only for archive files)
+        bool can_extract = false;
+        if (selected) {
+            // Extract only allowed for regular files with archive extensions
+            // Not allowed for: drives, directories, iconified windows, or non-archive files
+            if (selected->type == TYPE_FILE && is_archive_file(selected->path)) {
+                can_extract = true;
             }
         }
 
@@ -96,8 +153,8 @@ void show_dropdown_menu(Menu *menu, int index, int x, int y) {
             active->enabled[0] = has_selected_icon;  // Open - works for all icon types
             active->enabled[1] = can_modify;         // Copy - restricted
             active->enabled[2] = can_modify;         // Rename - restricted
-            active->enabled[3] = has_selected_icon;  // Extract - works for archives
-            active->enabled[4] = has_selected_icon;  // Eject - works for devices
+            active->enabled[3] = can_extract;        // Extract - only archive files
+            active->enabled[4] = can_eject;          // Eject - only removable drives
             active->enabled[5] = has_selected_icon;  // Information - works for all
             active->enabled[6] = can_delete;         // Delete - restricted
         }

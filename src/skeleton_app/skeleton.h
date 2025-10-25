@@ -25,8 +25,7 @@ typedef struct SkeletonApp {
     Window main_window;
     int width, height;
 
-    /* Rendering resources */
-    Pixmap pixmap;
+    /* Rendering resources (draw directly to window under compositor) */
     Picture picture;
     XftDraw *xft_draw;
 
